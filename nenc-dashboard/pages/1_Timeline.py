@@ -8,7 +8,7 @@ st.set_page_config(page_title="Timeline | NENC", page_icon="📊", layout="wide"
 
 import pandas as pd
 
-from utils.data_loader import get_participants
+from utils.data_loader import get_participants, get_etapas
 from utils.resampler import (
     build_unified_timeline,
     compute_participant_average,
@@ -67,6 +67,21 @@ def main():
 
         st.divider()
 
+        # Seleção de etapas
+        st.subheader("Etapas")
+        all_etapas = get_etapas(data, filename=selected_participant)
+        if all_etapas:
+            selected_etapas = st.multiselect(
+                "Etapas para análise",
+                options=all_etapas,
+                default=all_etapas,
+                key="etapas_timeline",
+            )
+        else:
+            selected_etapas = []
+
+        st.divider()
+
         # Seleção de indicadores
         st.subheader("Indicadores")
         selected_indicators: list = []
@@ -83,6 +98,17 @@ def main():
         st.divider()
 
         use_zscore = st.checkbox("Usar Z-Scores (periféricos)", value=False)
+
+    # ------------------------------------------------------------------
+    # Filtrar etapas selecionadas
+    # ------------------------------------------------------------------
+    if selected_etapas:
+        indicadores = indicadores[indicadores["Etapa"].isin(selected_etapas)]
+        if not perifericos.empty and "Etapa" in perifericos.columns:
+            perifericos = perifericos[perifericos["Etapa"].isin(selected_etapas)]
+    else:
+        st.warning("Selecione pelo menos uma Etapa.")
+        st.stop()
 
     # ------------------------------------------------------------------
     # Build timeline
