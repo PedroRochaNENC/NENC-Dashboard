@@ -248,7 +248,10 @@ with st.expander("📊 Visualizar Dados", expanded=False):
     st.subheader("📋 Tabela Resumo")
 
     if not filtered_df.empty and selected_metric:
-        metric_cols = [m for m in KEY_METRICS if m in filtered_df.columns]
+        metric_cols = [
+            m for m in KEY_METRICS
+            if m in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[m])
+        ]
 
         if "Participante" in filtered_df.columns and metric_cols:
             summary = (
@@ -257,11 +260,11 @@ with st.expander("📊 Visualizar Dados", expanded=False):
                 .agg(["mean", "std"])
                 .round(4)
             )
-            st.dataframe(summary, use_container_width=True)
+            st.dataframe(summary, width="stretch")
         elif metric_cols:
             summary = filtered_df[["AOI"] + metric_cols].copy()
             summary = summary.set_index("AOI") if "AOI" in summary.columns else summary
-            st.dataframe(summary.round(4), use_container_width=True)
+            st.dataframe(summary.round(4), width="stretch")
     else:
         st.info("Selecione uma métrica na barra lateral.")
 
@@ -277,7 +280,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
             metric=selected_metric,
             aois=selected_aois,
         )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width="stretch")
 
     # ------------------------------------------------------------------
     # Heatmap participante × AOI
@@ -296,7 +299,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
             participants=selected_participants,
             aois=selected_aois,
         )
-        st.plotly_chart(fig_heat, use_container_width=True)
+        st.plotly_chart(fig_heat, width="stretch")
 
     # ------------------------------------------------------------------
     # Visual Share por marca
@@ -310,7 +313,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
             vs_df = vs_df[vs_df["Marca"].isin(selected_marcas)]
 
         fig_share = create_brand_share_chart(vs_df)
-        st.plotly_chart(fig_share, use_container_width=True)
+        st.plotly_chart(fig_share, width="stretch")
 
     # ------------------------------------------------------------------
     # ANOVA
@@ -321,7 +324,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
 
         anova_display = format_anova_for_display(data["anova"])
         if not anova_display.empty:
-            st.dataframe(anova_display, use_container_width=True)
+            st.dataframe(anova_display, width="stretch")
         else:
             st.info("Dados ANOVA não puderam ser formatados.")
 
@@ -373,7 +376,10 @@ tables_text = ""
 
 # Resumo das métricas por AOI
 if not filtered_df.empty:
-    metric_cols = [m for m in KEY_METRICS if m in filtered_df.columns]
+    metric_cols = [
+        m for m in KEY_METRICS
+        if m in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[m])
+    ]
     if metric_cols:
         if "Participante" in filtered_df.columns:
             ai_summary = (
@@ -548,7 +554,7 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar para Preparação", use_container_width=True):
+    if st.button("⬅️ Voltar para Preparação", width="stretch"):
         st.switch_page("modules/jornada_compra/preparacao.py")
 
 with col_nav2:
@@ -563,6 +569,6 @@ with col_nav2:
         data=pdf_bytes,
         file_name=f"{projeto.get('nome', 'analise_jornada')}.pdf",
         mime="application/pdf",
-        use_container_width=True,
+        width="stretch",
         type="primary",
     )
