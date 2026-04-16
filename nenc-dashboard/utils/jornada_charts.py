@@ -58,6 +58,8 @@ def create_metric_by_aoi(
     if aois:
         work = work[work["AOI"].isin(aois)]
 
+    work[metric] = pd.to_numeric(work[metric], errors="coerce")
+
     if "Participante" in work.columns:
         stats = (
             work.groupby("AOI")[metric]
