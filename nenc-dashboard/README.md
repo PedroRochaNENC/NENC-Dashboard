@@ -1,4 +1,4 @@
-# NENC Dashboard
+# NENC Insights
 
 Dashboard Streamlit para visualização de dados de Neuromarketing do pipeline NENC.
 
