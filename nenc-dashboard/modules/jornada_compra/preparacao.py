@@ -234,7 +234,7 @@ with st.form("projeto_form", clear_on_submit=False):
     nome_projeto = st.text_input(
         "Nome do Projeto",
         value=projeto.get("nome", ""),
-        placeholder="Ex: Estudo Intimus PDV 2026",
+        placeholder="",
     )
 
     especialidade = st.text_area(

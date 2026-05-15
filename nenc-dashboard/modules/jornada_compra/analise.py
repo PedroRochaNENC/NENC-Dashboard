@@ -8,7 +8,7 @@ heatmap de atenção, ANOVA e análise de IA com contexto do projeto.
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from groq import Groq
+from openai import OpenAI
 from fpdf import FPDF
 
 from utils.jornada_loader import (
@@ -23,6 +23,17 @@ from utils.jornada_charts import (
     create_brand_share_chart,
     format_anova_for_display,
 )
+from utils.ai_provider import (
+    get_openai_client,
+    get_vector_store_id,
+    create_analysis,
+)
+from utils.neuro_prompts import (
+    NEURO_SYSTEM_PROMPT,
+    NEURO_SYSTEM_PROMPT_STATISTICAL,
+    NEURO_SYSTEM_PROMPT_STRATEGIC,
+    build_user_prompt,
+)
 
 
 def _format_table(df: pd.DataFrame, title: str) -> str:
@@ -32,8 +43,8 @@ def _format_table(df: pd.DataFrame, title: str) -> str:
     return f"### {title}\n{df.to_string()}"
 
 
-def _summarize_interviews(client, entrevistas_df: pd.DataFrame) -> str:
-    """Resume as entrevistas usando a API Groq."""
+def _summarize_interviews(client: OpenAI, entrevistas_df: pd.DataFrame) -> str:
+    """Resume as entrevistas usando a API OpenAI."""
     # Preparar texto das entrevistas (limitar tamanho para não exceder contexto)
     interview_texts = []
     for _, row in entrevistas_df.iterrows():
@@ -58,16 +69,14 @@ def _summarize_interviews(client, entrevistas_df: pd.DataFrame) -> str:
 
 Extraia: padrões comportamentais, fatores de decisão de compra, percepções sobre marcas, e elementos visuais que influenciam escolhas."""
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        instructions=system_prompt,
+        input=user_prompt,
         temperature=0.4,
-        max_tokens=1000,
+        max_output_tokens=1000,
     )
-    return response.choices[0].message.content
+    return response.output_text
 
 
 def _sanitize(text: str) -> str:
@@ -217,12 +226,36 @@ with st.sidebar:
     st.divider()
 
     st.subheader("🤖 Análise de IA")
-    api_key = st.text_input(
-        "Chave da API Groq",
-        type="password",
-        key="jc_groq_key",
-        help="Obtenha gratuitamente em console.groq.com/keys",
+    _client = get_openai_client()
+    if _client:
+        st.success("OpenAI configurado ✅")
+    else:
+        st.error("Configure OPENAI_API_KEY no .env ❌")
+
+    ai_model = st.selectbox(
+        "Modelo",
+        ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1"],
+        index=0,
+        key="jc_ai_model",
     )
+
+    ai_mode = st.radio(
+        "Modo de análise",
+        ["Rápida (1 chamada)", "Aprofundada (2 etapas)"],
+        index=0,
+        key="jc_ai_mode",
+    )
+
+    _vs_id = get_vector_store_id()
+    use_kb = False
+    if _vs_id:
+        use_kb = st.toggle(
+            "📚 Consultar base de conhecimento",
+            value=True,
+            key="jc_use_kb",
+        )
+    else:
+        st.caption("📚 Base de conhecimento não configurada")
 
 # ------------------------------------------------------------------
 # Aplicar filtros ao DataFrame principal
@@ -358,18 +391,17 @@ if "entrevistas" in data and not data["entrevistas"].empty:
         if entrevistas_summary:
             st.markdown("**Resumo gerado:**")
             st.markdown(entrevistas_summary)
-        elif api_key:
+        elif _client:
             if st.button("📝 Gerar Resumo das Entrevistas", key="btn_summarize"):
                 with st.spinner("Resumindo entrevistas..."):
                     try:
-                        client = Groq(api_key=api_key)
-                        summary = _summarize_interviews(client, data["entrevistas"])
+                        summary = _summarize_interviews(_client, data["entrevistas"])
                         st.session_state["jc_entrevistas_summary"] = summary
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao resumir entrevistas: {e}")
         else:
-            st.warning("Insira a chave da API Groq para gerar o resumo das entrevistas.")
+            st.warning("Configure a API OpenAI no .env para gerar o resumo das entrevistas.")
 
 # Montar dados para o prompt
 tables_text = ""
@@ -416,134 +448,112 @@ if "por_marca" in data:
             pm[pm_available].head(15), "Dados por Marca (amostra)"
         )
 
-if not api_key:
+if not _client:
     st.info(
-        "Insira sua chave da API Groq na barra lateral "
-        "para habilitar a análise automática. "
-        "Obtenha gratuitamente em **console.groq.com/keys**."
+        "Configure a variável **OPENAI_API_KEY** no arquivo `.env` "
+        "para habilitar a análise automática."
     )
 elif not tables_text.strip():
     st.warning("Nenhum dado disponível para análise.")
 else:
     if st.button("🔍 Gerar Análise", key="btn_ai_jc"):
-        # Verificar se há entrevistas para análise comparativa
         entrevistas_summary = st.session_state.get("jc_entrevistas_summary", "")
-        
-        # Construir system prompt com contexto do projeto
-        system_parts = [
-            "Você é um especialista em análise de dados de eye-tracking "
-            "e comportamento do consumidor."
-        ]
+        vs_id = get_vector_store_id() if use_kb else None
 
-        if projeto.get("especialidade"):
-            system_parts.append(
-                f"Contexto de especialidade: {projeto['especialidade']}"
-            )
-
-        if entrevistas_summary:
-            system_parts.append(
-                "Você possui expertise em triangulação de dados quantitativos (eye-tracking) "
-                "e qualitativos (entrevistas). Lembre-se que há frequentemente diferenças entre "
-                "o que os consumidores DIZEM que fazem e o que REALMENTE fazem. Os dados de "
-                "eye-tracking revelam comportamentos inconscientes que os consumidores nem "
-                "sempre conseguem verbalizar."
-            )
-
-        system_parts.append(
-            "Analise os dados abaixo e forneça insights acionáveis. "
-            "Responda em português do Brasil de forma clara e estruturada."
+        user_prompt = build_user_prompt(
+            tables_text=tables_text,
+            project_context=projeto,
+            pptx_text=pptx_text,
+            entrevistas_summary=entrevistas_summary,
         )
 
-        system_prompt = " ".join(system_parts)
-
-        # Construir user prompt
-        user_parts = []
-
-        if projeto.get("nome"):
-            user_parts.append(f"**Projeto:** {projeto['nome']}")
-
-        if projeto.get("historico"):
-            user_parts.append(
-                f"**Histórico do problema:** {projeto['historico']}"
-            )
-
-        if projeto.get("problemas"):
-            user_parts.append(
-                f"**Problemas centrais a responder:** {projeto['problemas']}"
-            )
-
-        if pptx_text:
-            user_parts.append(
-                "**Relatório de referência (PPTX):**\n"
-                f"{pptx_text[:3000]}"
-            )
-
-        # Adicionar resumo das entrevistas ao prompt
-        if entrevistas_summary:
-            user_parts.append(
-                "**Resumo das Entrevistas Qualitativas:**\n"
-                f"{entrevistas_summary[:3000]}"
-            )
-
-        user_parts.append(
-            "Abaixo estão os dados de um estudo de eye-tracking "
-            "em jornada de compra:\n\n"
-            f"{tables_text}"
-        )
-
-        if entrevistas_summary:
-            user_parts.append(
-                "\nForneça:\n"
-                "1. Resumo dos resultados de atenção visual\n"
-                "2. Comparação entre marcas/AOIs\n"
-                "3. Insights sobre fixação e padrão visual\n"
-                "4. Significância estatística (se ANOVA disponível)\n"
-                "5. Recomendações práticas\n"
-                "6. Análise comparativa: Convergências, divergências entre entrevistas e eye-tracking. Destaque comportamentos inconscientes."
-            )
-        else:
-            user_parts.append(
-                "\nForneça:\n"
-                "1. Resumo dos resultados de atenção visual\n"
-                "2. Comparação entre marcas/AOIs\n"
-                "3. Insights sobre fixação e padrão visual\n"
-                "4. Significância estatística (se ANOVA disponível)\n"
-                "5. Recomendações práticas"
-            )
-
-        if projeto.get("problemas"):
-            next_item = 7 if entrevistas_summary else 6
-            user_parts.append(
-                f"\n{next_item}. Responda especificamente aos problemas centrais: "
-                f"{projeto['problemas']}"
-            )
-
-        user_prompt = "\n\n".join(user_parts)
-
-        print("=" * 60)
-        print("SYSTEM PROMPT:")
-        print("=" * 60)
-        print(system_prompt)
-        print("=" * 60)
-        print("USER PROMPT:")
-        print("=" * 60)
-        print(user_prompt)
-        print("=" * 60)
+        is_deep = ai_mode == "Aprofundada (2 etapas)"
 
         with st.spinner("Gerando análise..."):
             try:
-                client = Groq(api_key=api_key)
-                response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.5,
-                    max_tokens=2000,
-                )
-                st.markdown(response.choices[0].message.content)
-                st.session_state["jc_ai_result"] = response.choices[0].message.content
+                if is_deep:
+                    # Step 1: Statistical analysis
+                    stat_result = create_analysis(
+                        system_prompt=NEURO_SYSTEM_PROMPT_STATISTICAL,
+                        user_prompt=user_prompt,
+                        model=ai_model,
+                        vector_store_id=vs_id,
+                        temperature=0.3,
+                        max_tokens=3000,
+                    )
+
+                    # Step 2: Strategic interpretation using step 1 output
+                    strategic_prompt = (
+                        "## Análise Estatística Prévia\n"
+                        f"{stat_result['text']}\n\n"
+                        "## Dados Originais\n"
+                        f"{user_prompt}"
+                    )
+                    strat_result = create_analysis(
+                        system_prompt=NEURO_SYSTEM_PROMPT_STRATEGIC,
+                        user_prompt=strategic_prompt,
+                        model=ai_model,
+                        vector_store_id=vs_id,
+                        temperature=0.5,
+                        max_tokens=4000,
+                    )
+
+                    # Display in tabs
+                    tab_stat, tab_strat, tab_refs = st.tabs([
+                        "📊 Análise Estatística",
+                        "💡 Interpretação Estratégica",
+                        "📚 Referências",
+                    ])
+
+                    with tab_stat:
+                        st.markdown(stat_result["text"])
+
+                    with tab_strat:
+                        st.markdown(strat_result["text"])
+
+                    with tab_refs:
+                        all_citations = stat_result["citations"] + strat_result["citations"]
+                        if all_citations:
+                            for i, cit in enumerate(all_citations, 1):
+                                st.markdown(f"**[{i}]** {cit['filename']}")
+                                if cit.get("quote"):
+                                    st.caption(cit["quote"][:300])
+                        else:
+                            st.info("Nenhuma citação de documentos da base nesta análise.")
+
+                    st.session_state["jc_ai_result"] = (
+                        "## Análise Estatística\n\n" + stat_result["text"]
+                        + "\n\n## Interpretação Estratégica\n\n" + strat_result["text"]
+                    )
+
+                else:
+                    # Single-call mode
+                    result = create_analysis(
+                        system_prompt=NEURO_SYSTEM_PROMPT,
+                        user_prompt=user_prompt,
+                        model=ai_model,
+                        vector_store_id=vs_id,
+                        temperature=0.5,
+                        max_tokens=4000,
+                    )
+
+                    if result["citations"]:
+                        tab_analysis, tab_refs = st.tabs([
+                            "📊 Análise",
+                            "📚 Referências",
+                        ])
+                        with tab_analysis:
+                            st.markdown(result["text"])
+                        with tab_refs:
+                            for i, cit in enumerate(result["citations"], 1):
+                                st.markdown(f"**[{i}]** {cit['filename']}")
+                                if cit.get("quote"):
+                                    st.caption(cit["quote"][:300])
+                    else:
+                        st.markdown(result["text"])
+
+                    st.session_state["jc_ai_result"] = result["text"]
+
             except Exception as e:
                 st.error(f"Erro ao chamar a API: {e}")
 

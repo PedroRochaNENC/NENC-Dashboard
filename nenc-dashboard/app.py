@@ -52,6 +52,11 @@ def _build_pages():
                     icon="📂",
                 ),
                 st.Page(
+                    "modules/jornada_compra/base_conhecimento.py",
+                    title="Base de Conhecimento",
+                    icon="📚",
+                ),
+                st.Page(
                     "modules/jornada_compra/analise.py",
                     title="Análise",
                     icon="🔍",

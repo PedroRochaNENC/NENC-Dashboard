@@ -3,6 +3,7 @@ Página Inicial — Seleção de módulo.
 """
 
 import streamlit as st
+from utils.ai_provider import get_openai_client, get_vector_store_id
 
 
 def _select_module(module_key: str, navigate_to: str | None = None):
@@ -53,7 +54,8 @@ with col2:
         "coletados durante jornadas de compra.\n\n"
         "**Páginas:**\n"
         "- 📂 Preparação de Dados\n"
-        "- 🔍 Análise"
+        "- � Base de Conhecimento\n"
+        "- �🔍 Análise"
     )
     st.button(
         "Abrir Jornada de Compra →",
@@ -85,3 +87,18 @@ with c2:
         st.success("✅ Jornada de Compra — dados carregados")
     else:
         st.info("Jornada de Compra — sem dados")
+
+    # Knowledge base status
+    _vs_id = get_vector_store_id()
+    if _vs_id:
+        _kb_client = get_openai_client()
+        if _kb_client:
+            try:
+                _vs_files = list(_kb_client.vector_stores.files.list(vector_store_id=_vs_id))
+                st.success(f"📚 Base de Conhecimento — {len(_vs_files)} documentos")
+            except Exception:
+                st.info("📚 Base de Conhecimento — configurada")
+        else:
+            st.info("📚 Base de Conhecimento — API não configurada")
+    else:
+        st.info("📚 Base de Conhecimento — sem base")
