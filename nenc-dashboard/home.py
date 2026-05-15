@@ -26,7 +26,7 @@ st.markdown(
 
 st.divider()
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.subheader("🧪 Teste Sensorial")
@@ -54,14 +54,32 @@ with col2:
         "coletados durante jornadas de compra.\n\n"
         "**Páginas:**\n"
         "- 📂 Preparação de Dados\n"
-        "- � Base de Conhecimento\n"
-        "- �🔍 Análise"
+        "- 📚 Base de Conhecimento\n"
+        "- 🔍 Análise"
     )
     st.button(
         "Abrir Jornada de Compra →",
         key="btn_jc",
         on_click=_select_module,
         args=("jornada_compra", "modules/jornada_compra/preparacao.py"),
+        use_container_width=True,
+        type="primary",
+    )
+
+with col3:
+    st.subheader("🎙️ Prosódia")
+    st.markdown(
+        "Análise de **prosódia e transcrições de entrevistas** — "
+        "segmentos VAD, participação por locutor e análise qualitativa com IA.\n\n"
+        "**Páginas:**\n"
+        "- 📂 Preparação de Dados\n"
+        "- 🔍 Análise"
+    )
+    st.button(
+        "Abrir Prosódia →",
+        key="btn_pr",
+        on_click=_select_module,
+        args=("prosodia", "modules/prosodia/preparacao.py"),
         use_container_width=True,
         type="primary",
     )
@@ -74,8 +92,9 @@ st.markdown("### 📌 Status dos dados")
 
 ts_data = st.session_state.get("ts_data", {})
 jc_data = st.session_state.get("jc_data", {})
+pr_data = st.session_state.get("pr_data", {})
 
-c1, c2 = st.columns(2)
+c1, c2, c3 = st.columns(3)
 with c1:
     if ts_data and {"indicadores", "perifericos", "psd_results"}.intersection(ts_data):
         st.success("✅ Teste Sensorial — dados carregados")
@@ -98,7 +117,10 @@ with c2:
                 st.success(f"📚 Base de Conhecimento — {len(_vs_files)} documentos")
             except Exception:
                 st.info("📚 Base de Conhecimento — configurada")
-        else:
-            st.info("📚 Base de Conhecimento — API não configurada")
+
+with c3:
+    pr_sessions = pr_data.get("sessions", [])
+    if pr_sessions:
+        st.success(f"✅ Prosódia — {len(pr_sessions)} sessão(ões) carregada(s)")
     else:
-        st.info("📚 Base de Conhecimento — sem base")
+        st.info("Prosódia — sem dados")

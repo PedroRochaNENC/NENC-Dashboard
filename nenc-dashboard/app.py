@@ -64,6 +64,23 @@ def _build_pages():
             ],
         }
 
+    if modulo == "prosodia":
+        return {
+            "": [home],
+            "Prosódia": [
+                st.Page(
+                    "modules/prosodia/preparacao.py",
+                    title="Preparação de Dados",
+                    icon="📂",
+                ),
+                st.Page(
+                    "modules/prosodia/analise.py",
+                    title="Análise",
+                    icon="🔍",
+                ),
+            ],
+        }
+
     return {"": [home]}
 
 
