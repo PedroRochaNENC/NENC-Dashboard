@@ -32,7 +32,7 @@ def _session_id_from_name(name: str) -> str:
       35523510_Fim.json           →  35523510_Fim
     """
     stem = re.sub(r"\.(json|csv|xlsx)$", "", name, flags=re.IGNORECASE)
-    for prefix in ("Prosodia-", "Transcricao-", "prosodia-", "transcricao-"):
+    for prefix in ("Prosodia-", "Transcricao-", "Sincronizado-", "prosodia-", "transcricao-", "sincronizado-"):
         if stem.startswith(prefix):
             stem = stem[len(prefix):]
             break
@@ -134,6 +134,63 @@ def _load_transcricao_from_csv(source, session_id: str) -> Tuple[pd.DataFrame, L
     return df, errors
 
 
+def _load_sincronizado_csv(source, session_id: str) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
+    """
+    Carrega um arquivo Sincronizado-<id>.csv que contém tanto dados VAD
+    (start_s, end_s, duracao_s) quanto dados de transcrição
+    (speakers, timestamp_inicio, texto_transcricao).
+
+    Retorna (vad_df, transcricao_df, errors).
+    """
+    errors: List[str] = []
+    try:
+        raw = _read_bytes(source)
+        df = pd.read_csv(io.BytesIO(raw))
+    except Exception as e:
+        return pd.DataFrame(), pd.DataFrame(), [f"[{session_id}] Erro ao ler Sincronizado CSV: {e}"]
+
+    df.columns = [c.strip() for c in df.columns]
+    df["session_id"] = session_id
+
+    # --- VAD ---
+    vad_df = pd.DataFrame()
+    if {"start_s", "end_s"}.issubset(df.columns):
+        vad_rows = df[["session_id", "start_s", "end_s"]].copy()
+        vad_rows = vad_rows.rename(columns={"start_s": "start", "end_s": "end"})
+        if "duracao_s" in df.columns:
+            vad_rows["duration"] = df["duracao_s"].round(4)
+        else:
+            vad_rows["duration"] = (vad_rows["end"] - vad_rows["start"]).round(4)
+        vad_df = vad_rows.reset_index(drop=True)
+    else:
+        errors.append(f"[{session_id}] Sincronizado: colunas start_s/end_s não encontradas — VAD ignorado.")
+
+    # --- Transcrição ---
+    tr_df = pd.DataFrame()
+    col_map = {
+        "speakers": "SpeakerName",
+        "timestamp_inicio": "Timestamp",
+        "texto_transcricao": "Text",
+    }
+    missing_tr = [c for c in col_map if c not in df.columns]
+    if missing_tr:
+        errors.append(
+            f"[{session_id}] Sincronizado: colunas ausentes para transcrição: {', '.join(missing_tr)}."
+        )
+    else:
+        tr_rows = df[["session_id"] + list(col_map.keys())].copy()
+        tr_rows = tr_rows.rename(columns=col_map)
+        tr_rows["seconds"] = tr_rows["Timestamp"].apply(_timestamp_to_seconds)
+        tr_rows["word_count"] = tr_rows["Text"].fillna("").apply(lambda t: len(str(t).split()))
+        # Preservar colunas acústicas extras quando presentes
+        extra_cols = [c for c in df.columns if c not in {"session_id"} | set(col_map.keys())]
+        for col in extra_cols:
+            tr_rows[col] = df[col].values
+        tr_df = tr_rows.reset_index(drop=True)
+
+    return vad_df, tr_df, errors
+
+
 # ------------------------------------------------------------------
 # Loader principal
 # ------------------------------------------------------------------
@@ -141,14 +198,16 @@ def _load_transcricao_from_csv(source, session_id: str) -> Tuple[pd.DataFrame, L
 def load_prosodia_from_uploads(
     json_files: Optional[List] = None,
     csv_files: Optional[List] = None,
+    sincronizado_files: Optional[List] = None,
 ) -> Dict:
     """
     Carrega múltiplos pares de arquivos (JSON + CSV) e retorna pr_data.
 
     Parâmetros
     ----------
-    json_files : lista de UploadedFile (JSONs de prosódia)
-    csv_files  : lista de UploadedFile (CSVs de transcrição)
+    json_files         : lista de UploadedFile (JSONs de prosódia)
+    csv_files          : lista de UploadedFile (CSVs de transcrição)
+    sincronizado_files : lista de UploadedFile (CSVs Sincronizado com VAD + transcrição)
 
     Retorna
     -------
@@ -161,6 +220,7 @@ def load_prosodia_from_uploads(
     """
     json_files = json_files or []
     csv_files = csv_files or []
+    sincronizado_files = sincronizado_files or []
 
     all_errors: List[str] = []
     vad_frames: List[pd.DataFrame] = []
@@ -169,6 +229,7 @@ def load_prosodia_from_uploads(
     # Índices por session_id
     json_by_sid: Dict[str, object] = {}
     csv_by_sid: Dict[str, object] = {}
+    sinc_by_sid: Dict[str, object] = {}
 
     for f in json_files:
         sid = _session_id_from_name(f.name)
@@ -178,9 +239,34 @@ def load_prosodia_from_uploads(
         sid = _session_id_from_name(f.name)
         csv_by_sid[sid] = f
 
-    all_sids = sorted(set(json_by_sid) | set(csv_by_sid))
+    for f in sincronizado_files:
+        sid = _session_id_from_name(f.name)
+        sinc_by_sid[sid] = f
+
+    all_sids = sorted(set(json_by_sid) | set(csv_by_sid) | set(sinc_by_sid))
 
     for sid in all_sids:
+        # Sincronizado fornece VAD + transcrição em arquivo único
+        if sid in sinc_by_sid:
+            vad_df, tr_df, errs = _load_sincronizado_csv(sinc_by_sid[sid], sid)
+            all_errors.extend(errs)
+            if not vad_df.empty:
+                vad_frames.append(vad_df)
+            if not tr_df.empty:
+                tr_frames.append(tr_df)
+            # Arquivos separados têm prioridade (substituem o Sincronizado)
+            if sid in json_by_sid:
+                vad_df2, errs2 = _load_vad_from_json(json_by_sid[sid], sid)
+                all_errors.extend(errs2)
+                if not vad_df2.empty and vad_frames:
+                    vad_frames[-1] = vad_df2
+            if sid in csv_by_sid:
+                tr_df2, errs2 = _load_transcricao_from_csv(csv_by_sid[sid], sid)
+                all_errors.extend(errs2)
+                if not tr_df2.empty and tr_frames:
+                    tr_frames[-1] = tr_df2
+            continue
+
         if sid in json_by_sid:
             vad_df, errs = _load_vad_from_json(json_by_sid[sid], sid)
             all_errors.extend(errs)

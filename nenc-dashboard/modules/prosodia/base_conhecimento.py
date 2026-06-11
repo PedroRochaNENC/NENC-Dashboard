@@ -1,15 +1,19 @@
 """
-Jornada de Compra — Base de Conhecimento.
+Prosódia — Base de Conhecimento.
 
-Gerenciamento do vector store OpenAI: criação, upload de documentos,
-listagem, exclusão e teste de busca.
+Gerenciamento do vector store OpenAI para o módulo de Prosódia: criação,
+upload de documentos, listagem, exclusão e teste de busca.
 """
 
 import streamlit as st
 
-from utils.ai_provider import get_openai_client, get_vector_store_id, save_vector_store_id
+from utils.ai_provider import (
+    get_openai_client,
+    get_prosodia_vector_store_id,
+    save_prosodia_vector_store_id,
+)
 
-st.title("📚 Base de Conhecimento — Jornada de Compra")
+st.title("📚 Base de Conhecimento — Prosódia")
 
 client = get_openai_client()
 
@@ -25,52 +29,53 @@ if client is None:
 # ==================================================================
 st.subheader("⚙️ Configuração")
 
-vs_id = get_vector_store_id()
+vs_id = get_prosodia_vector_store_id()
 
 if vs_id:
     st.success(f"Vector Store ativo: `{vs_id}`")
 else:
-    st.warning("Nenhum Vector Store configurado.")
+    st.warning("Nenhum Vector Store configurado para Prosódia.")
     if st.button("➕ Criar novo Vector Store", type="primary"):
         with st.spinner("Criando vector store..."):
             try:
-                vs = client.vector_stores.create(name="NENC Neuromarketing KB")
-                save_vector_store_id(vs.id)
+                vs = client.vector_stores.create(name="NENC Prosodia KB")
+                save_prosodia_vector_store_id(vs.id)
                 st.success(f"Vector Store criado: `{vs.id}`")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao criar vector store: {e}")
     st.stop()
 
-
 # ==================================================================
 # Seção 2: Upload de Documentos
 # ==================================================================
 st.divider()
 st.subheader("📤 Upload de Documentos")
+st.markdown(
+    "Adicione artigos, relatórios e referências sobre análise de voz, "
+    "prosódia, pesquisa qualitativa ou o contexto específico do projeto."
+)
 
 uploaded_files = st.file_uploader(
     "Selecione arquivos para adicionar à base",
     type=["pdf", "pptx", "docx", "txt", "csv", "md"],
     accept_multiple_files=True,
-    key="kb_upload",
+    key="pr_kb_upload",
 )
 
 if uploaded_files:
-    with st.form("upload_form"):
+    with st.form("pr_upload_form"):
         col1, col2 = st.columns(2)
         with col1:
             tipo = st.selectbox(
                 "Tipo de documento",
-                ["relatório", "artigo científico", "apresentação", "outro"],
-                key="kb_tipo",
+                ["artigo científico", "relatório", "apresentação", "guia de análise", "outro"],
+                key="pr_kb_tipo",
             )
-            projeto = st.text_input("Projeto", key="kb_projeto")
+            projeto = st.text_input("Projeto", key="pr_kb_projeto")
         with col2:
-            ano = st.number_input("Ano", min_value=2000, max_value=2030, value=2025, key="kb_ano")
-            marca = st.text_input("Marca", key="kb_marca")
-
-        categoria = st.text_input("Categoria", key="kb_categoria")
+            ano = st.number_input("Ano", min_value=2000, max_value=2030, value=2025, key="pr_kb_ano")
+            tema = st.text_input("Tema / Área", placeholder="Ex: prosódia, emoção vocal", key="pr_kb_tema")
 
         submitted = st.form_submit_button("📤 Enviar para a base", type="primary")
 
@@ -93,7 +98,6 @@ if uploaded_files:
                 progress.progress((i + 1) / len(uploaded_files))
             st.rerun()
 
-
 # ==================================================================
 # Seção 3: Documentos na Base
 # ==================================================================
@@ -113,7 +117,6 @@ if file_list:
     for vf in file_list:
         col_name, col_status, col_action = st.columns([4, 2, 1])
 
-        # Get file details
         try:
             file_info = client.files.retrieve(vf.id)
             filename = file_info.filename
@@ -135,7 +138,7 @@ if file_list:
                 st.error(status)
 
         with col_action:
-            if st.button("🗑️", key=f"del_{vf.id}", help=f"Remover {filename}"):
+            if st.button("🗑️", key=f"pr_del_{vf.id}", help=f"Remover {filename}"):
                 try:
                     client.vector_stores.files.delete(
                         vector_store_id=vs_id,
@@ -148,7 +151,6 @@ if file_list:
 else:
     st.info("Nenhum documento na base. Faça upload acima.")
 
-
 # ==================================================================
 # Seção 4: Testar Busca
 # ==================================================================
@@ -157,12 +159,12 @@ st.subheader("🔍 Testar Busca")
 
 test_query = st.text_input(
     "Digite uma consulta para testar a busca na base",
-    placeholder="Ex: quais marcas tiveram maior tempo de fixação?",
-    key="kb_test_query",
+    placeholder="Ex: como interpretar variações de pitch em entrevistas qualitativas?",
+    key="pr_kb_test_query",
 )
 
 if test_query:
-    if st.button("Buscar", key="btn_kb_search"):
+    if st.button("Buscar", key="btn_pr_kb_search"):
         with st.spinner("Buscando..."):
             try:
                 response = client.responses.create(
@@ -175,7 +177,6 @@ if test_query:
                     max_output_tokens=500,
                 )
 
-                # Show results
                 for item in response.output:
                     if item.type == "message":
                         for content_block in item.content:
@@ -189,7 +190,6 @@ if test_query:
             except Exception as e:
                 st.error(f"Erro na busca: {e}")
 
-
 # ==================================================================
 # Navegação
 # ==================================================================
@@ -198,8 +198,8 @@ col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
     if st.button("⬅️ Voltar para Preparação", width='stretch'):
-        st.switch_page("modules/jornada_compra/preparacao.py")
+        st.switch_page("modules/prosodia/preparacao.py")
 
 with col_nav2:
     if st.button("Avançar para Análise ➡️", width='stretch', type="primary"):
-        st.switch_page("modules/jornada_compra/analise.py")
+        st.switch_page("modules/prosodia/analise.py")

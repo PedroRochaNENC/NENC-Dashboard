@@ -135,7 +135,7 @@ fig = create_synchronized_timeline(
     title=title,
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # ------------------------------------------------------------------
 # Resumo estatístico
@@ -153,4 +153,4 @@ with st.expander("📋 Resumo estatístico por Etapa"):
             .agg(["mean", "std"])
             .round(4)
         )
-        st.dataframe(summary, use_container_width=True)
+        st.dataframe(summary, width='stretch')

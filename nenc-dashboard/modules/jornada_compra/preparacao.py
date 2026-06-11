@@ -211,7 +211,7 @@ if loaded_keys:
                     st.divider()
         else:
             with st.expander(f"{label} — {len(df)} linhas, {len(df.columns)} colunas"):
-                st.dataframe(df.head(50), use_container_width=True)
+                st.dataframe(df.head(50), width='stretch')
 
 else:
     st.info("👆 Carregue pelo menos um arquivo para começar.")
@@ -288,10 +288,10 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar para o Início", use_container_width=True):
+    if st.button("⬅️ Voltar para o Início", width='stretch'):
         st.session_state.pop("modulo", None)
         st.switch_page("home.py")
 
 with col_nav2:
-    if st.button("Avançar para Análise ➡️", use_container_width=True, type="primary"):
+    if st.button("Avançar para Análise ➡️", width='stretch', type="primary"):
         st.switch_page("modules/jornada_compra/analise.py")

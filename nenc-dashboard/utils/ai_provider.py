@@ -22,13 +22,29 @@ def get_openai_client() -> OpenAI | None:
 
 
 def get_vector_store_id() -> str | None:
-    """Return the vector store ID from .env, or None if not set."""
+    """Return the Jornada de Compra vector store ID from .env, or None if not set."""
     vs_id = os.getenv("VECTOR_STORE_ID", "").strip()
+    return vs_id if vs_id else None
+
+
+def get_prosodia_vector_store_id() -> str | None:
+    """Return the Prosódia vector store ID from .env, or None if not set."""
+    vs_id = os.getenv("PROSODIA_VECTOR_STORE_ID", "").strip()
     return vs_id if vs_id else None
 
 
 def save_vector_store_id(vs_id: str) -> None:
     """Persist VECTOR_STORE_ID to the .env file."""
+    _save_env_var("VECTOR_STORE_ID", vs_id)
+
+
+def save_prosodia_vector_store_id(vs_id: str) -> None:
+    """Persist PROSODIA_VECTOR_STORE_ID to the .env file."""
+    _save_env_var("PROSODIA_VECTOR_STORE_ID", vs_id)
+
+
+def _save_env_var(key: str, value: str) -> None:
+    """Write or update a key=value line in the .env file."""
     env_path = _ENV_PATH
     if env_path.exists():
         content = env_path.read_text(encoding="utf-8")
@@ -39,18 +55,16 @@ def save_vector_store_id(vs_id: str) -> None:
     new_lines = []
     found = False
     for line in lines:
-        if line.startswith("VECTOR_STORE_ID"):
-            new_lines.append(f"VECTOR_STORE_ID={vs_id}")
+        if line.startswith(key):
+            new_lines.append(f"{key}={value}")
             found = True
         else:
             new_lines.append(line)
     if not found:
-        new_lines.append(f"VECTOR_STORE_ID={vs_id}")
+        new_lines.append(f"{key}={value}")
 
     env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
-    # Update the current process env
-    os.environ["VECTOR_STORE_ID"] = vs_id
+    os.environ[key] = value
 
 
 def create_analysis(

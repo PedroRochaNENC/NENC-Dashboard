@@ -69,14 +69,34 @@ def _build_pages():
             "": [home],
             "Prosódia": [
                 st.Page(
-                    "modules/prosodia/preparacao.py",
-                    title="Preparação de Dados",
-                    icon="📂",
+                    "modules/prosodia/projetos.py",
+                    title="Projetos",
+                    icon="🎙️",
                 ),
                 st.Page(
-                    "modules/prosodia/analise.py",
+                    "modules/prosodia/preparacao.py",
+                    title="Dados do Projeto",
+                    icon="📋",
+                ),
+                st.Page(
+                    "modules/prosodia/audios.py",
+                    title="Áudios",
+                    icon="🎵",
+                ),
+                st.Page(
+                    "modules/prosodia/audio_timeline.py",
+                    title="Timeline",
+                    icon="📊",
+                ),
+                st.Page(
+                    "modules/prosodia/audio_analise.py",
                     title="Análise",
-                    icon="🔍",
+                    icon="🤖",
+                ),
+                st.Page(
+                    "modules/prosodia/base_conhecimento.py",
+                    title="Base de Conhecimento",
+                    icon="📚",
                 ),
             ],
         }

@@ -43,7 +43,7 @@ with col1:
         key="btn_ts",
         on_click=_select_module,
         args=("teste_sensorial", "modules/teste_sensorial/preparacao.py"),
-        use_container_width=True,
+        width='stretch',
         type="primary",
     )
 
@@ -62,7 +62,7 @@ with col2:
         key="btn_jc",
         on_click=_select_module,
         args=("jornada_compra", "modules/jornada_compra/preparacao.py"),
-        use_container_width=True,
+        width='stretch',
         type="primary",
     )
 
@@ -70,17 +70,19 @@ with col3:
     st.subheader("🎙️ Prosódia")
     st.markdown(
         "Análise de **prosódia e transcrições de entrevistas** — "
-        "segmentos VAD, participação por locutor e análise qualitativa com IA.\n\n"
+        "segmentos VAD, features acústicas, qualidade de entrevista e análise com IA.\n\n"
         "**Páginas:**\n"
-        "- 📂 Preparação de Dados\n"
-        "- 🔍 Análise"
+        "- 🎙️ Projetos\n"
+        "- 🎵 Áudios\n"
+        "- 📊 Timeline\n"
+        "- 🤖 Análise + Qualidade"
     )
     st.button(
         "Abrir Prosódia →",
         key="btn_pr",
         on_click=_select_module,
-        args=("prosodia", "modules/prosodia/preparacao.py"),
-        use_container_width=True,
+        args=("prosodia", "modules/prosodia/projetos.py"),
+        width='stretch',
         type="primary",
     )
 
@@ -119,8 +121,19 @@ with c2:
                 st.info("📚 Base de Conhecimento — configurada")
 
 with c3:
-    pr_sessions = pr_data.get("sessions", [])
-    if pr_sessions:
-        st.success(f"✅ Prosódia — {len(pr_sessions)} sessão(ões) carregada(s)")
-    else:
-        st.info("Prosódia — sem dados")
+    try:
+        from utils.prosodia_db import init_db, get_projects
+        init_db()
+        _projects = get_projects()
+        if _projects:
+            _n_proj = len(_projects)
+            _n_aud = sum(p.get("n_audios", 0) for p in _projects)
+            st.success(f"✅ Prosódia — {_n_proj} projeto(s), {_n_aud} áudio(s)")
+        else:
+            st.info("Prosódia — nenhum projeto criado")
+    except Exception:
+        pr_sessions = pr_data.get("sessions", [])
+        if pr_sessions:
+            st.success(f"✅ Prosódia — {len(pr_sessions)} sessão(ões) carregada(s)")
+        else:
+            st.info("Prosódia — sem dados")

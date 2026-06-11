@@ -113,7 +113,7 @@ if data and datasets.intersection(data):
     ]:
         if key in data and not data[key].empty:
             with st.expander(f"{label} — {len(data[key])} linhas, {len(data[key].columns)} colunas"):
-                st.dataframe(data[key].head(50), use_container_width=True)
+                st.dataframe(data[key].head(50), width='stretch')
 
 else:
     st.info("👆 Carregue os dados acima para começar.")

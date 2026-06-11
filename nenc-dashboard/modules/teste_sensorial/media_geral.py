@@ -114,7 +114,7 @@ available_metrics = [
 
 if available_metrics:
     fig_ind = create_average_by_etapa(indicadores, available_metrics)
-    st.plotly_chart(fig_ind, use_container_width=True)
+    st.plotly_chart(fig_ind, width='stretch')
 else:
     st.info("Nenhuma métrica de indicadores disponível.")
 
@@ -127,7 +127,7 @@ if not perifericos.empty:
     fig_per = create_perifericos_by_etapa(
         perifericos, use_zscore=use_zscore
     )
-    st.plotly_chart(fig_per, use_container_width=True)
+    st.plotly_chart(fig_per, width='stretch')
 else:
     st.info("Dados de periféricos não carregados.")
 
@@ -154,7 +154,7 @@ with col1:
             .agg(["mean", "std"])
             .round(4)
         )
-        st.dataframe(summary, use_container_width=True)
+        st.dataframe(summary, width='stretch')
 
 with col2:
     st.markdown("**Periféricos (média ± std por Etapa)**")
@@ -170,7 +170,7 @@ with col2:
                 .agg(["mean", "std"])
                 .round(4)
             )
-            st.dataframe(per_summary, use_container_width=True)
+            st.dataframe(per_summary, width='stretch')
 
 # ------------------------------------------------------------------
 # Análise de IA
