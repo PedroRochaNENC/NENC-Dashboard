@@ -125,6 +125,11 @@ def build_prosodia_user_prompt(
         ctx_lines.append(f"**Histórico:** {project_context['historico']}")
     if project_context.get("problemas"):
         ctx_lines.append(f"**Perguntas centrais:** {project_context['problemas']}")
+    if project_context.get("briefing"):
+        briefing = str(project_context["briefing"]).strip()
+        if len(briefing) > 6000:
+            briefing = briefing[:6000] + "\n...[briefing truncado para análise]"
+        ctx_lines.append("**Briefing do projeto:**\n" + briefing)
 
     if ctx_lines:
         parts.append("\n".join(ctx_lines))

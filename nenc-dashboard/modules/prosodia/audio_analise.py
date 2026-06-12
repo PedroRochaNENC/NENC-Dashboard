@@ -407,6 +407,7 @@ proj_ctx = {
     "especialidade": project.get("especialidade", ""),
     "historico": project.get("historico", ""),
     "problemas": project.get("problemas", ""),
+    "briefing": project.get("briefing_text", ""),
 }
 
 tables_lines = []

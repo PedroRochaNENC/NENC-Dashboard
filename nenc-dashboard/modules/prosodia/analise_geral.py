@@ -320,6 +320,7 @@ proj_ctx = {
     "especialidade": project.get("especialidade", ""),
     "historico": project.get("historico", ""),
     "problemas": project.get("problemas", ""),
+    "briefing": project.get("briefing_text", ""),
 }
 
 quality_counts = {"pass": 0, "warn": 0, "fail": 0, "pending": 0}

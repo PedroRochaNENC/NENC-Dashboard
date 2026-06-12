@@ -41,6 +41,8 @@ def init_db() -> None:
                 historico    TEXT,
                 problemas    TEXT,
                 questions    TEXT,
+                briefing_filename TEXT,
+                briefing_text TEXT,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
             );
 
@@ -89,6 +91,13 @@ def init_db() -> None:
             """
         )
 
+        # Migração incremental para bancos já existentes.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "briefing_filename" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN briefing_filename TEXT")
+        if "briefing_text" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN briefing_text TEXT")
+
 
 # ---------------------------------------------------------------------------
 # CRUD — Projects
@@ -100,13 +109,30 @@ def create_project(
     historico: str = "",
     problemas: str = "",
     questions: str = "",
+    briefing_filename: str = "",
+    briefing_text: str = "",
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     with _connect() as conn:
         cur = conn.execute(
-            """INSERT INTO projects (name, especialidade, historico, problemas, questions)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, especialidade, historico, problemas, questions),
+            """INSERT INTO projects (
+                    name,
+                    especialidade,
+                    historico,
+                    problemas,
+                    questions,
+                    briefing_filename,
+                    briefing_text
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                name,
+                especialidade,
+                historico,
+                problemas,
+                questions,
+                briefing_filename,
+                briefing_text,
+            ),
         )
         return cur.lastrowid
 
@@ -142,14 +168,31 @@ def update_project(
     historico: str = "",
     problemas: str = "",
     questions: str = "",
+    briefing_filename: str = "",
+    briefing_text: str = "",
 ) -> None:
     """Atualiza os campos de um projeto existente."""
     with _connect() as conn:
         conn.execute(
             """UPDATE projects
-               SET name=?, especialidade=?, historico=?, problemas=?, questions=?
+               SET name=?,
+                   especialidade=?,
+                   historico=?,
+                   problemas=?,
+                   questions=?,
+                   briefing_filename=?,
+                   briefing_text=?
                WHERE id=?""",
-            (name, especialidade, historico, problemas, questions, project_id),
+            (
+                name,
+                especialidade,
+                historico,
+                problemas,
+                questions,
+                briefing_filename,
+                briefing_text,
+                project_id,
+            ),
         )
 
 
