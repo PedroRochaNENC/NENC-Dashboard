@@ -30,20 +30,27 @@ audio_id = st.session_state.get("pros_audio_id")
 project_id = st.session_state.get("pros_project_id")
 
 if not audio_id:
-    st.warning("Nenhum áudio selecionado.")
-    if st.button("← Áudios"):
-        st.switch_page("modules/prosodia/audios.py")
+    st.warning("Nenhuma entrevista selecionada.")
+    if st.button("← Entrevistas"):
+        st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
 audio = get_audio(audio_id)
 if not audio:
-    st.error("Áudio não encontrado no banco.")
-    if st.button("← Áudios"):
-        st.switch_page("modules/prosodia/audios.py")
+    st.error("Entrevista não encontrada no banco.")
+    if st.button("← Entrevistas"):
+        st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
 project = get_project(project_id) if project_id else {}
 sid = audio["session_id"]
+
+focus = st.session_state.get("pros_timeline_focus")
+focus_active = bool(
+    focus
+    and focus.get("audio_id") == audio_id
+    and (focus.get("seconds") is not None or focus.get("timestamp"))
+)
 
 # Header
 h1, h2 = st.columns([6, 1])
@@ -53,8 +60,24 @@ with h1:
         st.caption(f"Projeto: {project.get('name', '')}")
 with h2:
     st.write("")
-    if st.button("← Áudios", width='stretch'):
-        st.switch_page("modules/prosodia/audios.py")
+    if st.button("← Entrevistas", width='stretch'):
+        st.switch_page("modules/prosodia/entrevistas.py")
+
+if focus_active:
+    focus_question = str(focus.get("question", ""))
+    focus_source = str(focus.get("source", ""))
+    focus_seconds = focus.get("seconds")
+    focus_ts = str(focus.get("timestamp", ""))
+    focus_speaker = str(focus.get("speaker", ""))
+    where_txt = f"{focus_seconds:.1f}s" if isinstance(focus_seconds, (int, float)) else (focus_ts or "tempo não informado")
+
+    st.info(
+        "🎯 Momento localizado na transcrição"
+        f"\n\nPergunta: {focus_question}"
+        f"\nFonte usada: {focus_source}"
+        f"\nMomento: {where_txt}"
+        + (f"\nLocutor: {focus_speaker}" if focus_speaker else "")
+    )
 
 # ------------------------------------------------------------------
 # Reconstruir DataFrames a partir dos bytes salvos no banco
@@ -205,6 +228,18 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     fig_tr = create_transcription_markers(
         tr_filtered, session_id=sid, speakers=selected_speakers or None
     )
+
+    if focus_active and isinstance(focus.get("seconds"), (int, float)):
+        focus_seconds = float(focus["seconds"])
+        fig_tr.add_vline(
+            x=focus_seconds,
+            line_width=2,
+            line_dash="dash",
+            line_color="#FFD166",
+            annotation_text="Pergunta",
+            annotation_position="top",
+        )
+
     st.plotly_chart(fig_tr, width='stretch')
 
     # Participação por locutor
@@ -214,10 +249,28 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
 
     # Preview transcrição
     with st.expander("📋 Transcrição completa"):
-        cols_show = [c for c in ["SpeakerName", "Timestamp", "seconds", "word_count", "Text"]
-                     if c in tr_filtered.columns]
+        preview_df = tr_filtered.copy().reset_index(drop=True)
+        if focus_active:
+            preview_df["🎯"] = ""
+            nearest_idx = None
+
+            if "seconds" in preview_df.columns and isinstance(focus.get("seconds"), (int, float)):
+                sec_series = pd.to_numeric(preview_df["seconds"], errors="coerce")
+                if sec_series.notna().any():
+                    nearest_idx = (sec_series - float(focus["seconds"])).abs().idxmin()
+
+            if nearest_idx is None and "Timestamp" in preview_df.columns and focus.get("timestamp"):
+                match_idx = preview_df.index[preview_df["Timestamp"].astype(str) == str(focus.get("timestamp"))]
+                if len(match_idx) > 0:
+                    nearest_idx = int(match_idx[0])
+
+            if nearest_idx is not None:
+                preview_df.loc[nearest_idx, "🎯"] = "🎯"
+
+        cols_show = [c for c in ["🎯", "SpeakerName", "Timestamp", "seconds", "word_count", "Text"]
+                     if c in preview_df.columns]
         st.dataframe(
-            tr_filtered[cols_show].reset_index(drop=True),
+            preview_df[cols_show],
             width='stretch',
             height=400,
         )

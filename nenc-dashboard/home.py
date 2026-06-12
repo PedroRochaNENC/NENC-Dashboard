@@ -73,7 +73,8 @@ with col3:
         "segmentos VAD, features acústicas, qualidade de entrevista e análise com IA.\n\n"
         "**Páginas:**\n"
         "- 🎙️ Projetos\n"
-        "- 🎵 Áudios\n"
+        "- 📤 Uploads\n"
+        "- 🗂️ Entrevistas\n"
         "- 📊 Timeline\n"
         "- 🤖 Análise + Qualidade"
     )
@@ -128,7 +129,7 @@ with c3:
         if _projects:
             _n_proj = len(_projects)
             _n_aud = sum(p.get("n_audios", 0) for p in _projects)
-            st.success(f"✅ Prosódia — {_n_proj} projeto(s), {_n_aud} áudio(s)")
+            st.success(f"✅ Prosódia — {_n_proj} projeto(s), {_n_aud} entrevista(s)")
         else:
             st.info("Prosódia — nenhum projeto criado")
     except Exception:

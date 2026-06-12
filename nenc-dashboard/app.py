@@ -65,6 +65,24 @@ def _build_pages():
         }
 
     if modulo == "prosodia":
+        # Registra páginas internas para permitir switch_page,
+        # mas esconde esses itens do menu lateral.
+        st.markdown(
+            """
+            <style>
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/preparacao.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fpreparacao.py"],
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/audio_timeline.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_timeline.py"],
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/audio_analise.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_analise.py"] {
+                display: none !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
         return {
             "": [home],
             "Prosódia": [
@@ -79,9 +97,19 @@ def _build_pages():
                     icon="📋",
                 ),
                 st.Page(
+                    "modules/prosodia/entrevistas.py",
+                    title="Entrevistas",
+                    icon="🗂️",
+                ),
+                st.Page(
+                    "modules/prosodia/analise_geral.py",
+                    title="Análise Geral",
+                    icon="🧠",
+                ),
+                st.Page(
                     "modules/prosodia/audios.py",
-                    title="Áudios",
-                    icon="🎵",
+                    title="Uploads",
+                    icon="📤",
                 ),
                 st.Page(
                     "modules/prosodia/audio_timeline.py",

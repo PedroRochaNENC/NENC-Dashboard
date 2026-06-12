@@ -9,6 +9,9 @@ Exibe:
 
 import io
 import json
+import re
+import unicodedata
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 
@@ -47,6 +50,266 @@ from utils.ai_provider import (
 
 init_db()
 
+_STOPWORDS_PT = {
+    "a", "o", "as", "os", "de", "do", "da", "dos", "das", "e", "ou", "no", "na",
+    "nos", "nas", "em", "para", "por", "com", "sem", "um", "uma", "uns", "umas",
+    "que", "qual", "quais", "como", "onde", "quando", "se", "seu", "sua", "seus", "suas",
+    "voce", "vocês", "voces", "ele", "ela", "eles", "elas", "isso", "isto", "aquele",
+}
+
+
+def _normalize_text(text: str) -> str:
+    raw = str(text or "").lower().strip()
+    raw = "".join(
+        ch for ch in unicodedata.normalize("NFD", raw)
+        if unicodedata.category(ch) != "Mn"
+    )
+    raw = re.sub(r"[^a-z0-9\s]", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
+
+
+def _tokenize_pt(text: str) -> set[str]:
+    norm = _normalize_text(text)
+    tokens = {
+        t for t in norm.split()
+        if len(t) >= 3 and t not in _STOPWORDS_PT
+    }
+    return tokens
+
+
+def _extract_keyword_tokens(evidence_keywords: str) -> set[str]:
+    """Extrai tokens de evidência no formato 'Termos encontrados: ...'."""
+    text = str(evidence_keywords or "")
+    match = re.search(r"Termos\s+encontrados\s*:\s*(.*?)(?:\(|$)", text, flags=re.IGNORECASE)
+    if not match:
+        return _tokenize_pt(text)
+    raw_terms = match.group(1)
+    parts = [p.strip() for p in raw_terms.split(",") if p.strip()]
+    return _tokenize_pt(" ".join(parts))
+
+
+def _timestamp_to_seconds(ts: str) -> float | None:
+    """Converte timestamp HH:MM:SS(.ms) ou MM:SS(.ms) em segundos."""
+    val = str(ts or "").strip()
+    if not val:
+        return None
+    try:
+        if re.match(r"^\d+(?:\.\d+)?$", val):
+            return float(val)
+
+        parts = val.split(":")
+        nums = [float(p) for p in parts]
+        if len(nums) == 3:
+            return nums[0] * 3600 + nums[1] * 60 + nums[2]
+        if len(nums) == 2:
+            return nums[0] * 60 + nums[1]
+    except Exception:
+        return None
+    return None
+
+
+def _find_question_moment(
+    transcricao_df: pd.DataFrame,
+    question: str,
+    evidence_ai: str,
+    evidence_keywords: str,
+) -> dict | None:
+    """
+    Localiza o melhor turno da transcrição para a pergunta.
+    Prioridade: evidência IA > evidência keywords > tokens da pergunta.
+    """
+    if transcricao_df.empty or "Text" not in transcricao_df.columns:
+        return None
+
+    work = transcricao_df.copy().reset_index(drop=True)
+    work["_text"] = work["Text"].fillna("").astype(str)
+    work = work[work["_text"].str.strip() != ""].copy()
+    if work.empty:
+        return None
+
+    if "seconds" in work.columns:
+        work["_seconds"] = pd.to_numeric(work["seconds"], errors="coerce")
+    else:
+        work["_seconds"] = pd.Series([None] * len(work), dtype="float")
+
+    if "Timestamp" in work.columns:
+        ts_seconds = work["Timestamp"].apply(_timestamp_to_seconds)
+        work["_seconds"] = work["_seconds"].where(work["_seconds"].notna(), ts_seconds)
+
+    token_sources = []
+    ai_tokens = _tokenize_pt(evidence_ai)
+    if ai_tokens:
+        token_sources.append(("ia", ai_tokens))
+
+    kw_tokens = _extract_keyword_tokens(evidence_keywords)
+    if kw_tokens:
+        token_sources.append(("keywords", kw_tokens))
+
+    q_tokens = _tokenize_pt(question)
+    if q_tokens:
+        token_sources.append(("pergunta", q_tokens))
+
+    if not token_sources:
+        return None
+
+    for source, target_tokens in token_sources:
+        best = None
+        best_score = 0.0
+
+        for idx, row in work.iterrows():
+            row_tokens = _tokenize_pt(row["_text"])
+            if not row_tokens:
+                continue
+            overlap = len(target_tokens & row_tokens)
+            if overlap == 0:
+                continue
+
+            score = overlap / max(len(target_tokens), 1)
+            row_seconds = row.get("_seconds")
+            row_seconds = float(row_seconds) if pd.notna(row_seconds) else float("inf")
+
+            is_better = False
+            if score > best_score:
+                is_better = True
+            elif score == best_score and best is not None:
+                best_seconds = best["seconds"] if best["seconds"] is not None else float("inf")
+                if row_seconds < best_seconds:
+                    is_better = True
+                elif row_seconds == best_seconds and idx < best["index"]:
+                    is_better = True
+            elif score == best_score and best is None:
+                is_better = True
+
+            if is_better:
+                best_score = score
+                best = {
+                    "index": idx,
+                    "seconds": None if row_seconds == float("inf") else row_seconds,
+                    "timestamp": str(row.get("Timestamp", "")) if "Timestamp" in work.columns else "",
+                    "speaker": str(row.get("SpeakerName", "")) if "SpeakerName" in work.columns else "",
+                    "text": str(row.get("_text", "")),
+                    "source": source,
+                    "score": score,
+                }
+
+        if best is not None:
+            return best
+
+    return None
+
+
+def _slugify(text: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text or ""))
+    return safe.strip("_")[:80] or "audio"
+
+
+def _build_analysis_markdown(
+    sid: str,
+    project_name: str,
+    model: str,
+    created_at: str,
+    text: str,
+    citations: list,
+) -> str:
+    lines = [
+        "# Análise de IA — Prosódia",
+        "",
+        f"- Sessão: {sid}",
+        f"- Projeto: {project_name or '—'}",
+        f"- Modelo: {model or '—'}",
+        f"- Gerado em: {created_at}",
+        "",
+        "## Resultado",
+        "",
+        text or "",
+        "",
+    ]
+
+    if citations:
+        lines.extend(["## Referências", ""])
+        for i, cit in enumerate(citations, 1):
+            filename = cit.get("filename", "Documento")
+            quote = cit.get("quote", "")
+            lines.append(f"{i}. {filename}")
+            if quote:
+                lines.append(f"   - Trecho: {quote}")
+
+    return "\n".join(lines)
+
+
+def _build_quality_markdown(
+    sid: str,
+    project_name: str,
+    created_at: str,
+    overall_status: str,
+    checks: list,
+    coverage: list,
+) -> str:
+    n_pass = sum(1 for c in checks if c.get("status") == "pass")
+    n_warn = sum(1 for c in checks if c.get("status") == "warn")
+    n_fail = sum(1 for c in checks if c.get("status") == "fail")
+    n_cov_total = len(coverage)
+    n_kw_found = sum(1 for c in coverage if c.get("covered_keywords") is True)
+    n_ai_found = sum(1 for c in coverage if c.get("covered_ai") is True)
+
+    payload = {
+        "overall_status": overall_status,
+        "checks": checks,
+        "coverage": coverage,
+    }
+
+    lines = [
+        "# Verificação de Qualidade — Prosódia",
+        "",
+        f"- Sessão: {sid}",
+        f"- Projeto: {project_name or '—'}",
+        f"- Gerado em: {created_at}",
+        f"- Status geral: {overall_status}",
+        "",
+        "## Resumo",
+        "",
+        f"- Checks OK: {n_pass}",
+        f"- Alertas: {n_warn}",
+        f"- Problemas: {n_fail}",
+        f"- Cobertura IA: {n_ai_found}/{n_cov_total}",
+        f"- Cobertura Keywords: {n_kw_found}/{n_cov_total}",
+        "",
+        "## Dados Completos (JSON)",
+        "",
+        "```json",
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        "```",
+    ]
+    return "\n".join(lines)
+
+
+def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
+    """
+    Adiciona documento de resultado (análise/qualidade) ao vector store da Prosódia.
+    Não lança exceção para não quebrar o fluxo principal.
+    """
+    client = get_openai_client()
+    prosodia_vs_id = get_prosodia_vector_store_id()
+
+    if not client:
+        return False, "OpenAI não configurado para envio à base de conhecimento."
+    if not prosodia_vs_id:
+        return False, "PROSODIA_VECTOR_STORE_ID não configurado."
+
+    try:
+        uploaded = client.files.create(
+            file=(filename, content.encode("utf-8")),
+            purpose="assistants",
+        )
+        client.vector_stores.files.create(
+            vector_store_id=prosodia_vs_id,
+            file_id=uploaded.id,
+        )
+        return True, filename
+    except Exception as e:
+        return False, str(e)
+
 # ------------------------------------------------------------------
 # Carregar áudio do banco
 # ------------------------------------------------------------------
@@ -54,16 +317,16 @@ audio_id = st.session_state.get("pros_audio_id")
 project_id = st.session_state.get("pros_project_id")
 
 if not audio_id:
-    st.warning("Nenhum áudio selecionado.")
-    if st.button("← Áudios"):
-        st.switch_page("modules/prosodia/audios.py")
+    st.warning("Nenhuma entrevista selecionada.")
+    if st.button("← Entrevistas"):
+        st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
 audio = get_audio(audio_id)
 if not audio:
-    st.error("Áudio não encontrado no banco.")
-    if st.button("← Áudios"):
-        st.switch_page("modules/prosodia/audios.py")
+    st.error("Entrevista não encontrada no banco.")
+    if st.button("← Entrevistas"):
+        st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
 project = get_project(project_id) if project_id else {}
@@ -114,8 +377,8 @@ with h2:
         st.switch_page("modules/prosodia/audio_timeline.py")
 with h3:
     st.write("")
-    if st.button("← Áudios", width='stretch'):
-        st.switch_page("modules/prosodia/audios.py")
+    if st.button("← Entrevistas", width='stretch'):
+        st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
 # Sidebar
@@ -162,228 +425,367 @@ tables_text = "\n\n".join(tables_lines)
 openai_client = get_openai_client()
 vs_id = get_prosodia_vector_store_id() if use_kb else None
 
+# Ordem visual da página: Qualidade primeiro, Análise depois
+quality_section = st.container()
+analysis_section = st.container()
+
 # ------------------------------------------------------------------
 # Seção 1: Análise de IA
 # ------------------------------------------------------------------
-st.subheader("🤖 Análise de IA")
+with analysis_section:
+    st.subheader("🤖 Análise de IA")
 
-latest_analysis = get_latest_analysis(audio_id)
+    latest_analysis = get_latest_analysis(audio_id)
 
-if latest_analysis:
-    st.caption(f"Última análise: {latest_analysis['created_at']} — Modelo: {latest_analysis.get('model', '—')}")
-    st.markdown(latest_analysis["analysis_text"])
+    if latest_analysis:
+        st.caption(f"Última análise: {latest_analysis['created_at']} — Modelo: {latest_analysis.get('model', '—')}")
+        st.markdown(latest_analysis["analysis_text"])
 
-    citations = latest_analysis.get("citations", [])
-    if citations:
-        with st.expander("📎 Referências da Base de Conhecimento"):
-            for i, cit in enumerate(citations, 1):
-                st.markdown(f"**[{i}]** {cit.get('filename', 'Documento')} — _{cit.get('quote', '')}_")
+        analysis_md = _build_analysis_markdown(
+            sid=sid,
+            project_name=project.get("name", "") if project else "",
+            model=latest_analysis.get("model", ""),
+            created_at=latest_analysis.get("created_at", ""),
+            text=latest_analysis.get("analysis_text", ""),
+            citations=latest_analysis.get("citations", []),
+        )
+        st.download_button(
+            "⬇️ Download Análise IA (.md)",
+            data=analysis_md,
+            file_name=f"analise_ia_{_slugify(sid)}.md",
+            mime="text/markdown",
+            key="download_latest_ai_analysis",
+        )
 
-    with st.expander(f"📋 Histórico de análises ({len(get_analyses(audio_id))} registros)"):
-        for an in get_analyses(audio_id):
-            st.markdown(f"**{an['created_at']} — {an.get('model', '—')}**")
-            st.markdown(an["analysis_text"][:500] + ("…" if len(an["analysis_text"]) > 500 else ""))
-            st.divider()
-else:
-    st.info("Nenhuma análise disponível. Clique em **Gerar Análise** para criar a primeira.")
+        citations = latest_analysis.get("citations", [])
+        if citations:
+            with st.expander("📎 Referências da Base de Conhecimento"):
+                for i, cit in enumerate(citations, 1):
+                    st.markdown(f"**[{i}]** {cit.get('filename', 'Documento')} — _{cit.get('quote', '')}_")
 
-# Botão de gerar/regenerar
-btn_label = "🔄 Regenerar Análise" if latest_analysis else "🔍 Gerar Análise"
-if st.button(btn_label, type="primary"):
-    groq_client = None
-    if not openai_client and groq_key:
-        try:
-            from groq import Groq
-            groq_client = Groq(api_key=groq_key)
-        except Exception:
-            st.error("Groq não instalado. Execute: pip install groq")
+        with st.expander(f"📋 Histórico de análises ({len(get_analyses(audio_id))} registros)"):
+            for an in get_analyses(audio_id):
+                st.markdown(f"**{an['created_at']} — {an.get('model', '—')}**")
+                st.markdown(an["analysis_text"][:500] + ("…" if len(an["analysis_text"]) > 500 else ""))
+                st.divider()
+    else:
+        st.info("Nenhuma análise disponível. Clique em **Gerar Análise** para criar a primeira.")
+
+    # Botão de gerar/regenerar
+    btn_label = "🔄 Regenerar Análise" if latest_analysis else "🔍 Gerar Análise"
+    if st.button(btn_label, type="primary"):
+        groq_client = None
+        if not openai_client and groq_key:
+            try:
+                from groq import Groq
+                groq_client = Groq(api_key=groq_key)
+            except Exception:
+                st.error("Groq não instalado. Execute: pip install groq")
+                st.stop()
+
+        ai_client = openai_client or groq_client
+        if not ai_client:
+            st.error("Configure uma chave de API (OpenAI via .env ou Groq na barra lateral).")
             st.stop()
 
-    ai_client = openai_client or groq_client
-    if not ai_client:
-        st.error("Configure uma chave de API (OpenAI via .env ou Groq na barra lateral).")
-        st.stop()
+        with st.spinner("Gerando análise…"):
+            try:
+                result = {"text": "", "citations": []}
 
-    with st.spinner("Gerando análise…"):
-        try:
-            result = {"text": "", "citations": []}
+                if analysis_mode == "Rápida (1 chamada)":
+                    user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_text[:3000])
 
-            if analysis_mode == "Rápida (1 chamada)":
-                user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_text[:3000])
+                    if openai_client:
+                        result = ai_create_analysis(
+                            system_prompt=PROSODIA_SYSTEM_PROMPT,
+                            user_prompt=user_prompt,
+                            model=openai_model,
+                            vector_store_id=vs_id,
+                            temperature=0.5,
+                            max_tokens=3000,
+                        )
+                    else:
+                        resp = groq_client.chat.completions.create(
+                            model=groq_model,
+                            messages=[
+                                {"role": "system", "content": PROSODIA_SYSTEM_PROMPT},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            temperature=0.5,
+                            max_tokens=3000,
+                        )
+                        result = {"text": resp.choices[0].message.content, "citations": []}
 
-                if openai_client:
-                    result = ai_create_analysis(
-                        system_prompt=PROSODIA_SYSTEM_PROMPT,
-                        user_prompt=user_prompt,
-                        model=openai_model,
-                        vector_store_id=vs_id,
-                        temperature=0.5,
-                        max_tokens=3000,
-                    )
+                else:  # Aprofundada
+                    user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_text[:3000])
+
+                    if openai_client:
+                        stat_result = ai_create_analysis(
+                            system_prompt=PROSODIA_SYSTEM_PROMPT_STATISTICAL,
+                            user_prompt=user_prompt,
+                            model=openai_model,
+                            vector_store_id=None,
+                            temperature=0.3,
+                            max_tokens=2000,
+                        )
+                        strat_user = (
+                            f"Análise estatística prévia:\n{stat_result['text']}\n\n"
+                            f"Dados originais:\n{tables_text}"
+                        )
+                        strat_result = ai_create_analysis(
+                            system_prompt=PROSODIA_SYSTEM_PROMPT_STRATEGIC,
+                            user_prompt=strat_user,
+                            model=openai_model,
+                            vector_store_id=vs_id,
+                            temperature=0.5,
+                            max_tokens=2000,
+                        )
+                        combined = (
+                            "## Análise Estatística\n\n" + stat_result["text"] +
+                            "\n\n---\n\n## Análise Estratégica\n\n" + strat_result["text"]
+                        )
+                        result = {"text": combined, "citations": strat_result.get("citations", [])}
+                    else:
+                        resp_stat = groq_client.chat.completions.create(
+                            model=groq_model,
+                            messages=[
+                                {"role": "system", "content": PROSODIA_SYSTEM_PROMPT_STATISTICAL},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            temperature=0.3, max_tokens=2000,
+                        )
+                        stat_text = resp_stat.choices[0].message.content
+                        strat_user = f"Análise prévia:\n{stat_text}\n\nDados:\n{tables_text}"
+                        resp_strat = groq_client.chat.completions.create(
+                            model=groq_model,
+                            messages=[
+                                {"role": "system", "content": PROSODIA_SYSTEM_PROMPT_STRATEGIC},
+                                {"role": "user", "content": strat_user},
+                            ],
+                            temperature=0.5, max_tokens=2000,
+                        )
+                        result = {
+                            "text": "## Análise Estatística\n\n" + stat_text +
+                                    "\n\n---\n\n## Análise Estratégica\n\n" + resp_strat.choices[0].message.content,
+                            "citations": [],
+                        }
+
+                used_model = openai_model if openai_client else groq_model
+                save_analysis(audio_id, used_model, result["text"], result["citations"])
+
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                kb_doc_name = f"analise_ia_{_slugify(sid)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                kb_doc = _build_analysis_markdown(
+                    sid=sid,
+                    project_name=project.get("name", "") if project else "",
+                    model=used_model,
+                    created_at=now_str,
+                    text=result.get("text", ""),
+                    citations=result.get("citations", []),
+                )
+                kb_ok, kb_msg = _append_result_to_kb(kb_doc_name, kb_doc)
+
+                st.success("Análise salva!")
+                if kb_ok:
+                    st.caption(f"Base de conhecimento atualizada com: {kb_msg}")
                 else:
-                    resp = groq_client.chat.completions.create(
-                        model=groq_model,
-                        messages=[
-                            {"role": "system", "content": PROSODIA_SYSTEM_PROMPT},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.5,
-                        max_tokens=3000,
-                    )
-                    result = {"text": resp.choices[0].message.content, "citations": []}
+                    st.warning(f"Análise salva, mas não foi possível enviar para a base: {kb_msg}")
+                st.rerun()
 
-            else:  # Aprofundada
-                user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_text[:3000])
-
-                if openai_client:
-                    stat_result = ai_create_analysis(
-                        system_prompt=PROSODIA_SYSTEM_PROMPT_STATISTICAL,
-                        user_prompt=user_prompt,
-                        model=openai_model,
-                        vector_store_id=None,
-                        temperature=0.3,
-                        max_tokens=2000,
-                    )
-                    strat_user = (
-                        f"Análise estatística prévia:\n{stat_result['text']}\n\n"
-                        f"Dados originais:\n{tables_text}"
-                    )
-                    strat_result = ai_create_analysis(
-                        system_prompt=PROSODIA_SYSTEM_PROMPT_STRATEGIC,
-                        user_prompt=strat_user,
-                        model=openai_model,
-                        vector_store_id=vs_id,
-                        temperature=0.5,
-                        max_tokens=2000,
-                    )
-                    combined = (
-                        "## Análise Estatística\n\n" + stat_result["text"] +
-                        "\n\n---\n\n## Análise Estratégica\n\n" + strat_result["text"]
-                    )
-                    result = {"text": combined, "citations": strat_result.get("citations", [])}
-                else:
-                    resp_stat = groq_client.chat.completions.create(
-                        model=groq_model,
-                        messages=[
-                            {"role": "system", "content": PROSODIA_SYSTEM_PROMPT_STATISTICAL},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.3, max_tokens=2000,
-                    )
-                    stat_text = resp_stat.choices[0].message.content
-                    strat_user = f"Análise prévia:\n{stat_text}\n\nDados:\n{tables_text}"
-                    resp_strat = groq_client.chat.completions.create(
-                        model=groq_model,
-                        messages=[
-                            {"role": "system", "content": PROSODIA_SYSTEM_PROMPT_STRATEGIC},
-                            {"role": "user", "content": strat_user},
-                        ],
-                        temperature=0.5, max_tokens=2000,
-                    )
-                    result = {
-                        "text": "## Análise Estatística\n\n" + stat_text +
-                                "\n\n---\n\n## Análise Estratégica\n\n" + resp_strat.choices[0].message.content,
-                        "citations": [],
-                    }
-
-            used_model = openai_model if openai_client else groq_model
-            save_analysis(audio_id, used_model, result["text"], result["citations"])
-            st.success("Análise salva!")
-            st.rerun()
-
-        except Exception as e:
-            st.error(f"Erro ao gerar análise: {e}")
+            except Exception as e:
+                st.error(f"Erro ao gerar análise: {e}")
 
 # ------------------------------------------------------------------
 # Seção 2: Verificação de Qualidade
 # ------------------------------------------------------------------
-st.divider()
-st.subheader("🔍 Verificação de Qualidade da Entrevista")
+with quality_section:
+    st.divider()
+    st.subheader("🔍 Verificação de Qualidade da Entrevista")
 
-quality = get_latest_quality_check(audio_id)
-questions = get_project_questions(project_id) if project_id else []
-
-if quality:
-    overall = quality.get("overall_status", "pass")
-    checks = quality.get("checks", [])
-    coverage = quality.get("coverage", [])
-
-    # Métricas de topo
-    n_pass = sum(1 for c in checks if c.get("status") == "pass")
-    n_warn = sum(1 for c in checks if c.get("status") == "warn")
-    n_fail = sum(1 for c in checks if c.get("status") == "fail")
-
-    badge = status_badge(overall)
-    overall_label = {"pass": "OK", "warn": "Atenção", "fail": "Problema"}.get(overall, overall)
-    st.markdown(f"### {badge} Status Geral: **{overall_label}**")
-    st.caption(f"Última verificação: {quality.get('created_at', '—')}")
-
-    qc1, qc2, qc3 = st.columns(3)
-    qc1.metric("✅ Checks OK", n_pass)
-    qc2.metric("⚠️ Alertas", n_warn)
-    qc3.metric("❌ Problemas", n_fail)
-
-    # Checks objetivos
-    with st.expander("📋 Checks Objetivos", expanded=(overall != "pass")):
-        rows = []
-        for c in checks:
-            rows.append({
-                "Status": status_badge(c.get("status", "pass")),
-                "Verificação": c.get("label", c.get("id", "")),
-                "Detalhe": c.get("detail", ""),
-            })
-        if rows:
-            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
-
-    # Cobertura de perguntas
-    if coverage:
-        with st.expander(f"❓ Cobertura das Perguntas ({len(coverage)} perguntas)", expanded=True):
-            cov_rows = []
-            for c in coverage:
-                kw = c.get("covered_keywords")
-                ai_cov = c.get("covered_ai")
-                cov_rows.append({
-                    "Pergunta": c.get("question", ""),
-                    "Keywords": "✅" if kw else ("❌" if kw is False else "—"),
-                    "IA": "✅" if ai_cov else ("❌" if ai_cov is False else "—"),
-                    "Confiança": f"{c.get('confidence', 0)*100:.0f}%",
-                    "Evidência": c.get("evidence", ""),
-                })
-            st.dataframe(pd.DataFrame(cov_rows), width='stretch', hide_index=True)
-    elif questions:
-        st.info("Verificação de cobertura de perguntas não realizada. Clique em 'Reverificar'.")
-    else:
-        st.caption("Nenhuma pergunta cadastrada no projeto.")
-
-else:
-    st.info("Verificação de qualidade ainda não realizada para este áudio.")
-
-# Botão Reverificar
-if st.button("🔄 Reverificar Qualidade"):
+    quality = get_latest_quality_check(audio_id)
     questions = get_project_questions(project_id) if project_id else []
-    openai_client = get_openai_client()
-    groq_client = None
-    if not openai_client and st.session_state.get("an_groq_key"):
-        try:
-            from groq import Groq
-            groq_client = Groq(api_key=st.session_state["an_groq_key"])
-        except Exception:
-            pass
 
-    ai_client = openai_client or groq_client
+    if quality:
+        overall = quality.get("overall_status", "pass")
+        checks = quality.get("checks", [])
+        coverage = quality.get("coverage", [])
 
-    with st.spinner("Reverificando qualidade…"):
-        try:
-            new_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None)
-            cov_kw = check_question_coverage_keywords(tr_df, questions)
-            cov_ai = []
-            if ai_client and questions and transcript_text:
-                q_model = st.session_state.get("an_groq_model", "llama-3.3-70b-versatile") if groq_client else "gpt-4.1-mini"
-                cov_ai = check_question_coverage_ai(transcript_text, questions, ai_client, model=q_model)
-            cov_merged = merge_coverage(cov_kw, cov_ai) if cov_ai else cov_kw
-            new_overall = compute_overall_status(new_checks)
-            save_quality_check(audio_id, new_overall, new_checks, cov_merged)
-            st.success("Qualidade reverificada!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro na reverificação: {e}")
+        # Métricas de topo
+        n_pass = sum(1 for c in checks if c.get("status") == "pass")
+        n_warn = sum(1 for c in checks if c.get("status") == "warn")
+        n_fail = sum(1 for c in checks if c.get("status") == "fail")
+        n_cov_total = len(coverage)
+        n_kw_found = sum(1 for c in coverage if c.get("covered_keywords") is True)
+        n_ai_found = sum(1 for c in coverage if c.get("covered_ai") is True)
+
+        badge = status_badge(overall)
+        overall_label = {"pass": "OK", "warn": "Atenção", "fail": "Problema"}.get(overall, overall)
+        st.markdown(f"### {badge} Status Geral: **{overall_label}**")
+        st.caption(f"Última verificação: {quality.get('created_at', '—')}")
+
+        qc1, qc2, qc3, qc4, qc5 = st.columns(5)
+        qc1.metric("✅ Checks OK", n_pass)
+        qc2.metric("⚠️ Alertas", n_warn)
+        qc3.metric("❌ Problemas", n_fail)
+        qc4.metric("🧠 IA cobertas", f"{n_ai_found}/{n_cov_total}")
+        qc5.metric("🔎 Keywords cobertas", f"{n_kw_found}/{n_cov_total}")
+
+        quality_md = _build_quality_markdown(
+            sid=sid,
+            project_name=project.get("name", "") if project else "",
+            created_at=quality.get("created_at", ""),
+            overall_status=overall,
+            checks=checks,
+            coverage=coverage,
+        )
+        st.download_button(
+            "⬇️ Download Verificação de Qualidade (.md)",
+            data=quality_md,
+            file_name=f"qualidade_entrevista_{_slugify(sid)}.md",
+            mime="text/markdown",
+            key="download_latest_quality_check",
+        )
+
+        # Checks objetivos
+        with st.expander("📋 Checks Objetivos", expanded=(overall != "pass")):
+            rows = []
+            for c in checks:
+                rows.append({
+                    "Status": status_badge(c.get("status", "pass")),
+                    "Verificação": c.get("label", c.get("id", "")),
+                    "Detalhe": c.get("detail", ""),
+                })
+            if rows:
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
+        # Cobertura de perguntas
+        if coverage:
+            with st.expander(f"❓ Cobertura das Perguntas ({len(coverage)} perguntas)", expanded=True):
+                cov_rows = []
+                coverage_records = []
+                for c in coverage:
+                    kw = c.get("covered_keywords")
+                    ai_cov = c.get("covered_ai")
+                    evidence_kw = c.get("evidence_keywords")
+                    evidence_ai = c.get("evidence_ai")
+
+                    # Compatibilidade com registros antigos (sem campos separados)
+                    if evidence_kw is None:
+                        evidence_kw = c.get("evidence") if kw is not None else ""
+                    if evidence_ai is None:
+                        evidence_ai = c.get("evidence") if ai_cov is not None else ""
+
+                    coverage_records.append({
+                        "question": c.get("question", ""),
+                        "evidence_keywords": evidence_kw or "",
+                        "evidence_ai": evidence_ai or "",
+                    })
+
+                    cov_rows.append({
+                        "Pergunta": c.get("question", ""),
+                        "Keywords": "✅" if kw else ("❌" if kw is False else "—"),
+                        "IA": "✅" if ai_cov else ("❌" if ai_cov is False else "—"),
+                        "Confiança": f"{c.get('confidence', 0)*100:.0f}%",
+                        "Evidência Keywords": evidence_kw or "",
+                        "Evidência IA": evidence_ai or "",
+                    })
+
+                coverage_table_event = st.dataframe(
+                    pd.DataFrame(cov_rows),
+                    width='stretch',
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=f"coverage_table_select_{audio_id}",
+                )
+
+                selected_rows = []
+                if coverage_table_event:
+                    selection = getattr(coverage_table_event, "selection", None)
+                    if isinstance(selection, dict):
+                        selected_rows = selection.get("rows", [])
+                    elif selection is not None:
+                        selected_rows = getattr(selection, "rows", []) or []
+
+                if st.button("🎯 Ir para momento na Timeline", key=f"go_timeline_moment_{audio_id}"):
+                    if not selected_rows:
+                        st.info("Selecione uma pergunta na tabela de cobertura para localizar o momento na entrevista.")
+                    else:
+                        idx = int(selected_rows[0])
+                        if idx < 0 or idx >= len(coverage_records):
+                            st.warning("Não foi possível identificar a pergunta selecionada.")
+                        else:
+                            selected = coverage_records[idx]
+                            focus = _find_question_moment(
+                                transcricao_df=tr_df,
+                                question=selected.get("question", ""),
+                                evidence_ai=selected.get("evidence_ai", ""),
+                                evidence_keywords=selected.get("evidence_keywords", ""),
+                            )
+                            if not focus:
+                                st.warning("Não foi possível localizar esse momento na transcrição.")
+                            else:
+                                st.session_state["pros_timeline_focus"] = {
+                                    "audio_id": audio_id,
+                                    "session_id": sid,
+                                    "question": selected.get("question", ""),
+                                    "seconds": focus.get("seconds"),
+                                    "timestamp": focus.get("timestamp", ""),
+                                    "speaker": focus.get("speaker", ""),
+                                    "text": focus.get("text", ""),
+                                    "source": focus.get("source", ""),
+                                }
+                                st.switch_page("modules/prosodia/audio_timeline.py")
+        elif questions:
+            st.info("Verificação de cobertura de perguntas não realizada. Clique em 'Reverificar'.")
+        else:
+            st.caption("Nenhuma pergunta cadastrada no projeto.")
+    else:
+        st.info("Verificação de qualidade ainda não realizada para este áudio.")
+
+    # Botão Reverificar
+    if st.button("🔄 Reverificar Qualidade"):
+        questions = get_project_questions(project_id) if project_id else []
+        openai_client = get_openai_client()
+        groq_client = None
+        if not openai_client and st.session_state.get("an_groq_key"):
+            try:
+                from groq import Groq
+                groq_client = Groq(api_key=st.session_state["an_groq_key"])
+            except Exception:
+                pass
+
+        ai_client = openai_client or groq_client
+
+        with st.spinner("Reverificando qualidade…"):
+            try:
+                new_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None)
+                cov_kw = check_question_coverage_keywords(tr_df, questions)
+                cov_ai = []
+                if ai_client and questions and transcript_text:
+                    q_model = st.session_state.get("an_groq_model", "llama-3.3-70b-versatile") if groq_client else "gpt-4.1-mini"
+                    cov_ai = check_question_coverage_ai(transcript_text, questions, ai_client, model=q_model)
+                cov_merged = merge_coverage(cov_kw, cov_ai) if cov_ai else cov_kw
+                new_overall = compute_overall_status(new_checks)
+                save_quality_check(audio_id, new_overall, new_checks, cov_merged)
+
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                kb_doc_name = f"qualidade_entrevista_{_slugify(sid)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                kb_doc = _build_quality_markdown(
+                    sid=sid,
+                    project_name=project.get("name", "") if project else "",
+                    created_at=now_str,
+                    overall_status=new_overall,
+                    checks=new_checks,
+                    coverage=cov_merged,
+                )
+                kb_ok, kb_msg = _append_result_to_kb(kb_doc_name, kb_doc)
+
+                st.success("Qualidade reverificada!")
+                if kb_ok:
+                    st.caption(f"Base de conhecimento atualizada com: {kb_msg}")
+                else:
+                    st.warning(f"Qualidade salva, mas não foi possível enviar para a base: {kb_msg}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro na reverificação: {e}")

@@ -420,6 +420,71 @@ COVERAGE_SYSTEM_PROMPT = (
 )
 
 
+_COVERAGE_BATCH_SIZE = 10
+_COVERAGE_MAX_TRANSCRIPT_WORDS = 3000
+
+
+def _coverage_ai_batch(
+    transcript_text: str,
+    batch: List[str],
+    client,
+    model: str,
+) -> List[Dict]:
+    """
+    Envia um lote de perguntas para a IA e retorna os resultados de cobertura.
+    Usa a transcrição completa (até _COVERAGE_MAX_TRANSCRIPT_WORDS palavras).
+    """
+    questions_block = "\n".join(f"{i+1}. {q}" for i, q in enumerate(batch))
+    words = transcript_text.split()
+    if len(words) > _COVERAGE_MAX_TRANSCRIPT_WORDS:
+        transcript_used = " ".join(words[:_COVERAGE_MAX_TRANSCRIPT_WORDS]) + "\n[transcrição truncada]"
+    else:
+        transcript_used = transcript_text
+
+    user_msg = (
+        f"Perguntas de pesquisa:\n{questions_block}\n\n"
+        f"Transcrição da entrevista:\n{transcript_used}"
+    )
+
+    # Tokens de saída: ~200 por pergunta + margem de segurança
+    needed_tokens = max(1500, len(batch) * 200 + 500)
+
+    if hasattr(client, "responses"):
+        resp = client.responses.create(
+            model=model,
+            instructions=COVERAGE_SYSTEM_PROMPT,
+            input=user_msg,
+            temperature=0.2,
+            max_output_tokens=needed_tokens,
+        )
+        raw_json = resp.output_text
+    else:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": COVERAGE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.2,
+            max_tokens=needed_tokens,
+        )
+        raw_json = resp.choices[0].message.content
+
+    ai_results = _parse_json_response(raw_json)
+
+    coverage = []
+    for i, q in enumerate(batch):
+        ai_item = ai_results[i] if i < len(ai_results) else {}
+        coverage.append({
+            "question": q,
+            "covered_keywords": None,  # será mesclado pelo chamador
+            "covered_ai": bool(ai_item.get("covered", False)),
+            "confidence": float(ai_item.get("confidence", 0.0)),
+            "evidence": str(ai_item.get("evidence", "")),
+        })
+    return coverage
+
+
 def check_question_coverage_ai(
     transcript_text: str,
     questions: List[str],
@@ -429,78 +494,34 @@ def check_question_coverage_ai(
     """
     Usa IA para verificar semanticamente se cada pergunta foi abordada.
     Requer client OpenAI ou Groq.
+    Processa perguntas em lotes de _COVERAGE_BATCH_SIZE para garantir que
+    todas as perguntas recebam avaliação mesmo em entrevistas longas.
     Retorna lista no mesmo formato de check_question_coverage_keywords,
     com campo covered_ai preenchido.
     """
     if not questions or not transcript_text.strip():
         return []
 
-    questions_block = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
-    # Limitar transcrição para deixar espaço suficiente para a resposta JSON
-    # Cada pergunta precisa de ~150 tokens na resposta; deixar margem folgada
-    max_transcript_words = max(400, 2000 - len(questions) * 80)
-    words = transcript_text.split()
-    if len(words) > max_transcript_words:
-        transcript_text = " ".join(words[:max_transcript_words]) + "\n[transcrição truncada]"
+    all_coverage: List[Dict] = []
 
-    user_msg = (
-        f"Perguntas de pesquisa:\n{questions_block}\n\n"
-        f"Transcrição da entrevista:\n{transcript_text}"
-    )
+    for batch_start in range(0, len(questions), _COVERAGE_BATCH_SIZE):
+        batch = questions[batch_start: batch_start + _COVERAGE_BATCH_SIZE]
+        try:
+            batch_results = _coverage_ai_batch(transcript_text, batch, client, model)
+            all_coverage.extend(batch_results)
+        except Exception as e:
+            all_coverage.extend([
+                {
+                    "question": q,
+                    "covered_keywords": None,
+                    "covered_ai": None,
+                    "confidence": 0.0,
+                    "evidence": f"Erro na análise de IA: {e}",
+                }
+                for q in batch
+            ])
 
-    try:
-        # Suporte a OpenAI (client.responses.create) e Groq (client.chat.completions.create)
-        # Tokens necessários: ~150 por pergunta + margem de segurança
-        needed_tokens = max(1500, len(questions) * 200 + 500)
-
-        if hasattr(client, "responses"):
-            resp = client.responses.create(
-                model=model,
-                instructions=COVERAGE_SYSTEM_PROMPT,
-                input=user_msg,
-                temperature=0.2,
-                max_output_tokens=needed_tokens,
-            )
-            raw_json = resp.output_text
-        else:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": COVERAGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.2,
-                max_tokens=needed_tokens,
-            )
-            raw_json = resp.choices[0].message.content
-
-        ai_results = _parse_json_response(raw_json)
-
-        # Mapear resultados da IA por índice de pergunta
-        coverage = []
-        for i, q in enumerate(questions):
-            ai_item = ai_results[i] if i < len(ai_results) else {}
-            coverage.append({
-                "question": q,
-                "covered_keywords": None,  # será mesclado pelo chamador
-                "covered_ai": bool(ai_item.get("covered", False)),
-                "confidence": float(ai_item.get("confidence", 0.0)),
-                "evidence": str(ai_item.get("evidence", "")),
-            })
-        return coverage
-
-    except Exception as e:
-        # Se IA falhar, retornar lista com erro mas não quebrar o fluxo
-        return [
-            {
-                "question": q,
-                "covered_keywords": None,
-                "covered_ai": None,
-                "confidence": 0.0,
-                "evidence": f"Erro na análise de IA: {e}",
-            }
-            for q in questions
-        ]
+    return all_coverage
 
 
 def merge_coverage(
@@ -512,12 +533,17 @@ def merge_coverage(
     merged = []
     for kw in kw_results:
         ai = ai_by_question.get(kw["question"], {})
+        kw_evidence = kw.get("evidence", "")
+        ai_evidence = ai.get("evidence", "")
         merged.append({
             "question": kw["question"],
             "covered_keywords": kw.get("covered_keywords"),
             "covered_ai": ai.get("covered_ai"),
             "confidence": ai.get("confidence", kw.get("confidence", 0.0)),
-            "evidence": ai.get("evidence") or kw.get("evidence", ""),
+            "evidence_keywords": kw_evidence,
+            "evidence_ai": ai_evidence,
+            # Compatibilidade com dados/consumidores legados
+            "evidence": ai_evidence or kw_evidence,
         })
     return merged
 

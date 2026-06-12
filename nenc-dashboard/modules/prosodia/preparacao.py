@@ -82,7 +82,7 @@ with st.form("form_projeto"):
     st.subheader("❓ Perguntas da Entrevista")
     st.markdown(
         "Liste as perguntas que **devem ser abordadas** em cada entrevista. "
-        "O sistema verificará automaticamente a cobertura ao carregar os áudios. "
+        "O sistema verificará automaticamente a cobertura ao carregar os uploads. "
         "**Uma pergunta por linha.**"
     )
 
@@ -102,7 +102,7 @@ with st.form("form_projeto"):
     st.caption("_Deixe em branco para pular a verificação de cobertura de perguntas._")
 
     submitted = st.form_submit_button(
-        "💾 Salvar e ir para Áudios",
+        "💾 Salvar e ir para Entrevistas",
         type="primary",
         width='stretch',
     )
@@ -132,5 +132,5 @@ if submitted:
             st.session_state["pros_project_id"] = new_id
             st.success("Projeto criado!")
 
-        st.switch_page("modules/prosodia/audios.py")
+        st.switch_page("modules/prosodia/entrevistas.py")
 

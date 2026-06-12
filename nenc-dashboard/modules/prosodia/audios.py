@@ -1,8 +1,8 @@
 """
-Prosódia — Áudios do Projeto.
+Prosódia — Uploads do Projeto.
 
-Tabela de todos os áudios de um projeto com upload em lote,
-status de KB e qualidade, e navegação para Timeline e Análise por áudio.
+Upload e processamento em lote de entrevistas (JSON/CSV), com geração
+automática de análise e verificação de qualidade.
 """
 
 import io
@@ -12,10 +12,8 @@ import pandas as pd
 from utils.prosodia_db import (
     init_db,
     get_project,
-    get_audios,
     get_project_questions,
     create_audio,
-    delete_audio,
     save_analysis,
     save_quality_check,
     update_audio_openai_ids,
@@ -31,7 +29,6 @@ from utils.prosodia_quality import (
     check_question_coverage_ai,
     merge_coverage,
     compute_overall_status,
-    status_badge,
 )
 from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
 from utils.ai_provider import (
@@ -64,7 +61,7 @@ if not project:
 # ------------------------------------------------------------------
 h1, h2, h3 = st.columns([5, 1, 1])
 with h1:
-    st.title(f"🎵 {project['name']}")
+    st.title(f"📤 Uploads — {project['name']}")
 with h2:
     st.write("")
     if st.button("✏️ Editar", width='stretch'):
@@ -78,7 +75,7 @@ with h3:
 # Upload em lote
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("📤 Adicionar Áudios")
+st.subheader("📤 Adicionar Entrevistas")
 st.markdown(
     "O matching entre JSON e CSV é feito automaticamente pelo ID de sessão "
     "extraído do nome do arquivo "
@@ -128,7 +125,7 @@ with st.expander("⚙️ Configurações de análise automática", expanded=Fals
     )
 
 if json_files or csv_files or sinc_files:
-    if st.button("💾 Processar e Salvar Áudios", type="primary"):
+    if st.button("💾 Processar e Salvar Uploads", type="primary"):
         questions = get_project_questions(project_id)
         openai_client = get_openai_client()
         groq_client = None
@@ -312,100 +309,17 @@ if json_files or csv_files or sinc_files:
             progress.progress((i + 1) / total, text=f"{sid} concluído.")
 
         progress.empty()
-        st.success(f"✅ {total} áudio(s) processado(s) com sucesso!")
-        st.rerun()
+        st.success(f"✅ {total} entrevista(s) processada(s) com sucesso!")
+        st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
-# Tabela de áudios
+# Acesso às entrevistas
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("🎵 Áudios do Projeto")
-
-audios = get_audios(project_id)
-
-if not audios:
-    st.info("Nenhum áudio carregado ainda. Envie os arquivos acima.")
-else:
-    for audio in audios:
-        a_id = audio["id"]
-        sid = audio["session_id"]
-
-        kb_ok = bool(audio.get("openai_file_id_prosodia") or audio.get("openai_file_id_transcricao"))
-        kb_badge = "✅" if kb_ok else "⚠️"
-
-        n_an = audio.get("n_analyses", 0)
-        an_badge = "✅" if n_an > 0 else "⏳"
-
-        q_status = audio.get("quality_status") or "pending"
-        q_badge = status_badge(q_status) if q_status != "pending" else "⏳"
-
-        with st.container(border=True):
-            c1, c2, c3, c4, c5, c6, c7 = st.columns([4, 1, 1, 1, 1, 1, 1])
-
-            with c1:
-                st.markdown(f"**{sid}**")
-                st.caption(
-                    f"📅 {str(audio['created_at'])[:10]}  •  "
-                    f"KB {kb_badge}  •  Análise {an_badge}  •  Qualidade {q_badge}"
-                )
-
-            with c2:
-                st.write("")
-                if st.button("📊 Timeline", key=f"tl_{a_id}", width='stretch'):
-                    st.session_state["pros_audio_id"] = a_id
-                    st.switch_page("modules/prosodia/audio_timeline.py")
-
-            with c3:
-                st.write("")
-                if st.button("🤖 Análise", key=f"an_{a_id}", width='stretch'):
-                    st.session_state["pros_audio_id"] = a_id
-                    st.switch_page("modules/prosodia/audio_analise.py")
-
-            with c4:
-                st.write("")
-                # Download JSON original
-                if audio.get("prosodia_json"):
-                    st.download_button(
-                        "⬇ JSON",
-                        data=audio["prosodia_json"],
-                        file_name=f"Prosodia-{sid}.json",
-                        mime="application/json",
-                        key=f"dl_json_{a_id}",
-                        width='stretch',
-                    )
-
-            with c5:
-                st.write("")
-                if audio.get("transcricao_csv"):
-                    st.download_button(
-                        "⬇ CSV",
-                        data=audio["transcricao_csv"],
-                        file_name=f"Transcricao-{sid}.csv",
-                        mime="text/csv",
-                        key=f"dl_csv_{a_id}",
-                        width='stretch',
-                    )
-
-            with c6:
-                st.write("")
-
-            with c7:
-                st.write("")
-                if st.button("🗑️", key=f"del_{a_id}", width='stretch'):
-                    st.session_state[f"confirm_del_audio_{a_id}"] = True
-
-            if st.session_state.get(f"confirm_del_audio_{a_id}"):
-                st.warning(f"Excluir áudio **{sid}**? Esta ação não pode ser desfeita.")
-                dc1, dc2 = st.columns(2)
-                with dc1:
-                    if st.button("✅ Confirmar", key=f"del_yes_{a_id}", width='stretch'):
-                        delete_audio(a_id)
-                        st.session_state.pop(f"confirm_del_audio_{a_id}", None)
-                        st.rerun()
-                with dc2:
-                    if st.button("❌ Cancelar", key=f"del_no_{a_id}", width='stretch'):
-                        st.session_state.pop(f"confirm_del_audio_{a_id}", None)
-                        st.rerun()
+st.subheader("🗂️ Entrevistas do Projeto")
+st.caption("A listagem completa, busca, filtros e ações de cada entrevista ficam na tela Entrevistas.")
+if st.button("🗂️ Ir para Entrevistas", type="primary"):
+    st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
 # Base de Conhecimento

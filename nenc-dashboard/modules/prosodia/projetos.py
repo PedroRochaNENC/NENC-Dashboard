@@ -15,7 +15,7 @@ init_db()
 st.title("🎙️ Prosódia — Projetos")
 st.markdown(
     "Organize suas análises de prosódia em **projetos** (campanhas). "
-    "Cada projeto agrupa áudios de entrevistas com contexto compartilhado e "
+    "Cada projeto agrupa entrevistas com contexto compartilhado e "
     "base de conhecimento unificada."
 )
 
@@ -43,13 +43,13 @@ if not projects:
 else:
     for proj in projects:
         with st.container(border=True):
-            c1, c2, c3, c4 = st.columns([4, 1, 1, 1])
+            c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 1])
 
             with c1:
                 n = proj.get("n_audios", 0)
                 st.markdown(f"**{proj['name']}**")
                 st.caption(
-                    f"🎵 {n} áudio(s)  •  📅 {proj['created_at'][:10]}"
+                    f"🗂️ {n} entrevista(s)  •  📅 {proj['created_at'][:10]}"
                     + (f"  •  _{proj['especialidade'][:60]}…_" if proj.get("especialidade") else "")
                 )
 
@@ -57,7 +57,7 @@ else:
                 st.write("")
                 if st.button("📂 Abrir", key=f"open_{proj['id']}", width='stretch'):
                     st.session_state["pros_project_id"] = proj["id"]
-                    st.switch_page("modules/prosodia/audios.py")
+                    st.switch_page("modules/prosodia/entrevistas.py")
 
             with c3:
                 st.write("")
@@ -67,6 +67,12 @@ else:
 
             with c4:
                 st.write("")
+                if st.button("📤 Uploads", key=f"uploads_{proj['id']}", width='stretch'):
+                    st.session_state["pros_project_id"] = proj["id"]
+                    st.switch_page("modules/prosodia/audios.py")
+
+            with c5:
+                st.write("")
                 if st.button("🗑️ Excluir", key=f"del_{proj['id']}", width='stretch'):
                     st.session_state[f"confirm_del_{proj['id']}"] = True
 
@@ -74,7 +80,7 @@ else:
             if st.session_state.get(f"confirm_del_{proj['id']}"):
                 st.warning(
                     f"Tem certeza que deseja excluir **{proj['name']}**? "
-                    "Todos os áudios e análises serão removidos permanentemente."
+                    "Todas as entrevistas e análises serão removidas permanentemente."
                 )
                 cc1, cc2 = st.columns(2)
                 with cc1:

@@ -8,8 +8,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Load .env from the nenc-dashboard directory
-_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+# Load .env — search nenc-dashboard/ first, then workspace root
+_ENV_PATH = next(
+    (p for p in [
+        Path(__file__).resolve().parent.parent / ".env",          # nenc-dashboard/.env
+        Path(__file__).resolve().parent.parent.parent / ".env",   # workspace root/.env
+    ] if p.exists()),
+    Path(__file__).resolve().parent.parent / ".env",
+)
 load_dotenv(_ENV_PATH)
 
 

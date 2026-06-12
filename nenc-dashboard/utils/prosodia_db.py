@@ -76,6 +76,16 @@ def init_db() -> None:
                 coverage_json  TEXT,
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
             );
+
+            CREATE TABLE IF NOT EXISTS project_analyses (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id     INTEGER NOT NULL
+                               REFERENCES projects(id) ON DELETE CASCADE,
+                model          TEXT,
+                analysis_text  TEXT,
+                citations      TEXT,
+                created_at     TEXT    DEFAULT (datetime('now','localtime'))
+            );
             """
         )
 
@@ -190,6 +200,93 @@ def get_audios(project_id: int) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
+def get_audios_for_interviews(project_id: int) -> List[Dict]:
+    """
+    Retorna áudios de um projeto com resumo da última verificação de qualidade
+    e contagem de análises, pronto para tabela da página Entrevistas.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                a.id,
+                a.project_id,
+                a.session_id,
+                a.created_at,
+                a.prosodia_json,
+                a.transcricao_csv,
+                a.sincronizado_csv,
+                a.openai_file_id_prosodia,
+                a.openai_file_id_transcricao,
+                (
+                    SELECT q.overall_status
+                    FROM quality_checks q
+                    WHERE q.audio_id = a.id
+                    ORDER BY q.created_at DESC
+                    LIMIT 1
+                ) AS quality_status,
+                (
+                    SELECT q.checks_json
+                    FROM quality_checks q
+                    WHERE q.audio_id = a.id
+                    ORDER BY q.created_at DESC
+                    LIMIT 1
+                ) AS checks_json,
+                (
+                    SELECT q.coverage_json
+                    FROM quality_checks q
+                    WHERE q.audio_id = a.id
+                    ORDER BY q.created_at DESC
+                    LIMIT 1
+                ) AS coverage_json,
+                (
+                    SELECT COUNT(*)
+                    FROM analyses an
+                    WHERE an.audio_id = a.id
+                ) AS n_analyses
+            FROM audios a
+            WHERE a.project_id = ?
+            ORDER BY a.created_at DESC
+            """,
+            (project_id,),
+        ).fetchall()
+
+    result: List[Dict] = []
+    for row in rows:
+        d = dict(row)
+
+        checks = json.loads(d.get("checks_json") or "[]")
+        coverage = json.loads(d.get("coverage_json") or "[]")
+
+        n_pass = sum(1 for c in checks if c.get("status") == "pass")
+        n_warn = sum(1 for c in checks if c.get("status") == "warn")
+        n_fail = sum(1 for c in checks if c.get("status") == "fail")
+
+        n_cov_total = len(coverage)
+        n_ai_found = sum(1 for c in coverage if c.get("covered_ai") is True)
+        n_kw_found = sum(1 for c in coverage if c.get("covered_keywords") is True)
+
+        d["checks_ok"] = n_pass
+        d["checks_warn"] = n_warn
+        d["checks_fail"] = n_fail
+
+        d["coverage_total"] = n_cov_total
+        d["coverage_ai_found"] = n_ai_found
+        d["coverage_kw_found"] = n_kw_found
+
+        d["coverage_ai_pct"] = (n_ai_found / n_cov_total * 100.0) if n_cov_total else 0.0
+        d["coverage_kw_pct"] = (n_kw_found / n_cov_total * 100.0) if n_cov_total else 0.0
+
+        d["kb_ok"] = bool(
+            d.get("openai_file_id_prosodia") or d.get("openai_file_id_transcricao")
+        )
+        d["quality_status"] = d.get("quality_status") or "pending"
+
+        result.append(d)
+
+    return result
+
+
 def get_audio(audio_id: int) -> Optional[Dict]:
     """Retorna um áudio pelo ID."""
     with _connect() as conn:
@@ -262,6 +359,57 @@ def get_analyses(audio_id: int) -> List[Dict]:
             "SELECT * FROM analyses WHERE audio_id = ? ORDER BY created_at DESC",
             (audio_id,),
         ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["citations"] = json.loads(d.get("citations") or "[]")
+        result.append(d)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# CRUD — Project Analyses (Análise Geral)
+# ---------------------------------------------------------------------------
+
+def save_project_analysis(
+    project_id: int,
+    model: str,
+    analysis_text: str,
+    citations: Optional[list] = None,
+) -> int:
+    """Salva uma análise geral de projeto. Retorna o ID gerado."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO project_analyses (project_id, model, analysis_text, citations)
+               VALUES (?, ?, ?, ?)""",
+            (project_id, model, analysis_text, json.dumps(citations or [])),
+        )
+        return cur.lastrowid
+
+
+def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
+    """Retorna a análise geral mais recente de um projeto, ou None."""
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM project_analyses WHERE project_id = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (project_id,),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["citations"] = json.loads(d.get("citations") or "[]")
+    return d
+
+
+def get_project_analyses(project_id: int) -> List[Dict]:
+    """Retorna histórico de análises gerais de um projeto, mais recentes primeiro."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM project_analyses WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ).fetchall()
+
     result = []
     for r in rows:
         d = dict(r)
