@@ -225,6 +225,55 @@ with st.form("form_projeto"):
                 preview += "\n...[prévia truncada]"
             st.text(preview)
 
+    # ------------------------------------------------------------------
+    # Vincular Campanha do WhatsApp (Opcional)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("📱 Campanha do WhatsApp (Opcional)")
+    st.markdown(
+        "Vincule este projeto a uma campanha da API de WhatsApp para "
+        "sincronizar áudios automaticamente."
+    )
+
+    from utils.whatsapp_api_client import is_configured, get_campaigns
+
+    campaign_options = {}  # id -> display label
+    if is_configured():
+        try:
+            campaigns = get_campaigns()
+            campaign_options = {
+                c["id"]: f"{c['name']} (ID {c['id']} — {c['status']})"
+                for c in campaigns
+            }
+        except Exception as e:
+            st.warning(f"Não foi possível buscar campanhas: {e}")
+    else:
+        st.caption(
+            "⚠️ API de WhatsApp não configurada. "
+            "Configure URL e chave na tela de Projetos para habilitar."
+        )
+
+    current_campaign_id = project.get("whatsapp_campaign_id")
+
+    if campaign_options:
+        options_list = [None] + list(campaign_options.keys())
+        labels = ["— Nenhuma —"] + list(campaign_options.values())
+        default_idx = 0
+        if current_campaign_id in campaign_options:
+            default_idx = options_list.index(current_campaign_id)
+
+        selected_campaign = st.selectbox(
+            "Campanha vinculada",
+            options=options_list,
+            index=default_idx,
+            format_func=lambda x: labels[options_list.index(x)],
+            key="prep_campaign_select",
+        )
+    else:
+        selected_campaign = current_campaign_id
+        if current_campaign_id:
+            st.caption(f"Campanha vinculada atual: ID {current_campaign_id}")
+
     submitted = st.form_submit_button(
         "💾 Salvar e ir para Entrevistas",
         type="primary",
@@ -266,6 +315,7 @@ if submitted:
                 questions=questions_raw.strip(),
                 briefing_filename=briefing_filename,
                 briefing_text=briefing_text,
+                whatsapp_campaign_id=selected_campaign,
             )
             st.success("Projeto atualizado!")
         else:
@@ -277,6 +327,7 @@ if submitted:
                 questions=questions_raw.strip(),
                 briefing_filename=briefing_filename,
                 briefing_text=briefing_text,
+                whatsapp_campaign_id=selected_campaign,
             )
             st.session_state["pros_project_id"] = new_id
             saved_project_id = new_id

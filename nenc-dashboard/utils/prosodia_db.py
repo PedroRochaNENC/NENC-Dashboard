@@ -97,6 +97,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE projects ADD COLUMN briefing_filename TEXT")
         if "briefing_text" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN briefing_text TEXT")
+        if "whatsapp_campaign_id" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN whatsapp_campaign_id INTEGER")
+
+        audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
+        if "whatsapp_message_id" not in audio_cols:
+            conn.execute("ALTER TABLE audios ADD COLUMN whatsapp_message_id TEXT")
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +117,7 @@ def create_project(
     questions: str = "",
     briefing_filename: str = "",
     briefing_text: str = "",
+    whatsapp_campaign_id: Optional[int] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     with _connect() as conn:
@@ -122,8 +129,9 @@ def create_project(
                     problemas,
                     questions,
                     briefing_filename,
-                    briefing_text
-               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    briefing_text,
+                    whatsapp_campaign_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 name,
                 especialidade,
@@ -132,6 +140,7 @@ def create_project(
                 questions,
                 briefing_filename,
                 briefing_text,
+                whatsapp_campaign_id,
             ),
         )
         return cur.lastrowid
@@ -170,6 +179,7 @@ def update_project(
     questions: str = "",
     briefing_filename: str = "",
     briefing_text: str = "",
+    whatsapp_campaign_id: Optional[int] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente."""
     with _connect() as conn:
@@ -181,7 +191,8 @@ def update_project(
                    problemas=?,
                    questions=?,
                    briefing_filename=?,
-                   briefing_text=?
+                   briefing_text=?,
+                   whatsapp_campaign_id=?
                WHERE id=?""",
             (
                 name,
@@ -191,6 +202,7 @@ def update_project(
                 questions,
                 briefing_filename,
                 briefing_text,
+                whatsapp_campaign_id,
                 project_id,
             ),
         )
@@ -212,14 +224,17 @@ def create_audio(
     prosodia_json: Optional[bytes] = None,
     transcricao_csv: Optional[bytes] = None,
     sincronizado_csv: Optional[bytes] = None,
+    whatsapp_message_id: Optional[str] = None,
 ) -> int:
     """Salva um áudio com seus arquivos brutos. Retorna o ID gerado."""
     with _connect() as conn:
         cur = conn.execute(
             """INSERT INTO audios
-               (project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv)
-               VALUES (?, ?, ?, ?, ?)""",
-            (project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv),
+               (project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
+                whatsapp_message_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
+             whatsapp_message_id),
         )
         return cur.lastrowid
 

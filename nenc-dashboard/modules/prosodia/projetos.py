@@ -28,7 +28,47 @@ with col_btn:
         st.session_state.pop("pros_project_id", None)
         st.switch_page("modules/prosodia/preparacao.py")
 
-st.divider()
+# # ------------------------------------------------------------------
+# # Configuração da Integração WhatsApp
+# # ------------------------------------------------------------------
+# with st.expander("🔗 Configuração da Integração WhatsApp API", expanded=False):
+#     import os
+#     from pathlib import Path
+#     from dotenv import load_dotenv, set_key
+
+#     _env_path = Path(__file__).resolve().parent.parent / ".env"
+#     load_dotenv(_env_path)
+
+#     wa_col1, wa_col2 = st.columns(2)
+#     with wa_col1:
+#         wa_url = st.text_input(
+#             "URL da API WhatsApp",
+#             value=st.session_state.get("whatsapp_api_url", os.getenv("WHATSAPP_API_URL", "")),
+#             placeholder="http://localhost:8000",
+#             key="wa_cfg_url",
+#         )
+#     with wa_col2:
+#         wa_key = st.text_input(
+#             "Chave da API WhatsApp",
+#             value=st.session_state.get("whatsapp_api_key", os.getenv("WHATSAPP_API_KEY", "")),
+#             type="password",
+#             key="wa_cfg_key",
+#         )
+
+#     if st.button("💾 Salvar Configuração WhatsApp", key="wa_cfg_save"):
+#         st.session_state["whatsapp_api_url"] = wa_url.strip()
+#         st.session_state["whatsapp_api_key"] = wa_key.strip()
+#         # Persistir no .env
+#         try:
+#             set_key(str(_env_path), "WHATSAPP_API_URL", wa_url.strip())
+#             set_key(str(_env_path), "WHATSAPP_API_KEY", wa_key.strip())
+#             os.environ["WHATSAPP_API_URL"] = wa_url.strip()
+#             os.environ["WHATSAPP_API_KEY"] = wa_key.strip()
+#             st.success("✅ Configuração salva com sucesso!")
+#         except Exception as e:
+#             st.error(f"Erro ao salvar .env: {e}")
+
+# st.divider()
 
 # ------------------------------------------------------------------
 # Lista de projetos
