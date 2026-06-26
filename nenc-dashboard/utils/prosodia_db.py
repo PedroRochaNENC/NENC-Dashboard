@@ -8,6 +8,7 @@ Banco: nenc-dashboard/prosodia.db  (criado automaticamente na primeira chamada)
 import sqlite3
 import json
 import io
+import csv
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -43,6 +44,8 @@ def init_db() -> None:
                 questions    TEXT,
                 briefing_filename TEXT,
                 briefing_text TEXT,
+                whatsapp_campaign_id INTEGER,
+                quality_thresholds TEXT,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
             );
 
@@ -99,6 +102,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE projects ADD COLUMN briefing_text TEXT")
         if "whatsapp_campaign_id" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN whatsapp_campaign_id INTEGER")
+        if "quality_thresholds" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN quality_thresholds TEXT")
 
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -118,6 +123,7 @@ def create_project(
     briefing_filename: str = "",
     briefing_text: str = "",
     whatsapp_campaign_id: Optional[int] = None,
+    quality_thresholds: Optional[str] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     with _connect() as conn:
@@ -130,8 +136,9 @@ def create_project(
                     questions,
                     briefing_filename,
                     briefing_text,
-                    whatsapp_campaign_id
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    whatsapp_campaign_id,
+                    quality_thresholds
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 name,
                 especialidade,
@@ -141,6 +148,7 @@ def create_project(
                 briefing_filename,
                 briefing_text,
                 whatsapp_campaign_id,
+                quality_thresholds,
             ),
         )
         return cur.lastrowid
@@ -180,6 +188,7 @@ def update_project(
     briefing_filename: str = "",
     briefing_text: str = "",
     whatsapp_campaign_id: Optional[int] = None,
+    quality_thresholds: Optional[str] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente."""
     with _connect() as conn:
@@ -192,7 +201,8 @@ def update_project(
                    questions=?,
                    briefing_filename=?,
                    briefing_text=?,
-                   whatsapp_campaign_id=?
+                   whatsapp_campaign_id=?,
+                   quality_thresholds=?
                WHERE id=?""",
             (
                 name,
@@ -203,6 +213,7 @@ def update_project(
                 briefing_filename,
                 briefing_text,
                 whatsapp_campaign_id,
+                quality_thresholds,
                 project_id,
             ),
         )
@@ -256,6 +267,98 @@ def get_audios(project_id: int) -> List[Dict]:
             (project_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _ts_to_seconds(ts: str) -> float:
+    parts = str(ts).strip().split(":")
+    try:
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+        return float(parts[0])
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _calculate_duration(
+    prosodia_json: Optional[bytes],
+    transcricao_csv: Optional[bytes],
+    sincronizado_csv: Optional[bytes],
+) -> float:
+    max_time = 0.0
+
+    # 1. Try sincronizado_csv
+    if sincronizado_csv:
+        try:
+            content = sincronizado_csv.decode("utf-8", errors="ignore")
+            reader = csv.reader(io.StringIO(content))
+            header = next(reader, None)
+            if header:
+                header = [c.strip() for c in header]
+                end_s_idx = None
+                start_s_idx = None
+                if "end_s" in header:
+                    end_s_idx = header.index("end_s")
+                elif "start_s" in header:
+                    start_s_idx = header.index("start_s")
+                
+                if end_s_idx is not None or start_s_idx is not None:
+                    idx = end_s_idx if end_s_idx is not None else start_s_idx
+                    for row in reader:
+                        if len(row) > idx:
+                            try:
+                                val = float(row[idx])
+                                if val > max_time:
+                                    max_time = val
+                            except ValueError:
+                                pass
+        except Exception:
+            pass
+
+    # 2. Try prosodia_json (VAD)
+    if prosodia_json:
+        try:
+            obj = json.loads(prosodia_json.decode("utf-8", errors="ignore"))
+            vad_raw = obj.get("result", obj).get("vad", [])
+            for seg in vad_raw:
+                end = float(seg.get("end", 0))
+                if end > max_time:
+                    max_time = end
+        except Exception:
+            pass
+
+    # 3. Try transcricao_csv
+    if transcricao_csv:
+        try:
+            content = transcricao_csv.decode("utf-8", errors="ignore")
+            reader = csv.reader(io.StringIO(content))
+            header = next(reader, None)
+            if header:
+                header = [c.strip() for c in header]
+                if "Timestamp" in header:
+                    ts_idx = header.index("Timestamp")
+                    for row in reader:
+                        if len(row) > ts_idx:
+                            sec = _ts_to_seconds(row[ts_idx])
+                            if sec > max_time:
+                                max_time = sec
+        except Exception:
+            pass
+
+    return max_time
+
+
+def _format_duration(seconds: float) -> str:
+    if not seconds or seconds < 0:
+        return "00:00"
+    s = int(round(seconds))
+    hrs = s // 3600
+    mins = (s % 3600) // 60
+    secs = s % 60
+    if hrs > 0:
+        return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
 
 
 def get_audios_for_interviews(project_id: int) -> List[Dict]:
@@ -340,6 +443,14 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
         )
         d["quality_status"] = d.get("quality_status") or "pending"
 
+        # Calculate duration
+        dur_s = _calculate_duration(
+            d.get("prosodia_json"),
+            d.get("transcricao_csv"),
+            d.get("sincronizado_csv"),
+        )
+        d["duration_str"] = _format_duration(dur_s)
+
         result.append(d)
 
     return result
@@ -372,6 +483,22 @@ def update_audio_openai_ids(
                SET openai_file_id_prosodia=?, openai_file_id_transcricao=?
                WHERE id=?""",
             (file_id_prosodia, file_id_transcricao, audio_id),
+        )
+
+
+def update_audio_content(
+    audio_id: int,
+    prosodia_json: bytes,
+    transcricao_csv: bytes,
+    sincronizado_csv: bytes,
+) -> None:
+    """Atualiza os blobs de conteúdo (prosódia, transcrição, sincronizado) de um áudio."""
+    with _connect() as conn:
+        conn.execute(
+            """UPDATE audios
+               SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?
+               WHERE id=?""",
+            (prosodia_json, transcricao_csv, sincronizado_csv, audio_id),
         )
 
 

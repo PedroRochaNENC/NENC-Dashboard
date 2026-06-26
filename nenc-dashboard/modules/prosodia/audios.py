@@ -6,6 +6,7 @@ automática de análise e verificação de qualidade.
 """
 
 import io
+import json
 import streamlit as st
 import pandas as pd
 
@@ -127,6 +128,12 @@ with st.expander("⚙️ Configurações de análise automática", expanded=Fals
 if json_files or csv_files or sinc_files:
     if st.button("💾 Processar e Salvar Uploads", type="primary"):
         questions = get_project_questions(project_id)
+        thresholds = None
+        if project.get("quality_thresholds"):
+            try:
+                thresholds = json.loads(project["quality_thresholds"])
+            except Exception:
+                pass
         openai_client = get_openai_client()
         groq_client = None
 
@@ -284,7 +291,7 @@ if json_files or csv_files or sinc_files:
                 )
 
             # -- Verificação de qualidade --
-            quality_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None)
+            quality_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None, thresholds)
             coverage_kw = check_question_coverage_keywords(tr_df, questions)
             coverage_ai = []
             if ai_client and questions and transcript_sample:

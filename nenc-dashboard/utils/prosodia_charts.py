@@ -521,3 +521,224 @@ def create_transcription_markers(
     )
     return fig
 
+
+# ---------------------------------------------------------------------------
+# 6. Gráficos Consolidados do Projeto (Análise Geral)
+# ---------------------------------------------------------------------------
+
+def create_project_acoustic_comparison(
+    sinc_df: pd.DataFrame,
+    title: str = "",
+) -> go.Figure:
+    """
+    Gráfico de barras agrupadas comparando médias de Arousal, Valence, Loudness e Speaking Rate por entrevista.
+    """
+    if sinc_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Sem dados acústicos disponíveis", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+    
+    if "session_id" not in sinc_df.columns:
+        fig = go.Figure()
+        fig.add_annotation(text="session_id não encontrado nos dados", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+        
+    metrics = ["dim_arousal", "dim_valence", "loudness_media", "speaking_rate"]
+    available = [m for m in metrics if m in sinc_df.columns]
+    
+    if not available:
+        fig = go.Figure()
+        fig.add_annotation(text="Sem métricas compatíveis nos dados", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+        
+    agg = sinc_df.groupby("session_id")[available].mean().reset_index()
+    
+    fig = go.Figure()
+    
+    metric_labels = {
+        "dim_arousal": "Arousal (Média)",
+        "dim_valence": "Valência (Média)",
+        "loudness_media": "Volume (Média)",
+        "speaking_rate": "Taxa de Fala (Média)"
+    }
+    
+    colors = ["#EF553B", "#00CC96", "#AB63FA", "#FFA15A"]
+    
+    for i, m in enumerate(available):
+        fig.add_trace(
+            go.Bar(
+                x=agg["session_id"],
+                y=agg[m],
+                name=metric_labels.get(m, m),
+                marker_color=colors[i % len(colors)],
+                hovertemplate=f"<b>%{{x}}</b><br>{metric_labels.get(m, m)}: %{{y:.3f}}<extra></extra>"
+            )
+        )
+        
+    fig.update_layout(
+        title=title or "Média Acústica por Entrevista",
+        xaxis_title="Entrevista / Sessão",
+        yaxis_title="Valor Médio",
+        template="plotly_dark",
+        barmode="group",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+
+def create_project_emotion_distribution(
+    sinc_df: pd.DataFrame,
+    title: str = "",
+) -> go.Figure:
+    """
+    Gráfico de barras empilhadas mostrando a proporção média das emoções por entrevista.
+    """
+    if sinc_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Sem dados de emoções disponíveis", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+        
+    emotions = ["emocao_neutral", "emocao_happy", "emocao_sad", "emocao_angry"]
+    available = [e for e in emotions if e in sinc_df.columns]
+    
+    if not available:
+        fig = go.Figure()
+        fig.add_annotation(text="Métricas de emoção não encontradas nos dados", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+        
+    agg = sinc_df.groupby("session_id")[available].mean().reset_index()
+    
+    row_sums = agg[available].sum(axis=1)
+    for col in available:
+        agg[col] = (agg[col] / row_sums.replace(0, 1)) * 100
+        
+    fig = go.Figure()
+    
+    emotion_labels = {
+        "emocao_neutral": "Neutro",
+        "emocao_happy": "Alegria",
+        "emocao_sad": "Tristeza",
+        "emocao_angry": "Raiva"
+    }
+    
+    emotion_colors = {
+        "emocao_neutral": "#808495",
+        "emocao_happy": "#FFD166",
+        "emocao_sad": "#19D3F3",
+        "emocao_angry": "#FF6692"
+    }
+    
+    for emo in available:
+        fig.add_trace(
+            go.Bar(
+                x=agg["session_id"],
+                y=agg[emo],
+                name=emotion_labels.get(emo, emo),
+                marker_color=emotion_colors.get(emo),
+                hovertemplate=f"<b>%{{x}}</b><br>{emotion_labels.get(emo, emo)}: %{{y:.1f}}%<extra></extra>"
+            )
+        )
+        
+    fig.update_layout(
+        title=title or "Distribuição de Emoções por Entrevista (%)",
+        xaxis_title="Entrevista / Sessão",
+        yaxis_title="Proporção (%)",
+        template="plotly_dark",
+        barmode="stack",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+
+def create_project_word_ranking(
+    tr_df: pd.DataFrame,
+    title: str = "",
+    top_n: int = 15,
+) -> go.Figure:
+    """
+    Gráfico de barras horizontal das palavras mais frequentes nas transcrições do projeto.
+    """
+    if tr_df.empty or "Text" not in tr_df.columns:
+        fig = go.Figure()
+        fig.add_annotation(text="Sem transcrições disponíveis", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+        
+    import re
+    import unicodedata
+    from collections import Counter
+    
+    stopwords = {
+        "a", "o", "as", "os", "de", "do", "da", "dos", "das", "e", "ou", "no", "na",
+        "nos", "nas", "em", "para", "por", "com", "sem", "um", "uma", "uns", "umas",
+        "que", "qual", "quais", "como", "onde", "quando", "se", "seu", "sua", "seus", "suas",
+        "voce", "vocês", "voces", "ele", "ela", "eles", "elas", "isso", "isto", "aquele",
+        "mas", "tambem", "mais", "muito", "entao", "aqui", "la", "sim", "nao", "pra", "pro",
+        "este", "esta", "estes", "estas", "tudo", "todo", "toda", "todos", "todas", "ser",
+        "ter", "ir", "com", "por", "para", "uma", "um", "do", "da", "no", "na", "ao", "aos",
+        "pelo", "pela", "pelos", "pelas", "num", "numa", "neste", "nesta", "disso", "disto",
+        "dele", "dela", "deles", "delas", "mim", "me", "te", "se", "nos", "vos", "lhe", "lhes",
+        "meu", "minha", "meus", "minhas", "teu", "tua", "teus", "tuas", "nosso", "nossa",
+        "nossos", "nossas", "vosso", "vossa", "vossos", "vossas", "qualquer", "quaisquer",
+        "algum", "alguma", "alguns", "algumas", "nenhum", "nenhuma", "outro", "outra", "outros",
+        "outras", "mesmo", "mesma", "mesmos", "mesmas", "proprio", "propria", "proprios", "proprias",
+        "acho", "acha", "achar", "coisa", "coisas", "aqui", "dai", "tipo", "ne", "ta", "entao",
+        "porque", "porquê", "pois", "assim", "sobre", "outro", "outra", "outros", "outras",
+        "gente", "entao", "bem", "vou", "vai", "tao", "aqui", "tudo"
+    }
+    
+    words = []
+    for text in tr_df["Text"].fillna("").astype(str):
+        text_norm = "".join(
+            ch for ch in unicodedata.normalize("NFD", text.lower())
+            if unicodedata.category(ch) != "Mn"
+        )
+        for word in re.findall(r"\b[a-z]{3,}\b", text_norm):
+            if word not in stopwords:
+                words.append(word)
+                
+    counts = Counter(words).most_common(top_n)
+    if not counts:
+        fig = go.Figure()
+        fig.add_annotation(text="Nenhuma palavra relevante encontrada", showarrow=False)
+        fig.update_layout(template="plotly_dark")
+        return fig
+        
+    words_list, freqs_list = zip(*counts)
+    
+    words_list = list(words_list)[::-1]
+    freqs_list = list(freqs_list)[::-1]
+    
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=freqs_list,
+            y=words_list,
+            orientation="h",
+            marker=dict(
+                color=freqs_list,
+                colorscale="Viridis",
+                line=dict(color="white", width=0.5)
+            ),
+            hovertemplate="<b>%{y}</b><br>Menções: %{x}<extra></extra>"
+        )
+    )
+    
+    fig.update_layout(
+        title=title or f"Top {top_n} Palavras Mais Frequentes",
+        xaxis_title="Número de Menções",
+        yaxis_title="Palavra / Conceito",
+        template="plotly_dark",
+        height=max(350, top_n * 22 + 100),
+        margin=dict(l=100)
+    )
+    return fig
+
+

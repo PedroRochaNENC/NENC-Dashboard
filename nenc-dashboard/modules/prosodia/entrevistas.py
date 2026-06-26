@@ -60,6 +60,15 @@ if not project:
         st.switch_page("modules/prosodia/projetos.py")
     st.stop()
 
+# Parse thresholds customizados se existirem
+thresholds = None
+if project and project.get("quality_thresholds"):
+    try:
+        import json
+        thresholds = json.loads(project["quality_thresholds"])
+    except Exception:
+        pass
+
 # ------------------------------------------------------------------
 # Header
 # ------------------------------------------------------------------
@@ -312,7 +321,7 @@ if wa_configured():
                         )
 
                     # -- Verificação de qualidade --
-                    quality_checks = run_quality_checks(vad_df, tr_df, sinc_df)
+                    quality_checks = run_quality_checks(vad_df, tr_df, sinc_df, thresholds)
                     coverage_kw = check_question_coverage_keywords(tr_df, questions)
                     coverage_ai = []
                     if openai_client and questions and transcript_sample:
@@ -448,6 +457,7 @@ else:
         rows.append({
             "Sessão": a.get("session_id", ""),
             "Data": str(a.get("created_at", ""))[:10],
+            "Duração": a.get("duration_str", "00:00"),
             "Status Geral": _status_text(a.get("quality_status", "pending")),
             "✅ Checks OK": int(a.get("checks_ok", 0)),
             "⚠️ Alertas": int(a.get("checks_warn", 0)),
@@ -496,7 +506,13 @@ else:
         f"({str(selected_audio.get('created_at', ''))[:10]})"
     )
 
-    ac1, ac2, ac3 = st.columns(3)
+    is_wa = str(selected_audio.get("session_id", "")).startswith("wa_")
+    if is_wa:
+        ac1, ac2, ac3, ac4 = st.columns(4)
+    else:
+        ac1, ac2, ac4 = st.columns(3)
+        ac3 = None
+
     with ac1:
         if st.button("📊 Abrir Timeline", width="stretch", key=f"en_tl_{selected_id}"):
             st.session_state["pros_audio_id"] = selected_id
@@ -505,7 +521,193 @@ else:
         if st.button("🤖 Abrir Análise", width="stretch", key=f"en_an_{selected_id}"):
             st.session_state["pros_audio_id"] = selected_id
             st.switch_page("modules/prosodia/audio_analise.py")
-    with ac3:
+            
+    if is_wa and ac3 is not None:
+        with ac3:
+            if st.button("🔄 Reprocessar", width="stretch", key=f"en_reproc_{selected_id}", help="Solicitar reprocessamento da transcrição e prosódia via WhatsApp API"):
+                parts = selected_audio.get("session_id", "").split("_")
+                if len(parts) >= 3:
+                    try:
+                        audio_api_id = int(parts[-1])
+                        
+                        # 1. Enviar requisição de reprocessamento
+                        with st.spinner("Solicitando reprocessamento na API..."):
+                            from utils.whatsapp_api_client import reprocess_audio as api_reprocess_audio, get_audio_status, get_audio_result, map_api_result_to_all_formats
+                            api_reprocess_audio(audio_api_id)
+                        
+                        # 2. Polling status
+                        import time
+                        status_container = st.empty()
+                        
+                        start_time = time.time()
+                        timeout = 300  # 5 minutos
+                        success = False
+                        
+                        while time.time() - start_time < timeout:
+                            status_info = get_audio_status(audio_api_id)
+                            job_status = status_info.get("status", "pending")
+                            
+                            if job_status == "done":
+                                success = True
+                                break
+                            elif job_status == "failed":
+                                st.error(f"Erro no processamento da API: {status_info.get('error_msg') or 'Falha desconhecida'}")
+                                break
+                            
+                            status_container.info(f"⏳ Processando na API (status: {job_status.upper()}). Por favor, aguarde...")
+                            time.sleep(3)
+                        
+                        if success:
+                            status_container.success("✅ Processamento na API concluído! Atualizando dados locais...")
+                            
+                            # 3. Baixar resultados
+                            result_json = get_audio_result(audio_api_id)
+                            if result_json:
+                                json_bytes, csv_bytes, sinc_bytes = map_api_result_to_all_formats(result_json, selected_audio["session_id"])
+                                
+                                # 4. Atualizar blobs locais no SQLite
+                                from utils.prosodia_db import update_audio_content
+                                update_audio_content(selected_id, json_bytes, csv_bytes, sinc_bytes)
+                                
+                                # 5. Limpar cache do Streamlit
+                                st.cache_data.clear()
+                                
+                                # 6. Recarregar dados locais
+                                import pandas as pd
+                                import io
+                                from utils.prosodia_loader import load_prosodia_from_uploads
+                                class _BF:
+                                    def __init__(self, data, name):
+                                        self._buf = io.BytesIO(data)
+                                        self.name = name
+                                    def read(self): return self._buf.read()
+                                    def seek(self, p): return self._buf.seek(p)
+                                
+                                parsed_new = load_prosodia_from_uploads(
+                                    json_files=[_BF(json_bytes, f"Prosodia-{selected_audio['session_id']}.json")] if json_bytes else [],
+                                    csv_files=[_BF(csv_bytes, f"Transcricao-{selected_audio['session_id']}.csv")] if csv_bytes else [],
+                                    sincronizado_files=[_BF(sinc_bytes, f"Sincronizado-{selected_audio['session_id']}.csv")] if sinc_bytes else [],
+                                )
+                                new_vad_df = parsed_new.get("vad", pd.DataFrame())
+                                new_tr_df = parsed_new.get("transcricao", pd.DataFrame())
+                                new_sinc_df = pd.DataFrame()
+                                if sinc_bytes:
+                                    try:
+                                        new_sinc_df = pd.read_csv(io.BytesIO(sinc_bytes))
+                                    except Exception:
+                                        pass
+                                
+                                new_transcript_text = " ".join(new_tr_df["Text"].fillna("").astype(str).tolist()) if not new_tr_df.empty and "Text" in new_tr_df.columns else ""
+                                
+                                # 7. Atualizar Qualidade
+                                status_container.info("🔄 Atualizando verificação de qualidade...")
+                                from utils.prosodia_db import get_project_questions, save_quality_check, save_analysis
+                                from utils.prosodia_quality import run_quality_checks, check_question_coverage_keywords, check_question_coverage_ai, merge_coverage, compute_overall_status
+                                from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
+                                from utils.ai_provider import get_openai_client, get_prosodia_vector_store_id, create_analysis as ai_create_analysis
+                                
+                                questions = get_project_questions(project_id)
+                                openai_client = get_openai_client()
+                                vs_id = get_prosodia_vector_store_id()
+                                
+                                new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds)
+                                cov_kw = check_question_coverage_keywords(new_tr_df, questions)
+                                cov_ai = []
+                                if openai_client and questions and new_transcript_text:
+                                    cov_ai = check_question_coverage_ai(new_transcript_text, questions, openai_client, model="gpt-4.1-mini")
+                                cov_merged = merge_coverage(cov_kw, cov_ai) if cov_ai else cov_kw
+                                new_overall = compute_overall_status(new_checks)
+                                save_quality_check(selected_id, new_overall, new_checks, cov_merged)
+                                
+                                # Enviar nova qualidade para KB
+                                if openai_client and vs_id:
+                                    try:
+                                        n_pass = sum(1 for c in new_checks if c.get("status") == "pass")
+                                        n_warn = sum(1 for c in new_checks if c.get("status") == "warn")
+                                        n_fail = sum(1 for c in new_checks if c.get("status") == "fail")
+                                        
+                                        quality_md = (
+                                            f"# Verificação de Qualidade — Prosódia\n\n"
+                                            f"- Sessão: {selected_audio['session_id']}\n"
+                                            f"- Projeto: {project.get('name', '')}\n"
+                                            f"- Status geral: {new_overall}\n\n"
+                                            f"## Resumo\n\n"
+                                            f"- Checks OK: {n_pass}\n- Alertas: {n_warn}\n- Problemas: {n_fail}\n"
+                                        )
+                                        q_name = f"qualidade_entrevista_{selected_audio['session_id']}.md"
+                                        uploaded_q = openai_client.files.create(
+                                            file=(q_name, quality_md.encode("utf-8")),
+                                            purpose="assistants"
+                                        )
+                                        openai_client.vector_stores.files.create(
+                                            vector_store_id=vs_id,
+                                            file_id=uploaded_q.id
+                                        )
+                                    except Exception:
+                                        pass
+                                
+                                # 8. Atualizar Análise de IA
+                                status_container.info("🧠 Atualizando análise de IA...")
+                                new_tables_lines = []
+                                if not new_vad_df.empty and "duration" in new_vad_df.columns:
+                                    new_total_s = new_vad_df["duration"].sum()
+                                    new_tables_lines.append(f"VAD: {len(new_vad_df)} segmentos, {new_total_s:.1f}s de fala total.")
+                                if not new_tr_df.empty and "SpeakerName" in new_tr_df.columns:
+                                    new_by_spk = new_tr_df.groupby("SpeakerName").agg(msgs=("Text", "count"), words=("word_count", "sum")).reset_index()
+                                    new_tables_text = "Participação por locutor:\n" + new_by_spk.to_string(index=False)
+                                else:
+                                    new_tables_text = ""
+                                
+                                proj_ctx = {
+                                    "nome": project.get("name", ""),
+                                    "especialidade": project.get("especialidade", ""),
+                                    "historico": project.get("historico", ""),
+                                    "problemas": project.get("problemas", ""),
+                                }
+                                user_prompt = build_prosodia_user_prompt(new_tables_text, proj_ctx, new_transcript_text[:3000])
+                                
+                                # Chamar IA
+                                result_ai = ai_create_analysis(
+                                    system_prompt=PROSODIA_SYSTEM_PROMPT,
+                                    user_prompt=user_prompt,
+                                    model="gpt-4.1-mini",
+                                    vector_store_id=vs_id,
+                                    temperature=0.5,
+                                    max_tokens=3000,
+                                )
+                                save_analysis(selected_id, "gpt-4.1-mini", result_ai["text"], result_ai.get("citations", []))
+                                
+                                # Enviar nova análise para KB
+                                if openai_client and vs_id:
+                                    try:
+                                        analysis_md = (
+                                            f"# Análise de IA — Prosódia\n\n"
+                                            f"- Sessão: {selected_audio['session_id']}\n"
+                                            f"- Projeto: {project.get('name', '')}\n"
+                                            f"- Modelo: gpt-4.1-mini\n\n"
+                                            f"## Resultado\n\n{result_ai['text']}"
+                                        )
+                                        a_name = f"analise_ia_{selected_audio['session_id']}.md"
+                                        uploaded_a = openai_client.files.create(
+                                            file=(a_name, analysis_md.encode("utf-8")),
+                                            purpose="assistants"
+                                        )
+                                        openai_client.vector_stores.files.create(
+                                            vector_store_id=vs_id,
+                                            file_id=uploaded_a.id
+                                        )
+                                    except Exception:
+                                        pass
+                                
+                                status_container.success("🎉 Áudio, transcrição, prosódia e análise reprocessados com sucesso!")
+                                time.sleep(2)
+                                st.rerun()
+                            else:
+                                st.error("Erro ao baixar o resultado do processamento da API.")
+                    except Exception as e:
+                        st.error(f"Ocorreu um erro no reprocessamento: {e}")
+                        
+    with ac4:
         if st.button("🗑️ Excluir Entrevista", width="stretch", key=f"en_del_{selected_id}"):
             st.session_state[f"confirm_del_interview_{selected_id}"] = True
 

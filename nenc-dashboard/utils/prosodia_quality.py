@@ -105,9 +105,9 @@ def _parse_json_response(raw: str) -> list:
 # Limiares (editáveis)
 # ---------------------------------------------------------------------------
 
-THRESHOLDS = {
-    "duration_fail_s": 60,
-    "duration_warn_s": 120,
+DEFAULT_THRESHOLDS = {
+    "duration_fail_s": 60.0,
+    "duration_warn_s": 120.0,
     "words_fail": 50,
     "words_warn": 100,
     "unintelligible_fail_pct": 0.30,
@@ -121,6 +121,27 @@ THRESHOLDS = {
     "emotion_neutral_warn": 0.95,
     "loudness_low_warn": -40.0,  # dB típico; ajustar conforme pipeline
 }
+
+# Mantido para retrocompatibilidade
+THRESHOLDS = DEFAULT_THRESHOLDS
+
+
+def get_merged_thresholds(custom_thresholds: Optional[Dict] = None) -> Dict:
+    merged = DEFAULT_THRESHOLDS.copy()
+    if custom_thresholds:
+        for k, v in custom_thresholds.items():
+            if k in merged:
+                try:
+                    if isinstance(merged[k], int):
+                        merged[k] = int(v)
+                    elif isinstance(merged[k], float):
+                        merged[k] = float(v)
+                    else:
+                        merged[k] = v
+                except (ValueError, TypeError):
+                    pass
+    return merged
+
 
 _UNINTELLIGIBLE_RE = re.compile(
     r"\[\s*(?:inaudível|inaudible|inaud\.?|inaudi|\?+|xxx+|unclear)\s*\]",
@@ -138,46 +159,49 @@ def _check(id: str, label: str, status: str, detail: str) -> Dict:
 # Checks objetivos
 # ---------------------------------------------------------------------------
 
-def check_duration(vad_df: pd.DataFrame) -> Dict:
+def check_duration(vad_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica se a duração total de fala é suficiente."""
+    thresh = get_merged_thresholds(thresholds)
     if vad_df.empty or "duration" not in vad_df.columns:
         return _check("duration", "Duração de fala", "warn", "Dados VAD não disponíveis.")
 
     total = vad_df["duration"].sum()
-    if total < THRESHOLDS["duration_fail_s"]:
+    if total < thresh["duration_fail_s"]:
         return _check(
             "duration", "Duração de fala", "fail",
-            f"Total de fala: {total:.1f}s (mínimo esperado: {THRESHOLDS['duration_fail_s']}s)."
+            f"Total de fala: {total:.1f}s (mínimo esperado: {thresh['duration_fail_s']}s)."
         )
-    if total < THRESHOLDS["duration_warn_s"]:
+    if total < thresh["duration_warn_s"]:
         return _check(
             "duration", "Duração de fala", "warn",
-            f"Total de fala: {total:.1f}s (recomendado: ≥ {THRESHOLDS['duration_warn_s']}s)."
+            f"Total de fala: {total:.1f}s (recomendado: ≥ {thresh['duration_warn_s']}s)."
         )
     return _check("duration", "Duração de fala", "pass", f"Total de fala: {total:.1f}s.")
 
 
-def check_word_count(transcricao_df: pd.DataFrame) -> Dict:
+def check_word_count(transcricao_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica se há palavras suficientes na transcrição."""
+    thresh = get_merged_thresholds(thresholds)
     if transcricao_df.empty or "word_count" not in transcricao_df.columns:
         return _check("word_count", "Contagem de palavras", "warn", "Dados de transcrição não disponíveis.")
 
     total = int(transcricao_df["word_count"].sum())
-    if total < THRESHOLDS["words_fail"]:
+    if total < thresh["words_fail"]:
         return _check(
             "word_count", "Contagem de palavras", "fail",
-            f"Total de palavras: {total} (mínimo esperado: {THRESHOLDS['words_fail']})."
+            f"Total de palavras: {total} (mínimo esperado: {thresh['words_fail']})."
         )
-    if total < THRESHOLDS["words_warn"]:
+    if total < thresh["words_warn"]:
         return _check(
             "word_count", "Contagem de palavras", "warn",
-            f"Total de palavras: {total} (recomendado: ≥ {THRESHOLDS['words_warn']})."
+            f"Total de palavras: {total} (recomendado: ≥ {thresh['words_warn']})."
         )
     return _check("word_count", "Contagem de palavras", "pass", f"Total de palavras: {total}.")
 
 
-def check_intelligibility(transcricao_df: pd.DataFrame) -> Dict:
+def check_intelligibility(transcricao_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica a proporção de marcadores de texto ininteligível."""
+    thresh = get_merged_thresholds(thresholds)
     if transcricao_df.empty or "Text" not in transcricao_df.columns:
         return _check("intelligibility", "Inteligibilidade", "warn", "Dados de transcrição não disponíveis.")
 
@@ -186,12 +210,12 @@ def check_intelligibility(transcricao_df: pd.DataFrame) -> Dict:
     unintelligible = texts.apply(lambda t: bool(_UNINTELLIGIBLE_RE.search(t))).sum()
     ratio = unintelligible / total_msgs
 
-    if ratio >= THRESHOLDS["unintelligible_fail_pct"]:
+    if ratio >= thresh["unintelligible_fail_pct"]:
         return _check(
             "intelligibility", "Inteligibilidade", "fail",
             f"{unintelligible} de {total_msgs} turnos com texto ininteligível ({ratio:.0%})."
         )
-    if ratio >= THRESHOLDS["unintelligible_warn_pct"]:
+    if ratio >= thresh["unintelligible_warn_pct"]:
         return _check(
             "intelligibility", "Inteligibilidade", "warn",
             f"{unintelligible} de {total_msgs} turnos com texto ininteligível ({ratio:.0%})."
@@ -202,8 +226,9 @@ def check_intelligibility(transcricao_df: pd.DataFrame) -> Dict:
     )
 
 
-def check_silence_ratio(vad_df: pd.DataFrame) -> Dict:
+def check_silence_ratio(vad_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica se há silêncio excessivo em relação ao total da entrevista."""
+    thresh = get_merged_thresholds(thresholds)
     if vad_df.empty or "start" not in vad_df.columns:
         return _check("silence_ratio", "Ratio de silêncio", "warn", "Dados VAD não disponíveis.")
 
@@ -214,7 +239,7 @@ def check_silence_ratio(vad_df: pd.DataFrame) -> Dict:
         return _check("silence_ratio", "Ratio de silêncio", "warn", "Não foi possível calcular a duração total.")
 
     silence_ratio = 1.0 - (speech_duration / total_duration)
-    if silence_ratio >= THRESHOLDS["silence_ratio_warn"]:
+    if silence_ratio >= thresh["silence_ratio_warn"]:
         return _check(
             "silence_ratio", "Ratio de silêncio", "warn",
             f"Silêncio: {silence_ratio:.0%} do total (duração total: {total_duration:.1f}s, "
@@ -226,8 +251,9 @@ def check_silence_ratio(vad_df: pd.DataFrame) -> Dict:
     )
 
 
-def check_speaker_balance(transcricao_df: pd.DataFrame) -> Dict:
+def check_speaker_balance(transcricao_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica se um único locutor domina a totalidade da conversa."""
+    thresh = get_merged_thresholds(thresholds)
     if transcricao_df.empty or "SpeakerName" not in transcricao_df.columns:
         return _check("speaker_balance", "Equilíbrio entre locutores", "warn", "Dados de transcrição não disponíveis.")
 
@@ -245,7 +271,7 @@ def check_speaker_balance(transcricao_df: pd.DataFrame) -> Dict:
     max_ratio = by_speaker.max() / total_words
     dominant = by_speaker.idxmax()
 
-    if max_ratio >= THRESHOLDS["speaker_dominance_warn_pct"]:
+    if max_ratio >= thresh["speaker_dominance_warn_pct"]:
         return _check(
             "speaker_balance", "Equilíbrio entre locutores", "warn",
             f"'{dominant}' fez {max_ratio:.0%} das palavras — possível gravação mono ou entrevista desequilibrada."
@@ -256,22 +282,24 @@ def check_speaker_balance(transcricao_df: pd.DataFrame) -> Dict:
     )
 
 
-def check_segment_count(vad_df: pd.DataFrame) -> Dict:
+def check_segment_count(vad_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica se há segmentos VAD suficientes."""
+    thresh = get_merged_thresholds(thresholds)
     if vad_df.empty:
         return _check("segment_count", "Nº de segmentos VAD", "warn", "Dados VAD não disponíveis.")
 
     n = len(vad_df)
-    if n < THRESHOLDS["min_vad_segments_warn"]:
+    if n < thresh["min_vad_segments_warn"]:
         return _check(
             "segment_count", "Nº de segmentos VAD", "warn",
-            f"Apenas {n} segmento(s) VAD detectado(s) (esperado: ≥ {THRESHOLDS['min_vad_segments_warn']})."
+            f"Apenas {n} segmento(s) VAD detectado(s) (esperado: ≥ {thresh['min_vad_segments_warn']})."
         )
     return _check("segment_count", "Nº de segmentos VAD", "pass", f"{n} segmentos VAD detectados.")
 
 
-def check_speaking_rate(transcricao_df: pd.DataFrame, vad_df: pd.DataFrame) -> Dict:
+def check_speaking_rate(transcricao_df: pd.DataFrame, vad_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> Dict:
     """Verifica se a taxa de fala (WPM) está dentro de uma faixa normal."""
+    thresh = get_merged_thresholds(thresholds)
     if transcricao_df.empty or vad_df.empty:
         return _check("speaking_rate", "Taxa de fala (WPM)", "warn", "Dados insuficientes para calcular.")
 
@@ -283,28 +311,29 @@ def check_speaking_rate(transcricao_df: pd.DataFrame, vad_df: pd.DataFrame) -> D
 
     wpm = (total_words / total_speech_s) * 60.0
 
-    if wpm < THRESHOLDS["wpm_low_warn"] or wpm > THRESHOLDS["wpm_high_warn"]:
+    if wpm < thresh["wpm_low_warn"] or wpm > thresh["wpm_high_warn"]:
         return _check(
             "speaking_rate", "Taxa de fala (WPM)", "warn",
             f"Taxa de fala: {wpm:.0f} WPM — fora da faixa esperada "
-            f"({THRESHOLDS['wpm_low_warn']}–{THRESHOLDS['wpm_high_warn']} WPM)."
+            f"({thresh['wpm_low_warn']}–{thresh['wpm_high_warn']} WPM)."
         )
     return _check("speaking_rate", "Taxa de fala (WPM)", "pass", f"Taxa de fala: {wpm:.0f} WPM.")
 
 
-def check_acoustic_anomalies(sinc_df: pd.DataFrame) -> List[Dict]:
+def check_acoustic_anomalies(sinc_df: pd.DataFrame, thresholds: Optional[Dict] = None) -> List[Dict]:
     """
     Verifica anomalias nas features acústicas (apenas se dados sincronizados
     com colunas acústicas estiverem disponíveis).
     Retorna lista de checks (pode ser vazia se dados não disponíveis).
     """
+    thresh = get_merged_thresholds(thresholds)
     results = []
 
     # f0 anomalias
     if "f0_media" in sinc_df.columns:
         total = max(len(sinc_df), 1)
         zero_ratio = (sinc_df["f0_media"].fillna(0) == 0).sum() / total
-        if zero_ratio >= THRESHOLDS["f0_zero_ratio_warn"]:
+        if zero_ratio >= thresh["f0_zero_ratio_warn"]:
             results.append(_check(
                 "f0_anomaly", "Anomalia F0 (pitch)",  "warn",
                 f"{zero_ratio:.0%} dos segmentos com F0 = 0 — possível problema de microfone ou silêncio dominante."
@@ -318,7 +347,7 @@ def check_acoustic_anomalies(sinc_df: pd.DataFrame) -> List[Dict]:
     # Emoção neutral dominante
     if "emocao_neutral" in sinc_df.columns:
         mean_neutral = sinc_df["emocao_neutral"].mean()
-        if mean_neutral >= THRESHOLDS["emotion_neutral_warn"]:
+        if mean_neutral >= thresh["emotion_neutral_warn"]:
             results.append(_check(
                 "emotion_variety", "Variedade emocional", "warn",
                 f"Emoção 'neutral' média: {mean_neutral:.0%} — baixa variação prosódica detectada."
@@ -332,7 +361,7 @@ def check_acoustic_anomalies(sinc_df: pd.DataFrame) -> List[Dict]:
     # Loudness baixa
     if "loudness_media" in sinc_df.columns:
         mean_loudness = sinc_df["loudness_media"].mean()
-        if mean_loudness < THRESHOLDS["loudness_low_warn"]:
+        if mean_loudness < thresh["loudness_low_warn"]:
             results.append(_check(
                 "loudness", "Nível de volume (loudness)", "warn",
                 f"Loudness média: {mean_loudness:.1f} dB — volume muito baixo, possível problema de gravação."
@@ -344,6 +373,7 @@ def check_acoustic_anomalies(sinc_df: pd.DataFrame) -> List[Dict]:
             ))
 
     return results
+
 
 
 # ---------------------------------------------------------------------------
@@ -556,22 +586,23 @@ def run_quality_checks(
     vad_df: pd.DataFrame,
     transcricao_df: pd.DataFrame,
     sinc_df: Optional[pd.DataFrame] = None,
+    thresholds: Optional[Dict] = None,
 ) -> List[Dict]:
     """
     Executa todos os checks objetivos e retorna lista de resultados.
     """
     checks = [
-        check_duration(vad_df),
-        check_word_count(transcricao_df),
-        check_intelligibility(transcricao_df),
-        check_silence_ratio(vad_df),
-        check_speaker_balance(transcricao_df),
-        check_segment_count(vad_df),
-        check_speaking_rate(transcricao_df, vad_df),
+        check_duration(vad_df, thresholds),
+        check_word_count(transcricao_df, thresholds),
+        check_intelligibility(transcricao_df, thresholds),
+        check_silence_ratio(vad_df, thresholds),
+        check_speaker_balance(transcricao_df, thresholds),
+        check_segment_count(vad_df, thresholds),
+        check_speaking_rate(transcricao_df, vad_df, thresholds),
     ]
 
     if sinc_df is not None and not sinc_df.empty:
-        checks.extend(check_acoustic_anomalies(sinc_df))
+        checks.extend(check_acoustic_anomalies(sinc_df, thresholds))
 
     return checks
 

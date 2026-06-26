@@ -1,0 +1,278 @@
+"""
+Prosódia — Campanhas do WhatsApp.
+
+Permite listar campanhas, visualizar status de envio e criar novas campanhas disparando templates.
+"""
+
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+from utils.whatsapp_api_client import (
+    get_campaigns,
+    get_campaign,
+    get_campaign_contacts,
+    create_campaign,
+    list_contacts,
+    is_configured
+)
+from utils.prosodia_db import get_projects, get_project, update_project
+
+st.title("📢 Campanhas do WhatsApp")
+st.markdown(
+    "Dispare templates de mensagens do WhatsApp para seus contatos cadastrados. "
+    "Vincule campanhas aos seus projetos para importar os áudios recebidos de forma automática."
+)
+
+# Botão Voltar para Projetos
+nav_col, _ = st.columns([2, 8])
+with nav_col:
+    if st.button("← Projetos", width='stretch'):
+        st.switch_page("modules/prosodia/projetos.py")
+
+st.divider()
+
+if not is_configured():
+    st.warning("⚠️ API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
+    if st.button("⚙️ Ir para Configurações", type="primary"):
+        st.switch_page("modules/prosodia/whatsapp_config.py")
+    st.stop()
+
+# Abas para Campanhas
+tab_lista, tab_nova = st.tabs([
+    "📋 Campanhas Ativas",
+    "➕ Criar Nova Campanha"
+])
+
+# ---------------------------------------------------------------------------
+# TAB 1: Campanhas Ativas & Detalhes
+# ---------------------------------------------------------------------------
+with tab_lista:
+    st.subheader("Histórico de Campanhas")
+    
+    try:
+        campanhas = get_campaigns()
+        
+        if not campanhas:
+            st.info("Nenhuma campanha foi criada ainda.")
+        else:
+            # Lista de campanhas em formato DataFrame para visualização geral
+            df_c = pd.DataFrame(campanhas)
+            
+            # Renomear e formatar
+            df_c = df_c.rename(columns={
+                "id": "ID",
+                "name": "Nome",
+                "template_name": "Template",
+                "language_code": "Idioma",
+                "status": "Status",
+                "sent_count": "Enviados",
+                "failed_count": "Falhas",
+                "created_at": "Data de Criação"
+            })
+            
+            if "Data de Criação" in df_c.columns:
+                df_c["Data de Criação"] = pd.to_datetime(df_c["Data de Criação"]).dt.strftime("%d/%m/%Y %H:%M")
+                
+            # Mapear status para emojis
+            status_emojis = {
+                "pending": "🟡 Pendente",
+                "running": "🔵 Executando",
+                "done": "🟢 Finalizado",
+                "failed": "🔴 Falha"
+            }
+            if "Status" in df_c.columns:
+                df_c["Status"] = df_c["Status"].map(lambda x: status_emojis.get(x, x))
+            
+            # Reordenar e mostrar
+            df_c = df_c[["ID", "Nome", "Template", "Status", "Enviados", "Falhas", "Data de Criação"]]
+            st.dataframe(df_c, use_container_width=True, hide_index=True)
+            
+            # Selecionar uma campanha para ver detalhes individuais e vincular
+            st.markdown("---")
+            st.subheader("🔍 Detalhes e Ações da Campanha")
+            
+            opcao_campanha = st.selectbox(
+                "Selecione uma campanha para gerenciar",
+                options=campanhas,
+                format_func=lambda x: f"ID #{x['id']} — {x['name']} ({x['status'].upper()})"
+            )
+            
+            if opcao_campanha:
+                camp_id = opcao_campanha["id"]
+                
+                # Buscar detalhes frescos
+                with st.spinner("Buscando detalhes da campanha..."):
+                    camp_details = get_campaign(camp_id)
+                    camp_contacts = get_campaign_contacts(camp_id)
+                
+                # Exibir métricas da campanha selecionada
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                with col_m1:
+                    st.metric("Status", camp_details["status"].upper())
+                with col_m2:
+                    st.metric("Contatos Totais", len(camp_contacts))
+                with col_m3:
+                    st.metric("Sucesso de Envio", camp_details["sent_count"])
+                with col_m4:
+                    st.metric("Falhas de Envio", camp_details["failed_count"])
+                
+                # Área de vinculação ao projeto local do Dashboard
+                st.markdown("#### 🔗 Vinculação com Projeto Local")
+                projetos = get_projects()
+                
+                # Encontrar qual projeto local já está vinculado a esta campanha
+                projeto_vinculado = None
+                for p in projetos:
+                    if p.get("whatsapp_campaign_id") == camp_id:
+                        projeto_vinculado = p
+                        break
+                
+                if projeto_vinculado:
+                    st.success(f"🔗 Esta campanha está vinculada ao projeto: **{projeto_vinculado['name']}**")
+                    if st.button("🔗 Desvincular Campanha", key="btn_desvincular"):
+                        # Atualizar projeto setando campaign_id como None
+                        update_project(
+                            project_id=projeto_vinculado["id"],
+                            name=projeto_vinculado["name"],
+                            especialidade=projeto_vinculado.get("especialidade", ""),
+                            historico=projeto_vinculado.get("historico", ""),
+                            problemas=projeto_vinculado.get("problemas", ""),
+                            questions=projeto_vinculado.get("questions", ""),
+                            briefing_filename=projeto_vinculado.get("briefing_filename", ""),
+                            briefing_text=projeto_vinculado.get("briefing_text", ""),
+                            whatsapp_campaign_id=None
+                        )
+                        st.info("Campanha desvinculada com sucesso!")
+                        st.rerun()
+                else:
+                    st.warning("⚠️ Esta campanha não está vinculada a nenhum projeto local.")
+                    
+                    # Selecionar projeto local para vincular
+                    col_proj, col_vin_btn = st.columns([3, 1])
+                    with col_proj:
+                        proj_opcao = st.selectbox(
+                            "Selecione um projeto para vincular",
+                            options=projetos,
+                            format_func=lambda x: x["name"],
+                            key="select_proj_vinculo"
+                        )
+                    with col_vin_btn:
+                        st.write("")
+                        st.write("")
+                        if st.button("🔗 Vincular ao Projeto", type="primary", use_container_width=True):
+                            if proj_opcao:
+                                update_project(
+                                    project_id=proj_opcao["id"],
+                                    name=proj_opcao["name"],
+                                    especialidade=proj_opcao.get("especialidade", ""),
+                                    historico=proj_opcao.get("historico", ""),
+                                    problemas=proj_opcao.get("problemas", ""),
+                                    questions=proj_opcao.get("questions", ""),
+                                    briefing_filename=proj_opcao.get("briefing_filename", ""),
+                                    briefing_text=proj_opcao.get("briefing_text", ""),
+                                    whatsapp_campaign_id=camp_id
+                                )
+                                st.success(f"Campanha vinculada a **{proj_opcao['name']}**!")
+                                st.rerun()
+                
+                # Lista de contatos vinculados e status de entrega
+                st.markdown("#### 👤 Status de Entrega por Contato")
+                if not camp_contacts:
+                    st.info("Nenhum contato nesta campanha.")
+                else:
+                    df_contacts = pd.DataFrame(camp_contacts)
+                    df_contacts = df_contacts.rename(columns={
+                        "phone": "Telefone",
+                        "name": "Nome",
+                        "status": "Status de Envio",
+                        "sent_at": "Data/Hora",
+                        "error_msg": "Mensagem de Erro"
+                    })
+                    
+                    status_c_emojis = {
+                        "pending": "🟡 Pendente",
+                        "sent": "🟢 Enviado",
+                        "failed": "🔴 Falhou"
+                    }
+                    if "Status de Envio" in df_contacts.columns:
+                        df_contacts["Status de Envio"] = df_contacts["Status de Envio"].map(lambda x: status_c_emojis.get(x, x))
+                    
+                    if "Data/Hora" in df_contacts.columns:
+                        df_contacts["Data/Hora"] = pd.to_datetime(df_contacts["Data/Hora"]).dt.strftime("%d/%m/%Y %H:%M")
+                    
+                    # Reordenar colunas
+                    cols_to_show = ["Telefone", "Nome", "Status de Envio", "Data/Hora"]
+                    if "Mensagem de Erro" in df_contacts.columns:
+                        cols_to_show.append("Mensagem de Erro")
+                    
+                    st.dataframe(df_contacts[cols_to_show], use_container_width=True, hide_index=True)
+                    
+    except Exception as e:
+        st.error(f"Erro ao buscar campanhas da API: {e}")
+
+# ---------------------------------------------------------------------------
+# TAB 2: Criar Nova Campanha
+# ---------------------------------------------------------------------------
+with tab_nova:
+    st.subheader("Criar e Disparar Campanha")
+    
+    try:
+        contatos_disponiveis = list_contacts(limit=1000)
+        
+        if not contatos_disponiveis:
+            st.warning("⚠️ Nenhum contato cadastrado na API. Cadastre contatos primeiro antes de criar uma campanha.")
+            if st.button("👤 Ir para Contatos", type="primary"):
+                st.switch_page("modules/prosodia/whatsapp_contatos.py")
+        else:
+            with st.form("form_nova_campanha"):
+                nome_campanha = st.text_input(
+                    "Nome da Campanha *",
+                    placeholder="Ex: Campanha de Coleta - Pesquisa Kynetec"
+                )
+                template_name = st.text_input(
+                    "Nome do Template no Meta Business *",
+                    placeholder="Ex: nenc_welcome_message",
+                    help="O nome exato do template aprovado no painel da Meta."
+                )
+                language_code = st.text_input(
+                    "Código do Idioma *",
+                    value="pt_BR",
+                    help="Código de idioma do template (Ex: pt_BR, en_US)."
+                )
+                
+                st.markdown("### Selecionar Contatos destinatários")
+                st.caption("Marque os contatos que receberão as mensagens desta campanha:")
+                
+                # Montar checklist de contatos
+                contatos_selecionados = []
+                for c in contatos_disponiveis:
+                    label = f"{c.get('name') or 'Sem Nome'} ({c.get('phone')})"
+                    checked = st.checkbox(label, key=f"sel_contact_{c['id']}")
+                    if checked:
+                        contatos_selecionados.append(c["id"])
+                
+                submitted_campanha = st.form_submit_button("📢 Disparar Campanha", type="primary")
+                
+            if submitted_campanha:
+                if not nome_campanha.strip():
+                    st.error("O **Nome da Campanha** é obrigatório.")
+                elif not template_name.strip():
+                    st.error("O **Nome do Template** é obrigatório.")
+                elif not contatos_selecionados:
+                    st.error("Selecione pelo menos um contato para disparar a campanha.")
+                else:
+                    try:
+                        with st.spinner("Criando campanha e disparando mensagens na API..."):
+                            create_campaign(
+                                name=nome_campanha.strip(),
+                                template_name=template_name.strip(),
+                                language_code=language_code.strip(),
+                                contact_ids=contatos_selecionados
+                            )
+                        st.success(f"✅ Campanha '{nome_campanha}' criada e disparada em background com sucesso!")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"Erro ao disparar campanha: {e}")
+                        
+    except Exception as e:
+        st.error(f"Erro ao listar contatos disponíveis para a campanha: {e}")

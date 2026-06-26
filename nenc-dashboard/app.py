@@ -75,7 +75,15 @@ def _build_pages():
             [data-testid="stSidebarNav"] a[href*="modules/prosodia/audio_timeline.py"],
             [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_timeline.py"],
             [data-testid="stSidebarNav"] a[href*="modules/prosodia/audio_analise.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_analise.py"] {
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_analise.py"],
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_config.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_config.py"],
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_contatos.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_contatos.py"],
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_campanhas.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_campanhas.py"],
+            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_monitor.py"],
+            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_monitor.py"] {
                 display: none !important;
             }
             </style>
@@ -125,6 +133,26 @@ def _build_pages():
                     "modules/prosodia/base_conhecimento.py",
                     title="Base de Conhecimento",
                     icon="📚",
+                ),
+                st.Page(
+                    "modules/prosodia/whatsapp_config.py",
+                    title="Config API",
+                    icon="🔧",
+                ),
+                st.Page(
+                    "modules/prosodia/whatsapp_contatos.py",
+                    title="Contatos",
+                    icon="👤",
+                ),
+                st.Page(
+                    "modules/prosodia/whatsapp_campanhas.py",
+                    title="Campanhas",
+                    icon="📢",
+                ),
+                st.Page(
+                    "modules/prosodia/whatsapp_monitor.py",
+                    title="Monitor",
+                    icon="📡",
                 ),
             ],
         }

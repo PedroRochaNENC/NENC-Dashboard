@@ -8,6 +8,7 @@ As perguntas serão usadas na verificação automática de qualidade de cada áu
 import io
 import zipfile
 import xml.etree.ElementTree as ET
+import json
 from datetime import datetime
 
 import streamlit as st
@@ -129,7 +130,7 @@ st.divider()
 # ==================================================================
 # Formulário
 # ==================================================================
-with st.form("form_projeto"):
+with st.container():
     st.subheader("📋 Informações do Projeto")
 
     nome = st.text_input(
@@ -274,7 +275,147 @@ with st.form("form_projeto"):
         if current_campaign_id:
             st.caption(f"Campanha vinculada atual: ID {current_campaign_id}")
 
-    submitted = st.form_submit_button(
+    # ------------------------------------------------------------------
+    # Limiares de Qualidade Objetiva
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("⚙️ Parâmetros dos Checks Objetivos")
+    st.markdown(
+        "Ajuste os parâmetros que determinam os alertas e erros das verificações de qualidade "
+        "deste projeto."
+    )
+
+    # Carregar thresholds salvos ou defaults
+    saved_thresholds_json = project.get("quality_thresholds") if editing else None
+    saved_thresholds = None
+    if saved_thresholds_json:
+        try:
+            saved_thresholds = json.loads(saved_thresholds_json)
+        except Exception:
+            pass
+
+    from utils.prosodia_quality import DEFAULT_THRESHOLDS
+    using_default = saved_thresholds is None
+    display_thresholds = saved_thresholds if saved_thresholds else DEFAULT_THRESHOLDS
+
+    usar_padrao = st.checkbox(
+        "Usar valores padrão do sistema",
+        value=using_default,
+        help="Se marcado, o sistema utilizará os valores padrão recomendados. Desmarque para personalizar os limites.",
+    )
+
+    if not usar_padrao:
+        t_col1, t_col2 = st.columns(2)
+
+        with t_col1:
+            st.markdown("**🎙️ Fala & Transcrição**")
+            val_dur_fail = st.number_input(
+                "Duração de fala mínima (Erro - seg)",
+                min_value=0,
+                value=int(display_thresholds.get("duration_fail_s", DEFAULT_THRESHOLDS["duration_fail_s"])),
+                help="Duração total de fala em segundos abaixo da qual o check falhará."
+            )
+            val_dur_warn = st.number_input(
+                "Duração de fala recomendada (Alerta - seg)",
+                min_value=0,
+                value=int(display_thresholds.get("duration_warn_s", DEFAULT_THRESHOLDS["duration_warn_s"])),
+                help="Duração recomendada de fala em segundos. Abaixo disso, gera um alerta."
+            )
+            val_words_fail = st.number_input(
+                "Contagem mínima de palavras (Erro)",
+                min_value=0,
+                value=int(display_thresholds.get("words_fail", DEFAULT_THRESHOLDS["words_fail"])),
+                help="Mínimo de palavras na transcrição. Abaixo disso, o check falhará."
+            )
+            val_words_warn = st.number_input(
+                "Contagem recomendada de palavras (Alerta)",
+                min_value=0,
+                value=int(display_thresholds.get("words_warn", DEFAULT_THRESHOLDS["words_warn"])),
+                help="Mínimo recomendado de palavras. Abaixo disso, gera um alerta."
+            )
+
+            st.markdown("**💬 Inteligibilidade & Diálogo**")
+            init_unint_warn_pct = float(display_thresholds.get("unintelligible_warn_pct", DEFAULT_THRESHOLDS["unintelligible_warn_pct"]))
+            val_unint_warn = st.slider(
+                "Alerta de ininteligibilidade (%)",
+                min_value=0,
+                max_value=100,
+                value=int(init_unint_warn_pct * 100),
+                help="Proporção limite de turnos com marcadores de ininteligibilidade para gerar um alerta."
+            ) / 100.0
+
+            init_unint_fail_pct = float(display_thresholds.get("unintelligible_fail_pct", DEFAULT_THRESHOLDS["unintelligible_fail_pct"]))
+            val_unint_fail = st.slider(
+                "Erro de ininteligibilidade (%)",
+                min_value=0,
+                max_value=100,
+                value=int(init_unint_fail_pct * 100),
+                help="Proporção limite de turnos com marcadores de ininteligibilidade para falhar o check."
+            ) / 100.0
+
+            init_silence_ratio_warn = float(display_thresholds.get("silence_ratio_warn", DEFAULT_THRESHOLDS["silence_ratio_warn"]))
+            val_silence = st.slider(
+                "Alerta de silêncio excessivo (%)",
+                min_value=0,
+                max_value=100,
+                value=int(init_silence_ratio_warn * 100),
+                help="Proporção de silêncio acima da qual gera um alerta."
+            ) / 100.0
+
+            init_speaker_dom = float(display_thresholds.get("speaker_dominance_warn_pct", DEFAULT_THRESHOLDS["speaker_dominance_warn_pct"]))
+            val_speaker_dom = st.slider(
+                "Alerta de dominância de locutor (%)",
+                min_value=0,
+                max_value=100,
+                value=int(init_speaker_dom * 100),
+                help="Limite de dominância de um único locutor (em número de palavras) para gerar alerta."
+            ) / 100.0
+
+        with t_col2:
+            st.markdown("**🔊 Ritmo & Acústica**")
+            val_min_vad = st.number_input(
+                "Mínimo de segmentos VAD (Alerta)",
+                min_value=1,
+                value=int(display_thresholds.get("min_vad_segments_warn", DEFAULT_THRESHOLDS["min_vad_segments_warn"])),
+                help="Quantidade mínima esperada de segmentos VAD. Abaixo disso, gera um alerta."
+            )
+            val_wpm_low = st.number_input(
+                "Taxa de fala mínima (Alerta - WPM)",
+                min_value=0,
+                value=int(display_thresholds.get("wpm_low_warn", DEFAULT_THRESHOLDS["wpm_low_warn"])),
+                help="Taxa de fala em palavras por minuto (WPM) abaixo da qual gera alerta de lentidão."
+            )
+            val_wpm_high = st.number_input(
+                "Taxa de fala máxima (Alerta - WPM)",
+                min_value=0,
+                value=int(display_thresholds.get("wpm_high_warn", DEFAULT_THRESHOLDS["wpm_high_warn"])),
+                help="Taxa de fala em palavras por minuto (WPM) acima da qual gera alerta de rapidez excessiva."
+            )
+            val_loudness = st.number_input(
+                "Volume mínimo (Alerta - Loudness dB)",
+                value=float(display_thresholds.get("loudness_low_warn", DEFAULT_THRESHOLDS["loudness_low_warn"])),
+                help="Loudness média mínima em dB. Abaixo disso gera alerta de volume baixo."
+            )
+
+            init_f0_zero = float(display_thresholds.get("f0_zero_ratio_warn", DEFAULT_THRESHOLDS["f0_zero_ratio_warn"]))
+            val_f0_zero = st.slider(
+                "Alerta de F0 zerado / Falta de voz (%)",
+                min_value=0,
+                max_value=100,
+                value=int(init_f0_zero * 100),
+                help="Proporção limite de frames com F0 zerado para gerar um alerta."
+            ) / 100.0
+
+            init_neutral = float(display_thresholds.get("emotion_neutral_warn", DEFAULT_THRESHOLDS["emotion_neutral_warn"]))
+            val_neutral = st.slider(
+                "Alerta de neutralidade emocional (%)",
+                min_value=0,
+                max_value=100,
+                value=int(init_neutral * 100),
+                help="Média de probabilidade da emoção 'neutral' acima da qual gera alerta de monotonia prosódica."
+            ) / 100.0
+
+    submitted = st.button(
         "💾 Salvar e ir para Entrevistas",
         type="primary",
         width='stretch',
@@ -305,6 +446,28 @@ if submitted:
 
         saved_project_id = project_id
 
+        # Construir JSON de thresholds
+        if usar_padrao:
+            quality_thresholds_json = None
+        else:
+            custom_t = {
+                "duration_fail_s": float(val_dur_fail),
+                "duration_warn_s": float(val_dur_warn),
+                "words_fail": int(val_words_fail),
+                "words_warn": int(val_words_warn),
+                "unintelligible_fail_pct": float(val_unint_fail),
+                "unintelligible_warn_pct": float(val_unint_warn),
+                "silence_ratio_warn": float(val_silence),
+                "speaker_dominance_warn_pct": float(val_speaker_dom),
+                "min_vad_segments_warn": int(val_min_vad),
+                "wpm_low_warn": int(val_wpm_low),
+                "wpm_high_warn": int(val_wpm_high),
+                "f0_zero_ratio_warn": float(val_f0_zero),
+                "emotion_neutral_warn": float(val_neutral),
+                "loudness_low_warn": float(val_loudness),
+            }
+            quality_thresholds_json = json.dumps(custom_t)
+
         if editing:
             update_project(
                 project_id,
@@ -316,6 +479,7 @@ if submitted:
                 briefing_filename=briefing_filename,
                 briefing_text=briefing_text,
                 whatsapp_campaign_id=selected_campaign,
+                quality_thresholds=quality_thresholds_json,
             )
             st.success("Projeto atualizado!")
         else:
@@ -328,6 +492,7 @@ if submitted:
                 briefing_filename=briefing_filename,
                 briefing_text=briefing_text,
                 whatsapp_campaign_id=selected_campaign,
+                quality_thresholds=quality_thresholds_json,
             )
             st.session_state["pros_project_id"] = new_id
             saved_project_id = new_id

@@ -332,6 +332,15 @@ if not audio:
 project = get_project(project_id) if project_id else {}
 sid = audio["session_id"]
 
+# Parse thresholds customizados se existirem
+thresholds = None
+if project and project.get("quality_thresholds"):
+    try:
+        import json
+        thresholds = json.loads(project["quality_thresholds"])
+    except Exception:
+        pass
+
 # ------------------------------------------------------------------
 # Helper: reconstruir DataFrames
 # ------------------------------------------------------------------
@@ -364,21 +373,196 @@ if audio.get("sincronizado_csv"):
 transcript_text = " ".join(tr_df["Text"].fillna("").astype(str).tolist()) if not tr_df.empty and "Text" in tr_df.columns else ""
 
 # ------------------------------------------------------------------
-# Header
+# Header & Reprocessamento
 # ------------------------------------------------------------------
-h1, h2, h3 = st.columns([5, 1, 1])
+is_wa = str(sid).startswith("wa_")
+if is_wa:
+    h1, h2, h3, h4 = st.columns([4.5, 1.5, 1, 1])
+else:
+    h1, h3, h4 = st.columns([5, 1, 1])
+    h2 = None
+
 with h1:
     st.title(f"🤖 Análise — {sid}")
     if project:
         st.caption(f"Projeto: {project.get('name', '')}")
-with h2:
+
+with h3:
     st.write("")
     if st.button("📊 Timeline", width='stretch'):
         st.switch_page("modules/prosodia/audio_timeline.py")
-with h3:
+
+with h4:
     st.write("")
     if st.button("← Entrevistas", width='stretch'):
         st.switch_page("modules/prosodia/entrevistas.py")
+
+if is_wa and h2 is not None:
+    h2.write("")
+    if h2.button("🔄 Reprocessar", type="secondary", width='stretch', help="Solicitar reprocessamento da transcrição e prosódia via WhatsApp API"):
+        parts = sid.split("_")
+        if len(parts) >= 3:
+            try:
+                audio_api_id = int(parts[-1])
+                
+                # 1. Enviar requisição de reprocessamento
+                with st.spinner("Solicitando reprocessamento na API..."):
+                    from utils.whatsapp_api_client import reprocess_audio as api_reprocess_audio, get_audio_status, get_audio_result, map_api_result_to_all_formats
+                    api_reprocess_audio(audio_api_id)
+                
+                # 2. Polling status
+                import time
+                status_container = st.empty()
+                
+                start_time = time.time()
+                timeout = 300  # 5 minutos
+                success = False
+                
+                while time.time() - start_time < timeout:
+                    status_info = get_audio_status(audio_api_id)
+                    job_status = status_info.get("status", "pending")
+                    
+                    if job_status == "done":
+                        success = True
+                        break
+                    elif job_status == "failed":
+                        st.error(f"Erro no processamento da API: {status_info.get('error_msg') or 'Falha desconhecida'}")
+                        break
+                    
+                    status_container.info(f"⏳ Processando na API (status: {job_status.upper()}). Por favor, aguarde...")
+                    time.sleep(3)
+                
+                if success:
+                    status_container.success("✅ Processamento na API concluído! Atualizando dados locais...")
+                    
+                    # 3. Baixar resultados
+                    result_json = get_audio_result(audio_api_id)
+                    if result_json:
+                        json_bytes, csv_bytes, sinc_bytes = map_api_result_to_all_formats(result_json, sid)
+                        
+                        # 4. Atualizar blobs locais no SQLite
+                        from utils.prosodia_db import update_audio_content
+                        update_audio_content(audio_id, json_bytes, csv_bytes, sinc_bytes)
+                        
+                        # 5. Limpar cache do Streamlit para forçar leitura do SQLite atualizado
+                        st.cache_data.clear()
+                        
+                        # 6. Recarregar dados locais recém-atualizados para regeneração de qualidade e análise
+                        from utils.prosodia_loader import load_prosodia_from_uploads
+                        class _BF:
+                            def __init__(self, data, name):
+                                self._buf = io.BytesIO(data)
+                                self.name = name
+                            def read(self): return self._buf.read()
+                            def seek(self, p): return self._buf.seek(p)
+                        
+                        parsed_new = load_prosodia_from_uploads(
+                            json_files=[_BF(json_bytes, f"Prosodia-{sid}.json")] if json_bytes else [],
+                            csv_files=[_BF(csv_bytes, f"Transcricao-{sid}.csv")] if csv_bytes else [],
+                            sincronizado_files=[_BF(sinc_bytes, f"Sincronizado-{sid}.csv")] if sinc_bytes else [],
+                        )
+                        new_vad_df = parsed_new.get("vad", pd.DataFrame())
+                        new_tr_df = parsed_new.get("transcricao", pd.DataFrame())
+                        new_sinc_df = pd.DataFrame()
+                        if sinc_bytes:
+                            try:
+                                new_sinc_df = pd.read_csv(io.BytesIO(sinc_bytes))
+                            except Exception:
+                                pass
+                        
+                        new_transcript_text = " ".join(new_tr_df["Text"].fillna("").astype(str).tolist()) if not new_tr_df.empty and "Text" in new_tr_df.columns else ""
+                        
+                        # Preparar clientes de IA
+                        groq_client = None
+                        if not openai_client and groq_key:
+                            try:
+                                from groq import Groq
+                                groq_client = Groq(api_key=groq_key)
+                            except Exception:
+                                pass
+                        ai_client = openai_client or groq_client
+                        
+                        # 7. Atualizar Qualidade
+                        status_container.info("🔄 Atualizando verificação de qualidade...")
+                        new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds)
+                        cov_kw = check_question_coverage_keywords(new_tr_df, questions)
+                        cov_ai = []
+                        if ai_client and questions and new_transcript_text:
+                            q_model = groq_model if groq_client else "gpt-4.1-mini"
+                            cov_ai = check_question_coverage_ai(new_transcript_text, questions, ai_client, model=q_model)
+                        cov_merged = merge_coverage(cov_kw, cov_ai) if cov_ai else cov_kw
+                        new_overall = compute_overall_status(new_checks)
+                        save_quality_check(audio_id, new_overall, new_checks, cov_merged)
+                        
+                        # Enviar nova qualidade para Vector Store KB
+                        kb_doc_name_q = f"qualidade_entrevista_{_slugify(sid)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        kb_doc_q = _build_quality_markdown(
+                            sid=sid,
+                            project_name=project.get("name", "") if project else "",
+                            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            overall_status=new_overall,
+                            checks=new_checks,
+                            coverage=cov_merged,
+                        )
+                        _append_result_to_kb(kb_doc_name_q, kb_doc_q)
+                        
+                        # 8. Atualizar Análise de IA
+                        status_container.info("🧠 Atualizando análise de IA...")
+                        new_tables_lines = []
+                        if not new_vad_df.empty and "duration" in new_vad_df.columns:
+                            new_total_s = new_vad_df["duration"].sum()
+                            new_tables_lines.append(f"VAD: {len(new_vad_df)} segmentos, {new_total_s:.1f}s de fala total.")
+                        if not new_tr_df.empty and "SpeakerName" in new_tr_df.columns:
+                            new_by_spk = new_tr_df.groupby("SpeakerName").agg(msgs=("Text", "count"), words=("word_count", "sum")).reset_index()
+                            new_tables_lines.append("Participação por locutor:\n" + new_by_spk.to_string(index=False))
+                        new_tables_text = "\n\n".join(new_tables_lines)
+                        
+                        user_prompt = build_prosodia_user_prompt(new_tables_text, proj_ctx, new_transcript_text[:3000])
+                        
+                        used_model = openai_model if openai_client else groq_model
+                        
+                        if openai_client:
+                            result_ai = ai_create_analysis(
+                                system_prompt=PROSODIA_SYSTEM_PROMPT,
+                                user_prompt=user_prompt,
+                                model=openai_model,
+                                vector_store_id=vs_id,
+                                temperature=0.5,
+                                max_tokens=3000,
+                            )
+                        else:
+                            resp = groq_client.chat.completions.create(
+                                model=groq_model,
+                                messages=[
+                                    {"role": "system", "content": PROSODIA_SYSTEM_PROMPT},
+                                    {"role": "user", "content": user_prompt},
+                                ],
+                                temperature=0.5,
+                                max_tokens=3000,
+                            )
+                            result_ai = {"text": resp.choices[0].message.content, "citations": []}
+                            
+                        save_analysis(audio_id, used_model, result_ai["text"], result_ai.get("citations", []))
+                        
+                        # Enviar nova análise para Vector Store KB
+                        kb_doc_name_a = f"analise_ia_{_slugify(sid)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        kb_doc_a = _build_analysis_markdown(
+                            sid=sid,
+                            project_name=project.get("name", "") if project else "",
+                            model=used_model,
+                            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            text=result_ai.get("text", ""),
+                            citations=result_ai.get("citations", []),
+                        )
+                        _append_result_to_kb(kb_doc_name_a, kb_doc_a)
+                        
+                        status_container.success("🎉 Áudio, transcrição, prosódia e análise reprocessados com sucesso!")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error("Erro ao baixar o resultado do processamento da API.")
+            except Exception as e:
+                st.error(f"Ocorreu um erro no reprocessamento: {e}")
 
 # ------------------------------------------------------------------
 # Sidebar
@@ -760,7 +944,7 @@ with quality_section:
 
         with st.spinner("Reverificando qualidade…"):
             try:
-                new_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None)
+                new_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None, thresholds)
                 cov_kw = check_question_coverage_keywords(tr_df, questions)
                 cov_ai = []
                 if ai_client and questions and transcript_text:

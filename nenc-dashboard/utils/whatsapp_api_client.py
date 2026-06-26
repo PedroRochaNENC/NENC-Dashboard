@@ -238,8 +238,9 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
     Converte o JSON de resultado da API (DevAIce + Whisper) em um CSV
     no formato "Sincronizado" que o Dashboard entende nativamente.
 
-    O CSV resultante contém colunas de VAD (start_s, end_s, duracao_s) e
-    de transcrição (speakers, timestamp_inicio, texto_transcricao) unificados.
+    O CSV resultante contém colunas de VAD (start_s, end_s, duracao_s),
+    colunas de transcrição (speakers, timestamp_inicio, texto_transcricao)
+    e todas as colunas de features acústicas.
     """
     # --- Extrair VAD do DevAIce ---
     # No caso normal, vad está na raiz do result. No caso raro, dentro de "devaice".
@@ -252,17 +253,58 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
     if not isinstance(vad_raw, list):
         vad_raw = []
 
+    expression_raw = devaice.get("expressionLarge", [])
+    if not isinstance(expression_raw, list):
+        expression_raw = []
+
+    prosody_raw = devaice.get("prosody", [])
+    if not isinstance(prosody_raw, list):
+        prosody_raw = []
+
     vad_rows = []
-    for seg in vad_raw:
+    for idx, seg in enumerate(vad_raw):
         if not isinstance(seg, dict):
             continue
         start = float(seg.get("start", seg.get("begin", 0)))
         end = float(seg.get("end", 0))
-        vad_rows.append({
+
+        # Obter dados correspondentes de expressão e prosódia
+        expr = expression_raw[idx] if idx < len(expression_raw) else {}
+        if not isinstance(expr, dict):
+            expr = {}
+
+        pros = prosody_raw[idx] if idx < len(prosody_raw) else {}
+        if not isinstance(pros, dict):
+            pros = {}
+
+        categorical = expr.get("categorical") or {}
+        dimensional = expr.get("dimensional") or {}
+
+        f0 = pros.get("f0") or {}
+        loudness = pros.get("loudness") or {}
+
+        row = {
             "start_s": round(start, 4),
             "end_s": round(end, 4),
             "duracao_s": round(end - start, 4),
-        })
+            # Features Acústicas
+            "f0_media": f0.get("average"),
+            "f0_variacao": f0.get("variation"),
+            "f0_min": f0.get("minimum"),
+            "f0_max": f0.get("maximum"),
+            "loudness_media": loudness.get("average"),
+            "loudness_variacao": loudness.get("variation"),
+            "speaking_rate": pros.get("speaking_rate"),
+            "intonation_score": pros.get("intonation_score"),
+            "emocao_angry": categorical.get("angry"),
+            "emocao_happy": categorical.get("happy"),
+            "emocao_neutral": categorical.get("neutral"),
+            "emocao_sad": categorical.get("sad"),
+            "dim_arousal": dimensional.get("arousal"),
+            "dim_dominance": dimensional.get("dominance"),
+            "dim_valence": dimensional.get("valence"),
+        }
+        vad_rows.append(row)
 
     # --- Extrair Transcrição (Whisper) ---
     whisper = result.get("whisper") or {}
@@ -310,7 +352,26 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
     n = max(n_vad, n_tr, 1)
 
     while len(vad_rows) < n:
-        vad_rows.append({"start_s": None, "end_s": None, "duracao_s": None})
+        vad_rows.append({
+            "start_s": None,
+            "end_s": None,
+            "duracao_s": None,
+            "f0_media": None,
+            "f0_variacao": None,
+            "f0_min": None,
+            "f0_max": None,
+            "loudness_media": None,
+            "loudness_variacao": None,
+            "speaking_rate": None,
+            "intonation_score": None,
+            "emocao_angry": None,
+            "emocao_happy": None,
+            "emocao_neutral": None,
+            "emocao_sad": None,
+            "dim_arousal": None,
+            "dim_dominance": None,
+            "dim_valence": None,
+        })
     while len(tr_rows) < n:
         tr_rows.append({"speakers": None, "timestamp_inicio": None, "texto_transcricao": None})
 
@@ -443,3 +504,105 @@ def get_existing_whatsapp_message_ids(project_id: int) -> set:
         for a in audios
         if a.get("whatsapp_message_id")
     }
+
+
+def get_audio_file(audio_id: int, kind: str = "wav") -> bytes:
+    """Busca o arquivo de áudio (original ou wav) da API."""
+    with _client() as c:
+        resp = c.get(f"/audios/{audio_id}/file", params={"kind": kind})
+        resp.raise_for_status()
+        return resp.content
+
+
+# ---------------------------------------------------------------------------
+# Contatos
+# ---------------------------------------------------------------------------
+
+def list_contacts(search: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[Dict]:
+    """Lista os contatos cadastrados na API."""
+    params = {"skip": skip, "limit": limit}
+    if search:
+        params["search"] = search
+    with _client() as c:
+        resp = c.get("/contacts", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def create_contact(phone: str, name: Optional[str] = None) -> Dict:
+    """Cria um novo contato na API."""
+    body = {"phone": phone}
+    if name:
+        body["name"] = name
+    with _client() as c:
+        resp = c.post("/contacts", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def delete_contact(contact_id: int) -> None:
+    """Exclui um contato da API pelo ID."""
+    with _client() as c:
+        resp = c.delete(f"/contacts/{contact_id}")
+        resp.raise_for_status()
+
+
+def import_contacts_csv(csv_bytes: bytes) -> Dict:
+    """Importa contatos a partir de um arquivo CSV (formato com colunas phone, name)."""
+    with _client() as c:
+        files = {"file": ("contacts.csv", csv_bytes, "text/csv")}
+        resp = c.post("/contacts/import", files=files)
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Campanhas
+# ---------------------------------------------------------------------------
+
+def create_campaign(name: str, template_name: str, language_code: str, contact_ids: List[int]) -> Dict:
+    """Cria uma nova campanha e inicia os envios para a lista de contatos."""
+    body = {
+        "name": name,
+        "template_name": template_name,
+        "language_code": language_code,
+        "contact_ids": contact_ids,
+    }
+    with _client() as c:
+        resp = c.post("/campaigns", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Jobs de Processamento
+# ---------------------------------------------------------------------------
+
+def list_jobs(audio_id: Optional[int] = None, status: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[Dict]:
+    """Lista os jobs de processamento de áudio cadastrados na API."""
+    params = {"skip": skip, "limit": limit}
+    if audio_id is not None:
+        params["audio_id"] = audio_id
+    if status:
+        params["status"] = status
+    with _client() as c:
+        resp = c.get("/jobs", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_job(job_id: int) -> Dict:
+    """Retorna detalhes de um job pelo ID."""
+    with _client() as c:
+        resp = c.get(f"/jobs/{job_id}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def reprocess_audio(audio_id: int) -> Dict:
+    """Solicita o reprocessamento de um áudio na API (DevAIce + Whisper)."""
+    with _client() as c:
+        resp = c.post(f"/audios/{audio_id}/reprocess")
+        resp.raise_for_status()
+        return resp.json()
+

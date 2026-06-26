@@ -28,47 +28,77 @@ with col_btn:
         st.session_state.pop("pros_project_id", None)
         st.switch_page("modules/prosodia/preparacao.py")
 
-# # ------------------------------------------------------------------
-# # Configuração da Integração WhatsApp
-# # ------------------------------------------------------------------
-# with st.expander("🔗 Configuração da Integração WhatsApp API", expanded=False):
-#     import os
-#     from pathlib import Path
-#     from dotenv import load_dotenv, set_key
+# ------------------------------------------------------------------
+# Configuração da Integração WhatsApp
+# ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Painel de Controle WhatsApp Integration
+# ------------------------------------------------------------------
+with st.container(border=True):
+    st.markdown("### 📱 Integração com WhatsApp API")
+    
+    from utils.whatsapp_api_client import is_configured, test_connection
+    
+    c_status, c_btn1, c_btn2, c_btn3, c_btn4 = st.columns([2, 1.5, 1.5, 1.5, 1.5])
+    
+    with c_status:
+        if is_configured():
+            success, _ = test_connection()
+            if success:
+                st.markdown(
+                    """
+                    <div style="display: flex; align-items: center; gap: 8px; height: 38px;">
+                        <span style="height: 10px; width: 10px; background-color: #2ecc71; border-radius: 50%; display: inline-block; animation: pulse 1.5s infinite;"></span>
+                        <strong style="color: #2ecc71; font-size: 14px;">API Conectada</strong>
+                    </div>
+                    <style>
+                    @keyframes pulse {
+                        0% { transform: scale(0.9); opacity: 0.7; }
+                        50% { transform: scale(1.1); opacity: 1; }
+                        100% { transform: scale(0.9); opacity: 0.7; }
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    """
+                    <div style="display: flex; align-items: center; gap: 8px; height: 38px;">
+                        <span style="height: 10px; width: 10px; background-color: #e74c3c; border-radius: 50%; display: inline-block;"></span>
+                        <strong style="color: #e74c3c; font-size: 14px;">API Offline</strong>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.markdown(
+                """
+                <div style="display: flex; align-items: center; gap: 8px; height: 38px;">
+                    <span style="height: 10px; width: 10px; background-color: #f1c40f; border-radius: 50%; display: inline-block;"></span>
+                    <strong style="color: #f1c40f; font-size: 14px;">Não Configurada</strong>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+    with c_btn1:
+        if st.button("👤 Contatos", use_container_width=True):
+            st.switch_page("modules/prosodia/whatsapp_contatos.py")
+            
+    with c_btn2:
+        if st.button("📢 Campanhas", use_container_width=True):
+            st.switch_page("modules/prosodia/whatsapp_campanhas.py")
+            
+    with c_btn3:
+        if st.button("📡 Monitor", use_container_width=True):
+            st.switch_page("modules/prosodia/whatsapp_monitor.py")
+            
+    with c_btn4:
+        if st.button("⚙️ Configurar", use_container_width=True):
+            st.switch_page("modules/prosodia/whatsapp_config.py")
 
-#     _env_path = Path(__file__).resolve().parent.parent / ".env"
-#     load_dotenv(_env_path)
-
-#     wa_col1, wa_col2 = st.columns(2)
-#     with wa_col1:
-#         wa_url = st.text_input(
-#             "URL da API WhatsApp",
-#             value=st.session_state.get("whatsapp_api_url", os.getenv("WHATSAPP_API_URL", "")),
-#             placeholder="http://localhost:8000",
-#             key="wa_cfg_url",
-#         )
-#     with wa_col2:
-#         wa_key = st.text_input(
-#             "Chave da API WhatsApp",
-#             value=st.session_state.get("whatsapp_api_key", os.getenv("WHATSAPP_API_KEY", "")),
-#             type="password",
-#             key="wa_cfg_key",
-#         )
-
-#     if st.button("💾 Salvar Configuração WhatsApp", key="wa_cfg_save"):
-#         st.session_state["whatsapp_api_url"] = wa_url.strip()
-#         st.session_state["whatsapp_api_key"] = wa_key.strip()
-#         # Persistir no .env
-#         try:
-#             set_key(str(_env_path), "WHATSAPP_API_URL", wa_url.strip())
-#             set_key(str(_env_path), "WHATSAPP_API_KEY", wa_key.strip())
-#             os.environ["WHATSAPP_API_URL"] = wa_url.strip()
-#             os.environ["WHATSAPP_API_KEY"] = wa_key.strip()
-#             st.success("✅ Configuração salva com sucesso!")
-#         except Exception as e:
-#             st.error(f"Erro ao salvar .env: {e}")
-
-# st.divider()
+st.divider()
 
 # ------------------------------------------------------------------
 # Lista de projetos
