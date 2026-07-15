@@ -196,6 +196,28 @@ with st.container():
     st.caption("_Deixe em branco para pular a verificação de cobertura de perguntas._")
 
     st.divider()
+    st.subheader("🎯 Entidades prioritárias da análise")
+    st.markdown(
+        "Liste candidatos, marcas, produtos ou pessoas que devem receber análise "
+        "individual no relatório. Use **uma entidade por linha**, opcionalmente "
+        "com o tipo antes de dois-pontos."
+    )
+    entities = st.text_area(
+        "Entidades prioritárias",
+        value=project.get("entities", ""),
+        placeholder=(
+            "Candidato: Ana Silva\n"
+            "Marca: Campo Forte\n"
+            "Produto: Sementes Premium"
+        ),
+        height=130,
+        help=(
+            "Esses nomes são buscados literalmente nas transcrições. "
+            "Inclua grafias e apelidos relevantes em linhas separadas."
+        ),
+    )
+
+    st.divider()
     st.subheader("🧾 Briefing do Projeto (contexto para análises)")
     st.markdown(
         "Adicione um documento de **briefing** para enriquecer o contexto das análises de IA "
@@ -274,6 +296,39 @@ with st.container():
         selected_campaign = current_campaign_id
         if current_campaign_id:
             st.caption(f"Campanha vinculada atual: ID {current_campaign_id}")
+
+    # ------------------------------------------------------------------
+    # Sincronização do Projeto com a API (Opcional)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("🔗 Sincronização de Projeto na API")
+    st.markdown(
+        "Vincule este projeto local a um projeto na API para agrupar áudios, contatos e campanhas."
+    )
+
+    current_api_project_id = project.get("api_project_id")
+    sincronizar_api = False
+    desvincular_api = False
+    api_organization = ""
+
+    if is_configured():
+        if current_api_project_id:
+            st.success(f"🔗 Projeto vinculado à API: ID #{current_api_project_id}")
+            desvincular_api = st.checkbox("Desvincular este projeto da API", value=False)
+        else:
+            sincronizar_api = st.checkbox("Sincronizar este projeto com a API", value=False)
+            if sincronizar_api:
+                api_organization = st.text_input(
+                    "Organização da API (Organization) *",
+                    value="",
+                    placeholder="Ex: NENC / Empresa Cliente",
+                    help="Nome da organização a ser informada no projeto da API."
+                )
+    else:
+        st.caption(
+            "⚠️ API de WhatsApp não configurada. "
+            "Configure URL e chave na tela de Projetos para habilitar a sincronização de projetos."
+        )
 
     # ------------------------------------------------------------------
     # Limiares de Qualidade Objetiva
@@ -468,6 +523,26 @@ if submitted:
             }
             quality_thresholds_json = json.dumps(custom_t)
 
+        # Criar ou desvincular projeto na API se configurado
+        api_project_id_to_save = current_api_project_id
+        if is_configured():
+            if current_api_project_id:
+                if desvincular_api:
+                    api_project_id_to_save = None
+            else:
+                if sincronizar_api:
+                    if not api_organization.strip():
+                        st.error("O campo **Organização da API** é obrigatório para sincronizar.")
+                        st.stop()
+                    try:
+                        with st.spinner("Criando projeto na API..."):
+                            from utils.whatsapp_api_client import create_api_project
+                            api_proj_resp = create_api_project(nome.strip(), api_organization.strip())
+                            api_project_id_to_save = api_proj_resp.get("id")
+                    except Exception as e:
+                        st.error(f"Falha ao criar projeto na API: {e}")
+                        st.stop()
+
         if editing:
             update_project(
                 project_id,
@@ -476,10 +551,12 @@ if submitted:
                 historico=historico.strip(),
                 problemas=problemas.strip(),
                 questions=questions_raw.strip(),
+                entities=entities.strip(),
                 briefing_filename=briefing_filename,
                 briefing_text=briefing_text,
                 whatsapp_campaign_id=selected_campaign,
                 quality_thresholds=quality_thresholds_json,
+                api_project_id=api_project_id_to_save,
             )
             st.success("Projeto atualizado!")
         else:
@@ -489,10 +566,12 @@ if submitted:
                 historico=historico.strip(),
                 problemas=problemas.strip(),
                 questions=questions_raw.strip(),
+                entities=entities.strip(),
                 briefing_filename=briefing_filename,
                 briefing_text=briefing_text,
                 whatsapp_campaign_id=selected_campaign,
                 quality_thresholds=quality_thresholds_json,
+                api_project_id=api_project_id_to_save,
             )
             st.session_state["pros_project_id"] = new_id
             saved_project_id = new_id
@@ -514,4 +593,3 @@ if submitted:
             st.session_state["pros_project_id"] = saved_project_id
 
         st.switch_page("modules/prosodia/entrevistas.py")
-

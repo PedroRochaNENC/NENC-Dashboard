@@ -315,9 +315,68 @@ if json_files or csv_files or sinc_files:
 
             progress.progress((i + 1) / total, text=f"{sid} concluído.")
 
-        progress.empty()
         st.success(f"✅ {total} entrevista(s) processada(s) com sucesso!")
         st.switch_page("modules/prosodia/entrevistas.py")
+
+# ------------------------------------------------------------------
+# Upload Direto de Áudio para a API (Opcional)
+# ------------------------------------------------------------------
+api_project_id = project.get("api_project_id")
+
+if api_project_id:
+    st.divider()
+    st.subheader("📡 Upload Direto de Áudio para a API")
+    st.markdown(
+        "Envie um arquivo de áudio diretamente para este projeto na API. "
+        "O processamento será iniciado na API e o áudio poderá ser sincronizado posteriormente."
+    )
+    
+    from utils.whatsapp_api_client import is_configured, upload_audio_to_project
+    
+    if is_configured():
+        col_f, col_l = st.columns([3, 2])
+        with col_f:
+            audio_file = st.file_uploader(
+                "Arquivo de Áudio",
+                type=["wav", "mp3", "m4a", "ogg", "aac"],
+                key="api_audio_file"
+            )
+        with col_l:
+            audio_label = st.text_input(
+                "Identificador / Marcador (Label)",
+                placeholder="Ex: Entrevistado A, Sessão 1",
+                key="api_audio_label"
+            )
+            
+        if audio_file:
+            if st.button("📤 Enviar Áudio para a API", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Enviando arquivo para a API..."):
+                        file_bytes = audio_file.getvalue()
+                        filename = audio_file.name
+                        
+                        mimetype = "audio/wav"
+                        if filename.endswith(".mp3"):
+                            mimetype = "audio/mpeg"
+                        elif filename.endswith(".m4a"):
+                            mimetype = "audio/mp4"
+                        elif filename.endswith(".ogg"):
+                            mimetype = "audio/ogg"
+                            
+                        file_tuple = (filename, file_bytes, mimetype)
+                        
+                        resp = upload_audio_to_project(
+                            project_id=api_project_id,
+                            file=file_tuple,
+                            label=audio_label.strip() if audio_label else None
+                        )
+                        audio_id = resp.get("audio_id") or resp.get("id")
+                        st.success(f"✅ Áudio '{filename}' enviado com sucesso! ID na API: {audio_id}")
+                        st.balloons()
+                except Exception as e:
+                    st.error(f"Erro ao enviar áudio: {e}")
+    else:
+        st.caption("⚠️ API de WhatsApp não configurada.")
 
 # ------------------------------------------------------------------
 # Acesso às entrevistas

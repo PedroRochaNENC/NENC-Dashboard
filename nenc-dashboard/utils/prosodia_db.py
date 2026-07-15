@@ -42,9 +42,11 @@ def init_db() -> None:
                 historico    TEXT,
                 problemas    TEXT,
                 questions    TEXT,
+                entities     TEXT,
                 briefing_filename TEXT,
                 briefing_text TEXT,
                 whatsapp_campaign_id INTEGER,
+                api_project_id INTEGER,
                 quality_thresholds TEXT,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
             );
@@ -91,6 +93,14 @@ def init_db() -> None:
                 citations      TEXT,
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
             );
+
+            CREATE TABLE IF NOT EXISTS high_activations (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                audio_id       INTEGER NOT NULL
+                               REFERENCES audios(id) ON DELETE CASCADE,
+                moments_json   TEXT,
+                created_at     TEXT    DEFAULT (datetime('now','localtime'))
+            );
             """
         )
 
@@ -104,6 +114,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE projects ADD COLUMN whatsapp_campaign_id INTEGER")
         if "quality_thresholds" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN quality_thresholds TEXT")
+        if "api_project_id" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN api_project_id INTEGER")
+        if "entities" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN entities TEXT")
 
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -120,10 +134,12 @@ def create_project(
     historico: str = "",
     problemas: str = "",
     questions: str = "",
+    entities: str = "",
     briefing_filename: str = "",
     briefing_text: str = "",
     whatsapp_campaign_id: Optional[int] = None,
     quality_thresholds: Optional[str] = None,
+    api_project_id: Optional[int] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     with _connect() as conn:
@@ -134,21 +150,25 @@ def create_project(
                     historico,
                     problemas,
                     questions,
+                    entities,
                     briefing_filename,
                     briefing_text,
                     whatsapp_campaign_id,
-                    quality_thresholds
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    quality_thresholds,
+                    api_project_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 name,
                 especialidade,
                 historico,
                 problemas,
                 questions,
+                entities,
                 briefing_filename,
                 briefing_text,
                 whatsapp_campaign_id,
                 quality_thresholds,
+                api_project_id,
             ),
         )
         return cur.lastrowid
@@ -185,10 +205,12 @@ def update_project(
     historico: str = "",
     problemas: str = "",
     questions: str = "",
+    entities: str = "",
     briefing_filename: str = "",
     briefing_text: str = "",
     whatsapp_campaign_id: Optional[int] = None,
     quality_thresholds: Optional[str] = None,
+    api_project_id: Optional[int] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente."""
     with _connect() as conn:
@@ -199,10 +221,12 @@ def update_project(
                    historico=?,
                    problemas=?,
                    questions=?,
+                   entities=?,
                    briefing_filename=?,
                    briefing_text=?,
                    whatsapp_campaign_id=?,
-                   quality_thresholds=?
+                   quality_thresholds=?,
+                   api_project_id=?
                WHERE id=?""",
             (
                 name,
@@ -210,10 +234,12 @@ def update_project(
                 historico,
                 problemas,
                 questions,
+                entities,
                 briefing_filename,
                 briefing_text,
                 whatsapp_campaign_id,
                 quality_thresholds,
+                api_project_id,
                 project_id,
             ),
         )
@@ -647,3 +673,28 @@ def get_project_questions(project_id: int) -> List[str]:
         return []
     raw = project.get("questions", "") or ""
     return [q.strip() for q in raw.splitlines() if q.strip()]
+
+
+def save_high_activations(audio_id: int, moments: list) -> int:
+    """Salva os momentos de maior ativação prosódica de um áudio/entrevista."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO high_activations (audio_id, moments_json)
+               VALUES (?, ?)""",
+            (audio_id, json.dumps(moments)),
+        )
+        return cur.lastrowid
+
+
+def get_latest_high_activations(audio_id: int) -> Optional[List[Dict]]:
+    """Retorna a lista de momentos de maior ativação mais recente de um áudio, ou None."""
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM high_activations WHERE audio_id = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (audio_id,),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    return json.loads(d.get("moments_json") or "[]")

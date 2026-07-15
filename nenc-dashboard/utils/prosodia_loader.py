@@ -328,3 +328,58 @@ def get_prosodia_summary(data: Dict) -> Dict:
         "n_messages": n_messages,
         "n_speakers": n_speakers,
     }
+
+
+def extract_topic_from_text(text: str) -> str:
+    """Extrai de 1 a 3 palavras mais relevantes/compridas do texto para servir como tópico."""
+    if not text or not isinstance(text, str):
+        return "Geral"
+    import re
+    import unicodedata
+    
+    # Lista de stopwords comuns em português
+    stopwords = {
+        "a", "o", "as", "os", "de", "do", "da", "dos", "das", "e", "ou", "no", "na",
+        "nos", "nas", "em", "para", "por", "com", "sem", "um", "uma", "uns", "umas",
+        "que", "qual", "quais", "como", "onde", "quando", "se", "seu", "sua", "seus", "suas",
+        "voce", "vocês", "voces", "ele", "ela", "eles", "elas", "isso", "isto", "aquele",
+        "mas", "tambem", "mais", "muito", "entao", "aqui", "la", "sim", "nao", "pra", "pro",
+        "este", "esta", "estes", "estas", "tudo", "todo", "toda", "todos", "todas", "ser",
+        "ter", "ir", "com", "por", "para", "uma", "um", "do", "da", "no", "na", "ao", "aos",
+        "pelo", "pela", "pelos", "pelas", "num", "numa", "neste", "nesta", "disso", "disto",
+        "dele", "dela", "deles", "delas", "mim", "me", "te", "se", "nos", "vos", "lhe", "lhes",
+        "meu", "minha", "meus", "minhas", "teu", "tua", "teus", "tuas", "nosso", "nossa",
+        "nossos", "nossas", "vosso", "vossa", "vossos", "vossas", "qualquer", "quaisquer",
+        "algum", "alguma", "alguns", "algumas", "nenhum", "nenhuma", "outro", "outra", "outros",
+        "outras", "mesmo", "mesma", "mesmos", "mesmas", "proprio", "propria", "proprios", "proprias",
+        "acho", "acha", "achar", "coisa", "coisas", "tipo", "ne", "ta", "entao", "gente", "queria",
+        "porque", "porquê", "pois", "assim", "sobre", "quase", "estou", "esta", "estao", "esteve",
+        "tinha", "tinham", "tenho", "tem", "temos", "fazer", "faz", "feito", "disse", "diz", "falar",
+        "fala", "falou", "vai", "vou", "vao", "aqui", "ali", "la", "dessa", "desse", "desta", "deste",
+        "muito", "pouco", "bem", "mal", "sim", "nao", "talvez"
+    }
+    
+    text_norm = "".join(
+        ch for ch in unicodedata.normalize("NFD", text.lower())
+        if unicodedata.category(ch) != "Mn"
+    )
+    
+    words = re.findall(r"\b[a-z]{3,}\b", text_norm)
+    filtered = [w for w in words if w not in stopwords]
+    
+    if not filtered:
+        filtered = [w for w in words if len(w) >= 3]
+        
+    if not filtered:
+        return "Geral"
+        
+    seen = set()
+    unique = []
+    for w in filtered:
+        if w not in seen:
+            seen.add(w)
+            unique.append(w)
+            if len(unique) == 3:
+                break
+                
+    return " ".join(w.capitalize() for w in unique)

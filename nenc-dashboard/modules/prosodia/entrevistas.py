@@ -106,9 +106,12 @@ from utils.whatsapp_api_client import is_configured as wa_configured
 
 if wa_configured():
     campaign_id = project.get("whatsapp_campaign_id")
+    api_project_id = project.get("api_project_id")
 
     sync_label = "🔄 Sincronizar com WhatsApp"
-    if campaign_id:
+    if api_project_id:
+        sync_label += f" (Projeto API #{api_project_id})"
+    elif campaign_id:
         sync_label += f" (Campanha #{campaign_id})"
     else:
         sync_label += " (Todos os áudios)"
@@ -122,19 +125,74 @@ if wa_configured():
         )
 
         try:
-            with st.spinner("Buscando áudios na API do WhatsApp..."):
-                api_audios = fetch_audios_for_sync(campaign_id=campaign_id)
-                existing_ids = get_existing_whatsapp_message_ids(project_id)
+            with st.spinner("Buscando áudios na API..."):
+                from utils.whatsapp_api_client import get_project_audios, get_audio_status, get_all_audios
+                
+                if api_project_id:
+                    api_audios_raw = get_project_audios(api_project_id)
+                else:
+                    target_phones = None
+                    if campaign_id:
+                        try:
+                            from utils.whatsapp_api_client import get_campaign_contacts
+                            contacts = get_campaign_contacts(campaign_id)
+                            target_phones = [c.get("phone") for c in contacts if c.get("phone")]
+                        except Exception:
+                            pass
+                    
+                    api_audios_raw = []
+                    if target_phones:
+                        for phone in target_phones:
+                            try:
+                                audios = get_all_audios(phone=phone)
+                                api_audios_raw.extend(audios)
+                            except Exception:
+                                pass
+                    else:
+                        api_audios_raw = get_all_audios()
+
+                from utils.prosodia_db import get_audios
+                local_audios = get_audios(project_id)
+                existing_session_ids = {a.get("session_id") for a in local_audios if a.get("session_id")}
 
                 # Filtrar apenas áudios novos (não sincronizados)
-                new_audios = [
-                    a for a in api_audios
-                    if a.get("whatsapp_message_id")
-                    and a["whatsapp_message_id"] not in existing_ids
-                ]
+                new_audios = []
+                processing_count = 0
+                failed_errors = []
+
+                for a in api_audios_raw:
+                    a_id = a["id"]
+                    wa_msg_id = a.get("whatsapp_message_id")
+                    if wa_msg_id:
+                        phone = a.get("contact_phone", "desconhecido")
+                        cand_sid = f"wa_{phone}_{a_id}"
+                    else:
+                        cand_sid = f"wa_upload_{a_id}"
+                    
+                    if cand_sid not in existing_session_ids:
+                        try:
+                            status_info = get_audio_status(a_id)
+                            status = status_info.get("status")
+                            if status == "done" and status_info.get("has_result_json"):
+                                new_audios.append(a)
+                            elif status in ("pending", "running", "processing"):
+                                processing_count += 1
+                            elif status == "failed":
+                                label = a.get("label") or f"Áudio #{a_id}"
+                                err_msg = status_info.get("error_msg") or "Erro desconhecido"
+                                failed_errors.append((label, err_msg))
+                        except Exception:
+                            pass
 
             if not new_audios:
-                st.info("✅ Nenhum áudio novo encontrado para sincronizar.")
+                if processing_count > 0:
+                    st.info(f"⏳ Existem {processing_count} áudio(s) novos ainda sendo processados na API. Aguarde um momento e clique em sincronizar novamente.")
+                elif failed_errors:
+                    st.warning("⚠️ Os seguintes áudios novos falharam no processamento da API:")
+                    for label, err in failed_errors:
+                        st.markdown(f"- **{label}**: {err}")
+                else:
+                    st.info("✅ Nenhum áudio novo encontrado para sincronizar.")
             else:
                 # Importações necessárias para análise automática
                 from utils.prosodia_db import (
@@ -171,10 +229,14 @@ if wa_configured():
                 progress = st.progress(0, text=f"Sincronizando 0/{total}…")
 
                 for idx, api_audio in enumerate(new_audios):
-                    wa_msg_id = api_audio.get("whatsapp_message_id", "")
+                    wa_msg_id = api_audio.get("whatsapp_message_id")
                     audio_api_id = api_audio["id"]
-                    contact_phone = api_audio.get("contact_phone", "desconhecido")
-                    session_id = f"wa_{contact_phone}_{audio_api_id}"
+                    if wa_msg_id:
+                        contact_phone = api_audio.get("contact_phone", "desconhecido")
+                        session_id = f"wa_{contact_phone}_{audio_api_id}"
+                    else:
+                        contact_phone = "desconhecido"
+                        session_id = f"wa_upload_{audio_api_id}"
 
                     progress.progress(idx / total, text=f"Processando {session_id}…")
 

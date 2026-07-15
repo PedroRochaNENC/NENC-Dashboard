@@ -241,7 +241,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
             audio_err = str(e)
         
         if audio_err:
-            audio_html = f'<div style="padding: 10px; background: #3c1e1e; border-radius: 8px; margin-bottom: 15px; color: #ff8080; text-align: center;">Erro ao baixar áudio: {audio_err}</div>'
+            audio_html = f'<div style="padding: 10px; background: #3c1e1e; border-radius: 8px; margin-bottom: 15px; color: #ff8080; text-align: center;">{audio_err}</div>'
         else:
             audio_src = f"data:audio/wav;base64,{audio_base64}"
             audio_html = f'<audio id="audio-player" controls style="width: 100%; margin-bottom: 15px; border-radius: 8px;"><source src="{audio_src}" type="audio/wav"></audio>'

@@ -695,14 +695,39 @@ def create_project_word_ranking(
     }
     
     words = []
-    for text in tr_df["Text"].fillna("").astype(str):
-        text_norm = "".join(
-            ch for ch in unicodedata.normalize("NFD", text.lower())
-            if unicodedata.category(ch) != "Mn"
-        )
-        for word in re.findall(r"\b[a-z]{3,}\b", text_norm):
-            if word not in stopwords:
-                words.append(word)
+    spacy_success = False
+    try:
+        import spacy
+        try:
+            nlp = spacy.load("pt_core_news_sm", disable=["parser", "ner", "lemmatizer"])
+        except OSError:
+            from spacy.cli import download
+            download("pt_core_news_sm")
+            nlp = spacy.load("pt_core_news_sm", disable=["parser", "ner", "lemmatizer"])
+            
+        texts = tr_df["Text"].fillna("").astype(str).tolist()
+        for doc in nlp.pipe(texts, batch_size=256):
+            for token in doc:
+                if token.pos_ in ("NOUN", "PROPN", "ADJ") and len(token.text) >= 3 and token.is_alpha:
+                    word_norm = "".join(
+                        ch for ch in unicodedata.normalize("NFD", token.text.lower())
+                        if unicodedata.category(ch) != "Mn"
+                    )
+                    if word_norm not in stopwords:
+                        words.append(word_norm)
+        spacy_success = True
+    except Exception:
+        pass
+        
+    if not spacy_success:
+        for text in tr_df["Text"].fillna("").astype(str):
+            text_norm = "".join(
+                ch for ch in unicodedata.normalize("NFD", text.lower())
+                if unicodedata.category(ch) != "Mn"
+            )
+            for word in re.findall(r"\b[a-z]{3,}\b", text_norm):
+                if word not in stopwords:
+                    words.append(word)
                 
     counts = Counter(words).most_common(top_n)
     if not counts:

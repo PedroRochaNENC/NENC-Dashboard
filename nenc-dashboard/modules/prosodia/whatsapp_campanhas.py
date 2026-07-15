@@ -37,6 +37,14 @@ if not is_configured():
         st.switch_page("modules/prosodia/whatsapp_config.py")
     st.stop()
 
+# Obter projeto ativo se houver
+project_id = st.session_state.get("pros_project_id")
+project = get_project(project_id) if project_id else None
+api_project_id = project.get("api_project_id") if project else None
+
+if api_project_id:
+    st.info(f"🔗 **Filtro Ativo**: Exibindo e associando campanhas ao Projeto API #{api_project_id} ({project['name']})")
+
 # Abas para Campanhas
 tab_lista, tab_nova = st.tabs([
     "📋 Campanhas Ativas",
@@ -50,7 +58,7 @@ with tab_lista:
     st.subheader("Histórico de Campanhas")
     
     try:
-        campanhas = get_campaigns()
+        campanhas = get_campaigns(project_id=api_project_id)
         
         if not campanhas:
             st.info("Nenhuma campanha foi criada ainda.")
@@ -267,7 +275,8 @@ with tab_nova:
                                 name=nome_campanha.strip(),
                                 template_name=template_name.strip(),
                                 language_code=language_code.strip(),
-                                contact_ids=contatos_selecionados
+                                contact_ids=contatos_selecionados,
+                                project_id=api_project_id
                             )
                         st.success(f"✅ Campanha '{nome_campanha}' criada e disparada em background com sucesso!")
                         st.balloons()

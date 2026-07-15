@@ -115,9 +115,12 @@ else:
         with st.container(border=True):
             c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 1])
 
+            api_proj_id = proj.get("api_project_id")
+
             with c1:
                 n = proj.get("n_audios", 0)
-                st.markdown(f"**{proj['name']}**")
+                badge_html = f" <span style='background-color: #2ecc71; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;'>🔗 API #{api_proj_id}</span>" if api_proj_id else ""
+                st.markdown(f"**{proj['name']}**{badge_html}", unsafe_allow_html=True)
                 st.caption(
                     f"🗂️ {n} entrevista(s)  •  📅 {proj['created_at'][:10]}"
                     + (f"  •  _{proj['especialidade'][:60]}…_" if proj.get("especialidade") else "")
@@ -152,9 +155,25 @@ else:
                     f"Tem certeza que deseja excluir **{proj['name']}**? "
                     "Todas as entrevistas e análises serão removidas permanentemente."
                 )
+
+                excluir_na_api = False
+                if api_proj_id:
+                    excluir_na_api = st.checkbox(
+                        "Excluir também na API",
+                        value=False,
+                        key=f"excluir_api_cb_{proj['id']}"
+                    )
+
                 cc1, cc2 = st.columns(2)
                 with cc1:
                     if st.button("✅ Confirmar exclusão", key=f"confirm_yes_{proj['id']}", width='stretch'):
+                        if api_proj_id and excluir_na_api:
+                            try:
+                                from utils.whatsapp_api_client import delete_api_project
+                                delete_api_project(api_proj_id)
+                            except Exception as e:
+                                st.error(f"Erro ao excluir projeto na API: {e}")
+                                # Não interrompe para garantir que a exclusão local ocorra
                         delete_project(proj["id"])
                         st.session_state.pop(f"confirm_del_{proj['id']}", None)
                         st.rerun()

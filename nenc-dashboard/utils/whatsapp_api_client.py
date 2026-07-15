@@ -23,6 +23,10 @@ import pandas as pd
 import streamlit as st
 
 
+class AudioFileUnavailableError(RuntimeError):
+    """Indica que a API não possui mais o arquivo de áudio solicitado."""
+
+
 # ---------------------------------------------------------------------------
 # Credenciais
 # ---------------------------------------------------------------------------
@@ -48,7 +52,7 @@ def is_configured() -> bool:
     return bool(_get_api_url()) and bool(_get_api_key())
 
 
-def _client() -> httpx.Client:
+def _client(timeout: float = 30.0) -> httpx.Client:
     """Cria um httpx.Client configurado com timeout e autenticação."""
     url = _get_api_url()
     key = _get_api_key()
@@ -59,7 +63,7 @@ def _client() -> httpx.Client:
     return httpx.Client(
         base_url=url,
         headers={"X-API-Key": key},
-        timeout=30.0,
+        timeout=timeout,
     )
 
 
@@ -82,10 +86,13 @@ def test_connection() -> tuple[bool, str]:
 # Campanhas
 # ---------------------------------------------------------------------------
 
-def get_campaigns() -> List[Dict]:
-    """Lista todas as campanhas disponíveis na API."""
+def get_campaigns(project_id: Optional[int] = None) -> List[Dict]:
+    """Lista todas as campanhas disponíveis na API, opcionalmente filtradas por projeto."""
+    params: Dict[str, Any] = {"limit": 500}
+    if project_id is not None:
+        params["project_id"] = project_id
     with _client() as c:
-        resp = c.get("/campaigns", params={"limit": 500})
+        resp = c.get("/campaigns", params=params)
         resp.raise_for_status()
         return resp.json()
 
@@ -117,15 +124,17 @@ def get_campaign_contacts(campaign_id: int) -> List[Dict]:
 # O `GET /audios` aceita filtros: phone, from_date, to_date, has_file.
 # ---------------------------------------------------------------------------
 
-def get_all_audios(phone: Optional[str] = None, limit: int = 500) -> List[Dict]:
+def get_all_audios(phone: Optional[str] = None, limit: int = 500, project_id: Optional[int] = None) -> List[Dict]:
     """
-    Lista áudios da API, opcionalmente filtrando por telefone.
+    Lista áudios da API, opcionalmente filtrando por telefone ou projeto.
     Retorna lista de AudioResponse: {id, whatsapp_message_id, contact_phone,
     media_id, local_path, duration_sec, received_at}
     """
     params: Dict[str, Any] = {"limit": limit}
     if phone:
         params["phone"] = phone
+    if project_id is not None:
+        params["project_id"] = project_id
     with _client() as c:
         resp = c.get("/audios", params=params)
         resp.raise_for_status()
@@ -169,17 +178,117 @@ def get_audio_transcript(audio_id: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Projetos API
+# ---------------------------------------------------------------------------
+
+def get_api_projects() -> List[Dict]:
+    """Lista todos os projetos cadastrados na API."""
+    with _client() as c:
+        resp = c.get("/projects")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def create_api_project(name: str, organization: str) -> Dict:
+    """Cria um novo projeto na API."""
+    body = {"name": name, "organization": organization}
+    with _client() as c:
+        resp = c.post("/projects", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_api_project(project_id: int) -> Dict:
+    """Retorna detalhes de um projeto na API pelo ID."""
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def update_api_project(project_id: int, name: Optional[str] = None, organization: Optional[str] = None) -> Dict:
+    """Atualiza um projeto na API."""
+    body = {}
+    if name is not None:
+        body["name"] = name
+    if organization is not None:
+        body["organization"] = organization
+    with _client() as c:
+        resp = c.patch(f"/projects/{project_id}", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def delete_api_project(project_id: int) -> None:
+    """Exclui um projeto na API pelo ID."""
+    with _client() as c:
+        resp = c.delete(f"/projects/{project_id}")
+        resp.raise_for_status()
+    return None
+
+
+# Sub-rotas de projeto
+def get_project_audios(project_id: int) -> List[Dict]:
+    """Lista os áudios associados a um projeto na API."""
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/audios")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def upload_audio_to_project(project_id: int, file: Any, label: Optional[str] = None) -> Dict:
+    """Faz upload de um arquivo de áudio diretamente para o projeto na API."""
+    files = {"file": file}
+    data = {}
+    if label:
+        data["label"] = label
+    with _client(timeout=300.0) as c:
+        resp = c.post(f"/projects/{project_id}/audios/upload", files=files, data=data)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_project_campaigns(project_id: int) -> List[Dict]:
+    """Lista as campanhas associadas a um projeto na API."""
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/campaigns")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_project_contacts(project_id: int) -> List[Dict]:
+    """Lista os contatos vinculados a um projeto na API."""
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/contacts")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def link_contact_to_project(project_id: int, phone: str, name: Optional[str] = None) -> Dict:
+    """Vincula/cria um contato para o projeto na API."""
+    body = {"phone": phone}
+    if name:
+        body["name"] = name
+    with _client() as c:
+        resp = c.post(f"/projects/{project_id}/contacts", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # Buscador de áudios para sincronização
 # ---------------------------------------------------------------------------
 
 def fetch_audios_for_sync(
     campaign_id: Optional[int] = None,
     phones: Optional[List[str]] = None,
+    api_project_id: Optional[int] = None,
 ) -> List[Dict]:
     """
     Busca áudios da API prontos para sincronização.
 
     Estratégia:
+    - Se api_project_id fornecido: busca todos os áudios associados ao projeto na API
     - Se campaign_id fornecido: busca contatos da campanha → seus telefones → áudios
     - Se phones fornecido: busca áudios filtrados por esses telefones
     - Se nenhum: busca TODOS os áudios da API
@@ -187,26 +296,32 @@ def fetch_audios_for_sync(
     Retorna apenas áudios cujo processamento está 'done' (tem result_json).
     """
     target_phones: Optional[List[str]] = phones
-
-    # Se tem campanha, buscar telefones dela
-    if campaign_id and not target_phones:
-        try:
-            contacts = get_campaign_contacts(campaign_id)
-            target_phones = [c.get("phone") for c in contacts if c.get("phone")]
-        except Exception:
-            target_phones = None  # fallback: buscar tudo
-
-    # Buscar áudios
     all_audios: List[Dict] = []
-    if target_phones:
-        for phone in target_phones:
-            try:
-                audios = get_all_audios(phone=phone)
-                all_audios.extend(audios)
-            except Exception:
-                pass
+
+    if api_project_id:
+        try:
+            all_audios = get_project_audios(api_project_id)
+        except Exception:
+            all_audios = []
     else:
-        all_audios = get_all_audios()
+        # Se tem campanha, buscar telefones dela
+        if campaign_id and not target_phones:
+            try:
+                contacts = get_campaign_contacts(campaign_id)
+                target_phones = [c.get("phone") for c in contacts if c.get("phone")]
+            except Exception:
+                target_phones = None  # fallback: buscar tudo
+
+        # Buscar áudios
+        if target_phones:
+            for phone in target_phones:
+                try:
+                    audios = get_all_audios(phone=phone)
+                    all_audios.extend(audios)
+                except Exception:
+                    pass
+        else:
+            all_audios = get_all_audios()
 
     # Filtrar apenas com resultado pronto
     ready_audios: List[Dict] = []
@@ -510,6 +625,11 @@ def get_audio_file(audio_id: int, kind: str = "wav") -> bytes:
     """Busca o arquivo de áudio (original ou wav) da API."""
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/file", params={"kind": kind})
+        if resp.status_code == httpx.codes.GONE:
+            raise AudioFileUnavailableError(
+                "O arquivo de áudio não está mais disponível na API. "
+                "Reenvie-o ou recupere-o no serviço de origem."
+            )
         resp.raise_for_status()
         return resp.content
 
@@ -560,16 +680,17 @@ def import_contacts_csv(csv_bytes: bytes) -> Dict:
 # Campanhas
 # ---------------------------------------------------------------------------
 
-def create_campaign(name: str, template_name: str, language_code: str, contact_ids: List[int]) -> Dict:
-    """Cria uma nova campanha e inicia os envios para a lista de contatos."""
+def create_campaign(name: str, template_name: str, language_code: str, contact_ids: List[int], project_id: Optional[int] = None) -> Dict:
+    """Cria uma nova campanha e inicia os envios para a lista de contatos, vinculando a um projeto na API se fornecido."""
     body = {
         "name": name,
         "template_name": template_name,
         "language_code": language_code,
         "contact_ids": contact_ids,
     }
+    url = f"/projects/{project_id}/campaigns" if project_id is not None else "/campaigns"
     with _client() as c:
-        resp = c.post("/campaigns", json=body)
+        resp = c.post(url, json=body)
         resp.raise_for_status()
         return resp.json()
 

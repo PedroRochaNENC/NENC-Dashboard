@@ -12,6 +12,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from fpdf import FPDF
 
 from utils.prosodia_db import (
     init_db,
@@ -21,7 +22,7 @@ from utils.prosodia_db import (
     get_project_analyses,
     save_project_analysis,
 )
-from utils.prosodia_loader import load_prosodia_from_uploads
+from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
 from utils.prosodia_charts import (
     create_speaker_stats,
     create_acoustic_timeline,
@@ -83,6 +84,132 @@ def _build_project_analysis_markdown(
                 lines.append(f"   - Trecho: {quote}")
 
     return "\n".join(lines)
+
+
+def _sanitize(text: str) -> str:
+    """Remove caracteres fora do latin-1 para compatibilidade com fontes PDF."""
+    return str(text or "").encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _build_project_analysis_pdf(
+    project_name: str,
+    project_info: dict,
+    model: str,
+    created_at: str,
+    text: str,
+    citations: list,
+    acoustic_summary: str = "",
+) -> bytes:
+    """Gera um PDF formatado com a análise geral do projeto."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # Titulo principal
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, _sanitize("Relatório de Análise Geral - Prosódia"), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    # Info do projeto
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 6, _sanitize(f"Projeto: {project_name}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 5, _sanitize(f"Modelo de IA: {model}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5, _sanitize(f"Gerado em: {created_at}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Contexto/Metadados do projeto
+    if project_info:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize("Contexto do Projeto"), new_x="LMARGIN", new_y="NEXT")
+        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
+        pdf.ln(2)
+        
+        for label, key in [
+            ("Especialidade", "especialidade"),
+            ("Histórico", "historico"),
+            ("Problemas Centrais", "problemas"),
+            ("Briefing", "briefing"),
+        ]:
+            val = project_info.get(key, "")
+            if val:
+                pdf.set_font("Helvetica", "B", 9)
+                pdf.cell(0, 5, _sanitize(f"{label}:"), new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 4.5, _sanitize(val), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(1)
+
+    # Resumo Acústico (se houver)
+    if acoustic_summary:
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize("Métricas Acústicas Resumidas"), new_x="LMARGIN", new_y="NEXT")
+        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
+        pdf.ln(2)
+        
+        pdf.set_font("Courier", "", 8)
+        for line in acoustic_summary.splitlines():
+            pdf.cell(0, 4, _sanitize(line[:120]), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+
+    # Resultado da Análise de IA
+    if text:
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize("Resultado da Análise Geral"), new_x="LMARGIN", new_y="NEXT")
+        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
+        pdf.ln(2)
+
+        # Processar markdown simplificado
+        lines = text.splitlines()
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
+                pdf.ln(2.5)
+                continue
+            
+            # Cabeçalhos
+            if line_str.startswith("### "):
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 6, _sanitize(line_str[4:]), new_x="LMARGIN", new_y="NEXT")
+            elif line_str.startswith("## "):
+                pdf.ln(1)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 7, _sanitize(line_str[3:]), new_x="LMARGIN", new_y="NEXT")
+            elif line_str.startswith("# "):
+                pdf.ln(2)
+                pdf.set_font("Helvetica", "B", 13)
+                pdf.cell(0, 9, _sanitize(line_str[2:]), new_x="LMARGIN", new_y="NEXT")
+            elif line_str.startswith("- ") or line_str.startswith("* "):
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 4.5, _sanitize(f"  - {line_str[2:]}"), new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 4.5, _sanitize(line_str), new_x="LMARGIN", new_y="NEXT")
+                
+        pdf.ln(3)
+
+    # Referências/Citações
+    if citations:
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _sanitize("Referências e Citações"), new_x="LMARGIN", new_y="NEXT")
+        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
+        pdf.ln(2)
+        
+        for i, cit in enumerate(citations, 1):
+            filename = cit.get("filename", "Documento")
+            quote = cit.get("quote", "")
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 5, _sanitize(f"{i}. {filename}"), new_x="LMARGIN", new_y="NEXT")
+            if quote:
+                pdf.set_font("Helvetica", "I", 8.5)
+                pdf.multi_cell(0, 4, _sanitize(f"   Trecho: \"{quote}\""), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(1)
+
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
 
 
 def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
@@ -293,22 +420,215 @@ def _extract_high_activation_moments(sinc_df: pd.DataFrame, top_n: int = 15) -> 
     return top_moments
 
 
+def _group_similar_topics(moments: list) -> list:
+    if not moments:
+        return []
+        
+    import re
+    from collections import Counter
+    
+    word_occurrences = []
+    moment_words = []
+    for m in moments:
+        topic = m.get("topic", "") or ""
+        words = [w.lower() for w in re.findall(r"\b[a-z]{3,}\b", topic.lower())]
+        moment_words.append((m, words))
+        word_occurrences.extend(words)
+        
+    word_counts = Counter(word_occurrences)
+    
+    groups = {}
+    core_words_by_freq = [w for w, c in word_counts.most_common() if c > 1]
+    
+    assigned_moments = set()
+    
+    # Primeiro pass: agrupar por palavras compartilhadas
+    for core in core_words_by_freq:
+        for idx, (m, words) in enumerate(moment_words):
+            if idx in assigned_moments:
+                continue
+            if core in words:
+                if core not in groups:
+                    groups[core] = []
+                groups[core].append(m)
+                assigned_moments.add(idx)
+                
+    # Segundo pass: momentos restantes ganham grupo próprio
+    for idx, (m, words) in enumerate(moment_words):
+        if idx in assigned_moments:
+            continue
+        core = words[0] if words else "Geral"
+        if core not in groups:
+            groups[core] = []
+        groups[core].append(m)
+        assigned_moments.add(idx)
+        
+    grouped_results = []
+    for core_word, group_moments in groups.items():
+        topic_counts = Counter(m.get("topic", "") for m in group_moments)
+        representative_name = topic_counts.most_common(1)[0][0]
+        
+        arousals = [m.get("dim_arousal", 0.0) for m in group_moments]
+        avg_arousal = sum(arousals) / len(arousals) if arousals else 0.0
+        
+        sessions = sorted(list(set(m.get("session_id", "") for m in group_moments)))
+        sessions_str = ", ".join(sessions)
+        
+        best_moment = max(group_moments, key=lambda m: m.get("dim_arousal", 0.0))
+        example_quote = f"\"{best_moment.get('Text', '')}\" ({best_moment.get('SpeakerName', '')})"
+        
+        grouped_results.append({
+            "topic_group": representative_name,
+            "count": len(group_moments),
+            "avg_arousal": avg_arousal,
+            "sessions": sessions_str,
+            "example": example_quote,
+        })
+        
+    grouped_results.sort(key=lambda x: (x["count"], x["avg_arousal"]), reverse=True)
+    return grouped_results
+
+
 def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
     if top_moments.empty:
         return "Nenhum momento de alta ativação encontrado."
         
-    lines = ["| Entrevista | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |", "|---|---|---|---|---|---|---|"]
+    lines = ["| Tópico | Entrevista | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |", "|---|---|---|---|---|---|---|---|"]
+    moments_list = []
     for _, row in top_moments.iterrows():
         sid = row.get("session_id", "")
         speaker = row.get("SpeakerName", "")
         ts = row.get("Timestamp", "")
         text = str(row.get("Text", "")).replace("\n", " ").strip()
+        topic = extract_topic_from_text(text)
         arousal = f"{row.get('dim_arousal', 0.0):.2f}" if pd.notna(row.get('dim_arousal')) else "-"
         f0_var = f"{row.get('f0_variacao', 0.0):.2f}" if pd.notna(row.get('f0_variacao')) else "-"
         ld_var = f"{row.get('loudness_variacao', 0.0):.2f}" if pd.notna(row.get('loudness_variacao')) else "-"
-        lines.append(f"| {sid} | {speaker} | {ts} | \"{text}\" | {arousal} | {f0_var} | {ld_var} |")
+        lines.append(f"| {topic} | {sid} | {speaker} | {ts} | \"{text}\" | {arousal} | {f0_var} | {ld_var} |")
         
-    return "\n".join(lines)
+        moments_list.append({
+            "session_id": sid,
+            "SpeakerName": speaker,
+            "Timestamp": ts,
+            "Text": text,
+            "dim_arousal": float(row.get("dim_arousal", 0.0)) if pd.notna(row.get("dim_arousal")) else 0.0,
+            "topic": topic,
+        })
+        
+    out = "\n".join(lines)
+    
+    # Add grouped topics to LLM prompt context
+    grouped = _group_similar_topics(moments_list)
+    if grouped:
+        group_lines = [
+            "\n### Tópicos Consolidados de Maior Ativação Prosódica (Agrupados):",
+            "| Tópico Consolidado | Ocorrências | Arousal Médio | Entrevistas Relacionadas | Exemplo de Destaque |",
+            "|---|---|---|---|---|",
+        ]
+        for g in grouped:
+            group_lines.append(
+                f"| {g['topic_group']} | {g['count']} | {g['avg_arousal']:.2f} | {g['sessions']} | {g['example']} |"
+            )
+        out += "\n" + "\n".join(group_lines)
+        
+    return out
+
+
+def _calculate_questions_activation(audios: list, all_sinc: pd.DataFrame) -> list:
+    if not audios or all_sinc.empty:
+        return []
+        
+    from utils.prosodia_db import get_latest_quality_check
+    import re
+    
+    def _get_clean_tokens(txt: str) -> set:
+        if not txt or not isinstance(txt, str):
+            return set()
+        cleaned = re.sub(r"[^\w\s]", " ", txt.lower())
+        return {w for w in cleaned.split() if len(w) >= 3}
+        
+    question_matches = {}
+    
+    for audio in audios:
+        sid = audio.get("session_id", "")
+        audio_id = audio.get("id")
+        
+        quality = get_latest_quality_check(audio_id)
+        if not quality or not quality.get("coverage"):
+            continue
+            
+        sinc_sub = all_sinc[all_sinc["session_id"] == sid]
+        if sinc_sub.empty:
+            continue
+            
+        segment_tokens = []
+        for _, row in sinc_sub.iterrows():
+            txt = str(row.get("Text", ""))
+            segment_tokens.append((row, _get_clean_tokens(txt)))
+            
+        for item in quality["coverage"]:
+            q = item.get("question", "").strip()
+            if not q:
+                continue
+            is_covered = item.get("covered_keywords") or item.get("covered_ai")
+            evidence = item.get("evidence", "").strip()
+            
+            if not is_covered or not evidence:
+                continue
+                
+            evidence_tokens = _get_clean_tokens(evidence)
+            if not evidence_tokens:
+                continue
+                
+            best_row = None
+            best_overlap = 0.0
+            
+            for row, tokens in segment_tokens:
+                if not tokens:
+                    continue
+                overlap = len(evidence_tokens & tokens) / len(evidence_tokens)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_row = row
+                    
+            if best_row is not None and best_overlap >= 0.20:
+                if q not in question_matches:
+                    question_matches[q] = []
+                    
+                question_matches[q].append({
+                    "session_id": sid,
+                    "SpeakerName": str(best_row.get("SpeakerName", "Desconhecido")),
+                    "Text": str(best_row.get("Text", "")),
+                    "dim_arousal": float(best_row.get("dim_arousal", 0.0)) if pd.notna(best_row.get("dim_arousal")) else 0.0,
+                    "f0_variacao": float(best_row.get("f0_variacao", 0.0)) if pd.notna(best_row.get("f0_variacao")) else 0.0,
+                    "loudness_variacao": float(best_row.get("loudness_variacao", 0.0)) if pd.notna(best_row.get("loudness_variacao")) else 0.0,
+                    "Timestamp": str(best_row.get("Timestamp", "")),
+                })
+                
+    results = []
+    for q, matches in question_matches.items():
+        arousals = [m["dim_arousal"] for m in matches]
+        f0_vars = [m["f0_variacao"] for m in matches]
+        ld_vars = [m["loudness_variacao"] for m in matches]
+        
+        avg_arousal = sum(arousals) / len(arousals) if arousals else 0.0
+        avg_f0_var = sum(f0_vars) / len(f0_vars) if f0_vars else 0.0
+        avg_ld_var = sum(ld_vars) / len(ld_vars) if ld_vars else 0.0
+        
+        best = max(matches, key=lambda m: m["dim_arousal"])
+        example_str = f"\"{best['Text']}\" ({best['SpeakerName']}, {best['Timestamp']})"
+        
+        results.append({
+            "question": q,
+            "count": len(matches),
+            "avg_arousal": avg_arousal,
+            "avg_f0_var": avg_f0_var,
+            "avg_ld_var": avg_ld_var,
+            "example": example_str,
+        })
+        
+    results.sort(key=lambda x: (x["avg_arousal"], x["count"]), reverse=True)
+    return results
 
 
 def _load_individual_analyses(audios: list[dict]) -> str:
@@ -479,6 +799,8 @@ if not all_sinc.empty:
     top_moments = _extract_high_activation_moments(all_sinc, top_n=15)
     if not top_moments.empty:
         df_show = pd.DataFrame()
+        txt_series = top_moments["Text"].fillna("") if "Text" in top_moments.columns else pd.Series([""] * len(top_moments))
+        df_show["Tópico"] = [extract_topic_from_text(t) for t in txt_series]
         df_show["Entrevista"] = top_moments["session_id"]
         
         spk_series = top_moments["SpeakerName"].fillna("Desconhecido") if "SpeakerName" in top_moments.columns else pd.Series(["Desconhecido"] * len(top_moments))
@@ -487,7 +809,6 @@ if not all_sinc.empty:
         ts_series = top_moments["Timestamp"].fillna("") if "Timestamp" in top_moments.columns else pd.Series([""] * len(top_moments))
         df_show["Tempo"] = ts_series.astype(str).str.strip().replace("nan", "")
         
-        txt_series = top_moments["Text"].fillna("") if "Text" in top_moments.columns else pd.Series([""] * len(top_moments))
         df_show["Fala (Transcrição)"] = txt_series.astype(str).str.strip().replace("nan", "")
         
         if "dim_arousal" in top_moments.columns:
@@ -537,6 +858,58 @@ if not all_sinc.empty:
                     st.switch_page("modules/prosodia/audio_timeline.py")
                 else:
                     st.error("Não foi possível localizar o ID do áudio para esta entrevista.")
+                    
+        # Tabela de Tópicos Consolidados/Agrupados
+        moments_list = []
+        for _, row in top_moments.iterrows():
+            moments_list.append({
+                "session_id": str(row.get("session_id", "")),
+                "SpeakerName": str(row.get("SpeakerName", "Desconhecido")),
+                "Timestamp": str(row.get("Timestamp", "")),
+                "Text": str(row.get("Text", "")),
+                "dim_arousal": float(row.get("dim_arousal", 0.0)) if pd.notna(row.get("dim_arousal")) else 0.0,
+                "topic": extract_topic_from_text(str(row.get("Text", ""))),
+            })
+            
+        grouped_topics = _group_similar_topics(moments_list)
+        if grouped_topics:
+            st.write("")
+            st.subheader("📊 Tópicos Consolidados de Maior Ativação")
+            st.markdown(
+                "Agrupamento temático dos momentos de maior expressividade e arousal do projeto. "
+                "Agrupa tópicos equivalentes que compartilham termos centrais."
+            )
+            
+            df_grouped = pd.DataFrame(grouped_topics)
+            df_grouped.columns = ["Tópico Consolidado", "Ocorrências", "Arousal Médio", "Entrevistas Relacionadas", "Exemplo de Destaque"]
+            df_grouped["Arousal Médio"] = df_grouped["Arousal Médio"].map(lambda v: f"{v:.2f}")
+            
+            st.dataframe(
+                df_grouped,
+                width='stretch',
+                hide_index=True,
+            )
+            
+        # Seção: Perguntas com Maior Ativação Prosódica
+        q_activations = _calculate_questions_activation(audios, all_sinc)
+        if q_activations:
+            st.write("")
+            st.subheader("❓ Perguntas com Maior Ativação Prosódica")
+            st.markdown(
+                "Análise de quais perguntas do roteiro geraram maior expressividade de voz e arousal emocional nas respostas dos entrevistados."
+            )
+            
+            df_q = pd.DataFrame(q_activations)
+            df_q.columns = ["Pergunta", "Respostas Cobertas", "Arousal Médio", "Variação Pitch Médio", "Variação Volume Médio", "Destaque (Maior Arousal)"]
+            df_q["Arousal Médio"] = df_q["Arousal Médio"].map(lambda v: f"{v:.2f}")
+            df_q["Variação Pitch Médio"] = df_q["Variação Pitch Médio"].map(lambda v: f"{v:.2f}")
+            df_q["Variação Volume Médio"] = df_q["Variação Volume Médio"].map(lambda v: f"{v:.2f}")
+            
+            st.dataframe(
+                df_q,
+                width='stretch',
+                hide_index=True,
+            )
     else:
         st.info("Não foi possível extrair momentos de alta ativação acústica no projeto.")
 
@@ -611,13 +984,34 @@ if latest_analysis:
         text=latest_analysis.get("analysis_text", ""),
         citations=latest_analysis.get("citations", []),
     )
-    st.download_button(
-        "Download Analise Geral (.md)",
-        data=analysis_md,
-        file_name=f"analise_geral_{_slugify(project.get('name', 'projeto'))}.md",
-        mime="text/markdown",
-        key="download_latest_project_analysis",
-    )
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        st.download_button(
+            "Download Analise Geral (.md)",
+            data=analysis_md,
+            file_name=f"analise_geral_{_slugify(project.get('name', 'projeto'))}.md",
+            mime="text/markdown",
+            key="download_latest_project_analysis",
+            use_container_width=True,
+        )
+    with col_d2:
+        pdf_data = _build_project_analysis_pdf(
+            project_name=project.get("name", ""),
+            project_info=proj_ctx,
+            model=latest_analysis.get("model", ""),
+            created_at=latest_analysis.get("created_at", ""),
+            text=latest_analysis.get("analysis_text", ""),
+            citations=latest_analysis.get("citations", []),
+            acoustic_summary=_calculate_acoustic_summary_text(all_sinc) if not all_sinc.empty else "",
+        )
+        st.download_button(
+            "Download Analise Geral (.pdf)",
+            data=pdf_data,
+            file_name=f"analise_geral_{_slugify(project.get('name', 'projeto'))}.pdf",
+            mime="application/pdf",
+            key="download_latest_project_analysis_pdf",
+            use_container_width=True,
+        )
 
     citations = latest_analysis.get("citations", [])
     if citations:
@@ -632,6 +1026,97 @@ if latest_analysis:
             text = an.get("analysis_text", "")
             st.markdown(text[:500] + ("..." if len(text) > 500 else ""))
             st.divider()
+
+    st.divider()
+    st.subheader("💬 Chat com a IA sobre o Projeto")
+    st.markdown(
+        "Tire dúvidas ou peça detalhamentos específicos sobre o relatório geral gerado acima."
+    )
+    
+    chat_key = f"prj_chat_history_{project_id}"
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+        
+    for msg in st.session_state[chat_key]:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+            
+    if prompt := st.chat_input("Pergunte algo sobre a análise geral...", key=f"prj_chat_input_{project_id}"):
+        with st.chat_message("user"):
+            st.write(prompt)
+        st.session_state[chat_key].append({"role": "user", "content": prompt})
+        
+        openai_client = get_openai_client()
+        groq_client = None
+        if not openai_client and groq_key:
+            try:
+                from groq import Groq
+                groq_client = Groq(api_key=groq_key)
+            except Exception:
+                pass
+                
+        ai_client = openai_client or groq_client
+        if not ai_client:
+            st.error("Configure uma chave de API para habilitar o chat.")
+        else:
+            with st.chat_message("assistant"):
+                with st.spinner("Pensando..."):
+                    try:
+                        report_context = latest_analysis.get("analysis_text", "")
+                        sys_msg = (
+                            "Você é um consultor analítico especialista em prosódia e comportamento humano. "
+                            "O usuário deseja fazer perguntas sobre a Análise Geral do Projeto consolidada abaixo. "
+                            "Responda de forma concisa, objetiva e baseada nas informações do relatório.\n\n"
+                            f"--- RELATÓRIO DO PROJETO ---\n{report_context}\n-----------------------------"
+                        )
+                        
+                        messages = [{"role": "system", "content": sys_msg}]
+                        for h in st.session_state[chat_key][:-1]:
+                            messages.append({"role": h["role"], "content": h["content"]})
+                        messages.append({"role": "user", "content": prompt})
+                        
+                        if openai_client:
+                            chat_user_prompt = ""
+                            for h in st.session_state[chat_key][:-1]:
+                                role_name = "Usuário" if h["role"] == "user" else "Assistente"
+                                chat_user_prompt += f"{role_name}: {h['content']}\n\n"
+                            chat_user_prompt += f"Usuário: {prompt}"
+                            
+                            chat_vs_id = get_prosodia_vector_store_id() if use_kb else None
+                            
+                            result = ai_create_analysis(
+                                system_prompt=sys_msg,
+                                user_prompt=chat_user_prompt,
+                                model=openai_model,
+                                vector_store_id=chat_vs_id,
+                                temperature=0.7,
+                                max_tokens=1500,
+                            )
+                            answer = result.get("text", "")
+                            
+                            citations = result.get("citations", [])
+                            if citations:
+                                answer += "\n\n**Referências da Base de Conhecimento:**"
+                                for cit in citations:
+                                    filename = cit.get("filename") or "Documento"
+                                    quote = cit.get("quote")
+                                    if quote:
+                                        answer += f"\n- *{filename}*: \"{quote}\""
+                                    else:
+                                        answer += f"\n- *{filename}*"
+                        else:
+                            resp = groq_client.chat.completions.create(
+                                model=groq_model,
+                                messages=messages,
+                                temperature=0.7,
+                            )
+                            answer = resp.choices[0].message.content
+                            
+                        st.write(answer)
+                        st.session_state[chat_key].append({"role": "assistant", "content": answer})
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao obter resposta da IA: {e}")
 else:
     st.info("Nenhuma analise geral disponivel. Clique em Gerar Analise Geral.")
 
@@ -662,6 +1147,20 @@ if st.button(btn_label, type="primary"):
             
             # Calcular os inputs da análise consolidada de projeto
             acoustic_stats_text = _calculate_acoustic_summary_text(all_sinc)
+            
+            # Adicionar perguntas com maior ativação prosódica
+            q_activations = _calculate_questions_activation(audios, all_sinc)
+            if q_activations:
+                q_lines = [
+                    "\n### Perguntas com Maior Ativação Prosódica (Acumulado de Entrevistas):",
+                    "| Pergunta | Respostas Cobertas | Arousal Médio | Pitch Var Média | Volume Var Média | Resposta Destaque |",
+                    "|---|---|---|---|---|---|",
+                ]
+                for qa in q_activations:
+                    q_lines.append(
+                        f"| {qa['question']} | {qa['count']} | {qa['avg_arousal']:.2f} | {qa['avg_f0_var']:.2f} | {qa['avg_ld_var']:.2f} | {qa['example']} |"
+                    )
+                acoustic_stats_text += "\n" + "\n".join(q_lines)
             top_words_text = _calculate_top_words_text(all_tr, top_n=30)
             
             top_moments = _extract_high_activation_moments(all_sinc, top_n=15)
