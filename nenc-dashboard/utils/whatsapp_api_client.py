@@ -604,6 +604,8 @@ def create_project_qr_code(
     name: str,
     description: Optional[str] = None,
     code: Optional[str] = None,
+    target_phone: Optional[str] = None,
+    welcome_message: Optional[str] = None,
 ) -> Dict:
     """Cria um novo QR Code para o projeto."""
     _require_owned_resource("whatsapp_api_project", project_id)
@@ -612,6 +614,10 @@ def create_project_qr_code(
         body["description"] = description
     if code:
         body["code"] = code
+    if target_phone:
+        body["target_phone"] = target_phone
+    if welcome_message:
+        body["welcome_message"] = welcome_message
     with _client() as c:
         resp = c.post(f"/projects/{project_id}/qr-codes", json=body)
         resp.raise_for_status()
@@ -623,6 +629,8 @@ def update_project_qr_code(
     qr_code_id: int,
     name: Optional[str] = None,
     description: Optional[str] = None,
+    target_phone: Optional[str] = None,
+    welcome_message: Optional[str] = None,
     status: Optional[str] = None,
 ) -> Dict:
     """Atualiza um QR Code do projeto."""
@@ -632,6 +640,10 @@ def update_project_qr_code(
         body["name"] = name
     if description is not None:
         body["description"] = description
+    if target_phone is not None:
+        body["target_phone"] = target_phone
+    if welcome_message is not None:
+        body["welcome_message"] = welcome_message
     if status is not None:
         body["status"] = status
     with _client() as c:

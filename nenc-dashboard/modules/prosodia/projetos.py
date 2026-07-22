@@ -201,15 +201,46 @@ else:
 
                     st.markdown(f"**Estatísticas**: {len(qr_codes)} QR Code(s) cadastrado(s) | {len(participations)} participante(s) inscrito(s)")
 
+                    # Obter números de WhatsApp cadastrados na organização
+                    from utils.organization_data import list_external_resources
+                    org_contacts = list_external_resources("whatsapp_contact")
+                    org_phones = []
+                    for c in org_contacts:
+                        meta = c.get("metadata") or {}
+                        p = meta.get("phone") or c.get("external_id")
+                        if p:
+                            clean_p = "".join(filter(str.isdigit, str(p)))
+                            if clean_p and clean_p not in org_phones:
+                                org_phones.append(clean_p)
+                    if not org_phones:
+                        org_phones = ["5511975218007", "5516981360051"]
+
+                    default_welcome_text = (
+                        "Quero agradecer muito a sua participação. Grave um áudio com o conteúdo que achar importante "
+                        "(sugestão, reclamação, saudação, agradecimento... ) que possa colaborar com a melhoria do nosso trabalho. "
+                        "Críticas, sugestões e também elogios serão muito bem vindos."
+                    )
+
                     # Formulário de criação de novo QR Code
                     st.markdown("#### ➕ Criar Novo QR Code para Captação")
                     with st.form(key=f"form_new_qr_{proj['id']}"):
                         col_q1, col_q2 = st.columns(2)
                         with col_q1:
                             new_qr_name = st.text_input("Nome do QR Code *", placeholder="Ex: Cartaz Recepção HCFMUSP")
-                            new_qr_code = st.text_input("Código de Rastreio (opcional)", placeholder="Ex: HCFMUSP-REC-01")
+                            suggested_code = f"{api_proj_id:02d}-{len(qr_codes)+1:02d}"
+                            new_qr_code = st.text_input("Código de Rastreio (opcional)", value=suggested_code, placeholder="Ex: 01-01")
+                            new_target_phone = st.selectbox(
+                                "Número WhatsApp Destino da Organização *",
+                                options=org_phones,
+                                help="Selecione o número de WhatsApp cadastrado na organização que receberá as mensagens deste QR Code.",
+                            )
                         with col_q2:
                             new_qr_desc = st.text_area("Descrição do Local/Canal", placeholder="Ex: Cartaz A3 afixado no balcão de entrada principal")
+                            new_welcome_msg = st.text_area(
+                                "Resposta Automática de Boas-Vindas (WhatsApp)",
+                                value=default_welcome_text,
+                                help="Mensagem de texto enviada pelo WhatsApp assim que o participante escanear o QR Code.",
+                            )
 
                         submit_qr = st.form_submit_button("Gerar e Cadastrar QR Code")
 
@@ -223,6 +254,8 @@ else:
                                     name=new_qr_name.strip(),
                                     description=new_qr_desc.strip() if new_qr_desc else None,
                                     code=new_qr_code.strip() if new_qr_code else None,
+                                    target_phone=new_target_phone.strip() if new_target_phone else None,
+                                    welcome_message=new_welcome_msg.strip() if new_welcome_msg else None,
                                 )
                                 st.success("QR Code cadastrado com sucesso!")
                                 st.rerun()
@@ -243,24 +276,22 @@ else:
                     if not qr_codes:
                         st.info("Nenhum QR Code gerado para este projeto ainda.")
                     else:
-                        wa_phone = st.text_input(
-                            "Número de WhatsApp Destino (DDI + DDD + Número)",
-                            value="5511999999999",
-                            key=f"wa_phone_{proj['id']}",
-                            help="Número do WhatsApp configurado no Webhook da API para pré-preencher a mensagem do QR Code.",
-                        )
-                        clean_wa_phone = "".join(filter(str.isdigit, wa_phone))
+                        import urllib.parse
 
                         for qr in qr_codes:
                             with st.container(border=True):
                                 col_info, col_img = st.columns([3, 2])
-                                wa_link = f"https://wa.me/{clean_wa_phone}?text=Projeto%3A{qr['code']}"
+                                target_ph = "".join(filter(str.isdigit, qr.get("target_phone") or org_phones[0]))
+                                prefilled_text = f"[{qr['code']}] Não delete essas informações. Elas estão associadas ao serviço que você está avaliando. Peço que envie agora esse código, antes da sua mensagem."
+                                wa_link = f"https://wa.me/{target_ph}?text={urllib.parse.quote(prefilled_text)}"
 
                                 with col_info:
                                     st.markdown(f"### {qr['name']}")
-                                    st.markdown(f"**Código de Rastreio**: `{qr['code']}`")
+                                    st.markdown(f"**Código de Rastreio**: `{qr['code']}` | **WhatsApp Destino**: `+{target_ph}`")
                                     if qr.get("description"):
                                         st.caption(f"**Descrição**: {qr['description']}")
+                                    if qr.get("welcome_message"):
+                                        st.caption(f"💬 **Resposta Automática**: *\"{qr['welcome_message']}\"*")
                                     st.markdown(f"**Link WhatsApp**: [{wa_link}]({wa_link})")
                                     st.caption(f"Status: `{qr['status']}` | Criado em: {qr['created_at'][:10]}")
 
