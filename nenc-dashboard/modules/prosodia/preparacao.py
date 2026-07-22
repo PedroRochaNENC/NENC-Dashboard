@@ -12,6 +12,9 @@ import json
 from datetime import datetime
 
 import streamlit as st
+from utils import auth
+
+user = auth.require_module("prosodia")
 
 from utils.prosodia_db import (
     init_db,
@@ -20,6 +23,7 @@ from utils.prosodia_db import (
     update_project,
 )
 from utils.ai_provider import get_openai_client, get_prosodia_vector_store_id
+from utils.organization_data import claim_external_resource, list_external_resources
 
 init_db()
 
@@ -95,7 +99,7 @@ def _upload_briefing_to_kb(filename: str, content: bytes) -> tuple[bool, str]:
     if not client:
         return False, "OpenAI não configurado para envio à base de conhecimento."
     if not prosodia_vs_id:
-        return False, "PROSODIA_VECTOR_STORE_ID não configurado."
+        return False, "A base de conhecimento do NencLex nao esta configurada para a organizacao ativa."
 
     try:
         uploaded = client.files.create(
@@ -116,8 +120,12 @@ def _upload_briefing_to_kb(filename: str, content: bytes) -> tuple[bool, str]:
 project_id = st.session_state.get("pros_project_id")
 editing = project_id is not None
 project = get_project(project_id) if editing else {}
+if editing and project is None:
+    st.session_state.pop("pros_project_id", None)
+    editing = False
+    project = {}
 
-st.title("✏️ Editar Projeto" if editing else "➕ Novo Projeto de Prosódia")
+st.title("✏️ Editar Projeto" if editing else "➕ Novo Projeto do NencLex")
 
 # Navegação
 nav_col, _ = st.columns([2, 6])
@@ -261,9 +269,37 @@ with st.container():
     from utils.whatsapp_api_client import is_configured, get_campaigns
 
     campaign_options = {}  # id -> display label
+    current_campaign_id = project.get("whatsapp_campaign_id")
+    current_api_project_id = project.get("api_project_id")
+    try:
+        if current_campaign_id is not None:
+            claim_external_resource(
+                "whatsapp_campaign",
+                current_campaign_id,
+                {"project_id": project.get("id")},
+            )
+        if current_api_project_id is not None:
+            claim_external_resource(
+                "whatsapp_api_project",
+                current_api_project_id,
+                {"project_id": project.get("id")},
+            )
+    except auth.AuthorizationError:
+        st.warning("Um recurso externo vinculado pertence a outra organizacao.")
+        current_campaign_id = None
+        current_api_project_id = None
+
     if is_configured():
         try:
-            campaigns = get_campaigns()
+            owned_campaign_ids = {
+                resource["id"]
+                for resource in list_external_resources("whatsapp_campaign")
+            }
+            campaigns = [
+                campaign
+                for campaign in get_campaigns()
+                if str(campaign.get("id")) in owned_campaign_ids
+            ]
             campaign_options = {
                 c["id"]: f"{c['name']} (ID {c['id']} — {c['status']})"
                 for c in campaigns
@@ -275,8 +311,6 @@ with st.container():
             "⚠️ API de WhatsApp não configurada. "
             "Configure URL e chave na tela de Projetos para habilitar."
         )
-
-    current_campaign_id = project.get("whatsapp_campaign_id")
 
     if campaign_options:
         options_list = [None] + list(campaign_options.keys())
@@ -306,10 +340,9 @@ with st.container():
         "Vincule este projeto local a um projeto na API para agrupar áudios, contatos e campanhas."
     )
 
-    current_api_project_id = project.get("api_project_id")
     sincronizar_api = False
     desvincular_api = False
-    api_organization = ""
+    api_organization = user.organization_name
 
     if is_configured():
         if current_api_project_id:
@@ -320,7 +353,7 @@ with st.container():
             if sincronizar_api:
                 api_organization = st.text_input(
                     "Organização da API (Organization) *",
-                    value="",
+                    value=user.organization_name,
                     placeholder="Ex: NENC / Empresa Cliente",
                     help="Nome da organização a ser informada no projeto da API."
                 )

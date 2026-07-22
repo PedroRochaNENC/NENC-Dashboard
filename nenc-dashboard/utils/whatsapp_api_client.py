@@ -8,19 +8,289 @@ NOTA IMPORTANTE: Na API, os áudios são recebidos via webhook do WhatsApp
 e NÃO estão vinculados a campanhas. Qualquer pessoa que envie um áudio
 ao número configurado terá seu áudio registrado, independente de campanhas.
 A sincronização pode ser feita por:
-  - Todos os áudios (sem filtro)
-  - Por telefone (filtrando por contato)
-  - Por campanha (buscando os telefones da campanha e filtrando)
+    - Por telefone de um contato pertencente à organização
+    - Por projeto externo pertencente à organização
+    - Por campanha pertencente à organização, usando seus contatos registrados
 """
 
 import io
 import json
 import os
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 import pandas as pd
-import streamlit as st
+from dotenv import load_dotenv
+
+from utils import auth
+from utils.organization_data import (
+    claim_external_resource,
+    list_external_resources,
+    register_derived_external_resource,
+    release_external_resource,
+)
+
+
+_APPLICATION_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent / ".env"
+_ENV_PATH = next(
+    (path for path in (_APPLICATION_ENV_PATH, _WORKSPACE_ENV_PATH) if path.exists()),
+    _APPLICATION_ENV_PATH,
+)
+load_dotenv(_ENV_PATH)
+
+
+def _normalize_phone(value: Any) -> str:
+    return "".join(filter(str.isdigit, str(value or "")))
+
+
+def _owned_resource_ids(resource_type: str) -> set[str]:
+    return {
+        resource["id"]
+        for resource in list_external_resources(resource_type)
+    }
+
+
+def _owned_contact_ids_by_phone() -> dict[str, str]:
+    contact_ids_by_phone = {}
+    for resource in list_external_resources("whatsapp_contact"):
+        phone = _normalize_phone(resource["metadata"].get("phone"))
+        if phone:
+            contact_ids_by_phone[phone] = resource["id"]
+    return contact_ids_by_phone
+
+
+def _require_owned_resource(resource_type: str, resource_id: Any) -> None:
+    claim_external_resource(resource_type, resource_id)
+
+
+def _register_audio_from_parent(
+    audio: Dict, parent_resource_type: str, parent_resource_id: Any
+) -> Optional[Dict]:
+    audio_id = audio.get("id")
+    if audio_id is None:
+        return None
+    try:
+        register_derived_external_resource(
+            "whatsapp_audio",
+            audio_id,
+            parent_resource_type,
+            parent_resource_id,
+            {
+                "phone": _normalize_phone(audio.get("contact_phone")),
+                "whatsapp_message_id": str(audio.get("whatsapp_message_id") or ""),
+            },
+        )
+    except auth.AuthorizationError:
+        return None
+    return audio
+
+
+def _registered_audios(
+    audios: List[Dict], parent_resource_type: str, parent_resource_id: Any
+) -> List[Dict]:
+    registered_audios = []
+    for audio in audios:
+        registered_audio = _register_audio_from_parent(
+            audio, parent_resource_type, parent_resource_id
+        )
+        if registered_audio is not None:
+            registered_audios.append(registered_audio)
+    return registered_audios
+
+
+def list_owned_jobs(
+    audio_id: Optional[int] = None,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> List[Dict]:
+    """Return only jobs attached to audio resources owned by the active organization."""
+
+    owned_audio_ids = _owned_resource_ids("whatsapp_audio")
+    if not owned_audio_ids:
+        return []
+    if audio_id is not None and str(audio_id) not in owned_audio_ids:
+        raise auth.AuthorizationError("O audio nao pertence a organizacao ativa.")
+
+    owned_jobs = []
+    for job in _list_jobs_from_api(
+        audio_id=audio_id,
+        status=status,
+        skip=skip,
+        limit=limit,
+    ):
+        audio_id = job.get("audio_id")
+        job_id = job.get("id")
+        if str(audio_id) not in owned_audio_ids or job_id is None:
+            continue
+        try:
+            register_derived_external_resource(
+                "whatsapp_job",
+                job_id,
+                "whatsapp_audio",
+                audio_id,
+            )
+        except auth.AuthorizationError:
+            continue
+        owned_jobs.append(job)
+    return owned_jobs
+
+
+def list_jobs(
+    audio_id: Optional[int] = None,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> List[Dict]:
+    """Return only processing jobs owned by the active organization."""
+
+    return list_owned_jobs(audio_id=audio_id, status=status, skip=skip, limit=limit)
+
+
+def create_owned_campaign(
+    name: str,
+    template_name: str,
+    language_code: str,
+    contact_ids: List[Any],
+    project_id: Optional[int] = None,
+) -> Dict:
+    """Create a campaign only for contacts owned by the active organization."""
+
+    contact_id_list = list(contact_ids)
+    contact_id_values = {
+        str(contact_id).strip()
+        for contact_id in contact_id_list
+        if str(contact_id).strip()
+    }
+    if not contact_id_values:
+        raise ValueError("Informe ao menos um contato para a campanha.")
+    unauthorized_contact_ids = contact_id_values.difference(
+        _owned_resource_ids("whatsapp_contact")
+    )
+    if unauthorized_contact_ids:
+        raise auth.AuthorizationError(
+            "Todos os contatos da campanha devem pertencer a organizacao ativa."
+        )
+    if project_id is not None:
+        _require_owned_resource("whatsapp_api_project", project_id)
+
+    campaign = _create_campaign_from_api(
+        name=name,
+        template_name=template_name,
+        language_code=language_code,
+        contact_ids=contact_id_list,
+        project_id=project_id,
+    )
+    if not isinstance(campaign, dict) or campaign.get("id") is None:
+        raise RuntimeError("A API nao retornou o identificador da campanha criada.")
+    claim_external_resource(
+        "whatsapp_campaign",
+        campaign["id"],
+        {"api_project_id": project_id},
+        created=True,
+    )
+    return campaign
+
+
+def list_owned_contacts(
+    search: Optional[str] = None, limit: int = 500
+) -> List[Dict]:
+    """Return only contacts registered to the active organization."""
+
+    owned_contact_ids = _owned_resource_ids("whatsapp_contact")
+    return [
+        contact
+        for contact in _list_contacts_from_api(search=search, limit=limit)
+        if str(contact.get("id", contact.get("contact_id"))) in owned_contact_ids
+    ]
+
+
+def create_owned_contact(phone: str, name: Optional[str] = None) -> Dict:
+    """Create a contact and reject an API response that reuses an unowned record."""
+
+    normalized_phone = _normalize_phone(phone)
+    if not normalized_phone:
+        raise ValueError("Informe um telefone valido.")
+    existing_contact_ids = {
+        str(contact.get("id", contact.get("contact_id")))
+        for contact in _list_contacts_from_api(search=normalized_phone, limit=1000)
+        if contact.get("id", contact.get("contact_id")) is not None
+    }
+    contact = _create_contact_from_api(phone=normalized_phone, name=name)
+    if not isinstance(contact, dict):
+        raise RuntimeError("A API nao retornou o contato criado.")
+    contact_id = contact.get("id", contact.get("contact_id"))
+    if contact_id is None:
+        raise RuntimeError("A API nao retornou o identificador do contato criado.")
+    claim_external_resource(
+        "whatsapp_contact",
+        contact_id,
+        {
+            "phone": _normalize_phone(contact.get("phone")) or normalized_phone,
+            "name": contact.get("name") or name or "",
+        },
+        created=str(contact_id) not in existing_contact_ids,
+    )
+    return contact
+
+
+def delete_owned_contact(contact_id: Any) -> None:
+    """Delete a contact only after confirming its organization ownership."""
+
+    _require_owned_resource("whatsapp_contact", contact_id)
+    _delete_contact_from_api(contact_id)
+    release_external_resource("whatsapp_contact", contact_id)
+
+
+def import_owned_contacts_csv(
+    content: bytes, phones: Iterable[Any]
+) -> tuple[Dict, int, int]:
+    """Import contacts and register only IDs that appeared after this import."""
+
+    normalized_phones = {
+        _normalize_phone(phone)
+        for phone in phones
+        if _normalize_phone(phone)
+    }
+    if not normalized_phones:
+        raise ValueError("O arquivo nao contem telefones validos para importar.")
+
+    existing_contact_ids = set()
+    for phone in normalized_phones:
+        existing_contact_ids.update(
+            str(contact.get("id", contact.get("contact_id")))
+            for contact in _list_contacts_from_api(search=phone, limit=1000)
+            if contact.get("id", contact.get("contact_id")) is not None
+        )
+
+    result = _import_contacts_csv_from_api(content)
+    if not isinstance(result, dict):
+        raise RuntimeError("A API retornou uma resposta invalida para a importacao.")
+
+    claimed_count = 0
+    unavailable_count = 0
+    for phone in normalized_phones:
+        for contact in _list_contacts_from_api(search=phone, limit=1000):
+            contact_id = contact.get("id", contact.get("contact_id"))
+            if contact_id is None or str(contact_id) in existing_contact_ids:
+                continue
+            try:
+                claim_external_resource(
+                    "whatsapp_contact",
+                    contact_id,
+                    {
+                        "phone": _normalize_phone(contact.get("phone")) or phone,
+                        "name": contact.get("name") or "",
+                    },
+                    created=True,
+                )
+            except auth.AuthorizationError:
+                unavailable_count += 1
+            else:
+                claimed_count += 1
+    return result, claimed_count, unavailable_count
 
 
 class AudioFileUnavailableError(RuntimeError):
@@ -32,24 +302,32 @@ class AudioFileUnavailableError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 def _get_api_url() -> str:
-    """Retorna a URL da API de WhatsApp (session_state > .env > fallback)."""
-    return (
-        st.session_state.get("whatsapp_api_url")
-        or os.getenv("WHATSAPP_API_URL", "")
-    ).rstrip("/")
+    """Retorna a URL da API de WhatsApp configurada no ambiente do servidor."""
+
+    return os.getenv("WHATSAPP_API_URL", "").rstrip("/")
 
 
 def _get_api_key() -> str:
-    """Retorna a chave da API de WhatsApp (session_state > .env > fallback)."""
-    return (
-        st.session_state.get("whatsapp_api_key")
-        or os.getenv("WHATSAPP_API_KEY", "")
-    )
+    """Retorna a chave da API de WhatsApp configurada no ambiente do servidor."""
+
+    return os.getenv("WHATSAPP_API_KEY", "")
 
 
 def is_configured() -> bool:
     """Verifica se as credenciais da API estão preenchidas."""
     return bool(_get_api_url()) and bool(_get_api_key())
+
+
+def _authorize_audio_file_request(request: httpx.Request) -> None:
+    path_parts = [part for part in request.url.path.split("/") if part]
+    for index, path_part in enumerate(path_parts):
+        if (
+            path_part == "audios"
+            and len(path_parts) > index + 2
+            and path_parts[index + 2] in {"file", "download"}
+        ):
+            _require_owned_resource("whatsapp_audio", path_parts[index + 1])
+            return
 
 
 def _client(timeout: float = 30.0) -> httpx.Client:
@@ -64,6 +342,7 @@ def _client(timeout: float = 30.0) -> httpx.Client:
         base_url=url,
         headers={"X-API-Key": key},
         timeout=timeout,
+        event_hooks={"request": [_authorize_audio_file_request]},
     )
 
 
@@ -90,15 +369,23 @@ def get_campaigns(project_id: Optional[int] = None) -> List[Dict]:
     """Lista todas as campanhas disponíveis na API, opcionalmente filtradas por projeto."""
     params: Dict[str, Any] = {"limit": 500}
     if project_id is not None:
+        _require_owned_resource("whatsapp_api_project", project_id)
         params["project_id"] = project_id
     with _client() as c:
         resp = c.get("/campaigns", params=params)
         resp.raise_for_status()
-        return resp.json()
+        campaigns = resp.json()
+    owned_campaign_ids = _owned_resource_ids("whatsapp_campaign")
+    return [
+        campaign
+        for campaign in campaigns
+        if str(campaign.get("id")) in owned_campaign_ids
+    ]
 
 
 def get_campaign(campaign_id: int) -> Dict:
     """Retorna detalhes de uma campanha pelo ID."""
+    _require_owned_resource("whatsapp_campaign", campaign_id)
     with _client() as c:
         resp = c.get(f"/campaigns/{campaign_id}")
         resp.raise_for_status()
@@ -107,10 +394,17 @@ def get_campaign(campaign_id: int) -> Dict:
 
 def get_campaign_contacts(campaign_id: int) -> List[Dict]:
     """Lista os contatos (com telefone) vinculados a uma campanha."""
+    _require_owned_resource("whatsapp_campaign", campaign_id)
     with _client() as c:
         resp = c.get(f"/campaigns/{campaign_id}/contacts")
         resp.raise_for_status()
-        return resp.json()
+        contacts = resp.json()
+    owned_contact_ids = _owned_resource_ids("whatsapp_contact")
+    return [
+        contact
+        for contact in contacts
+        if str(contact.get("id", contact.get("contact_id"))) in owned_contact_ids
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -131,14 +425,28 @@ def get_all_audios(phone: Optional[str] = None, limit: int = 500, project_id: Op
     media_id, local_path, duration_sec, received_at}
     """
     params: Dict[str, Any] = {"limit": limit}
-    if phone:
-        params["phone"] = phone
     if project_id is not None:
+        _require_owned_resource("whatsapp_api_project", project_id)
         params["project_id"] = project_id
+        parent_resource_type = "whatsapp_api_project"
+        parent_resource_id = project_id
+    elif phone:
+        normalized_phone = _normalize_phone(phone)
+        contact_ids_by_phone = _owned_contact_ids_by_phone()
+        if normalized_phone not in contact_ids_by_phone:
+            raise auth.AuthorizationError("O telefone nao pertence a organizacao ativa.")
+        params["phone"] = normalized_phone
+        parent_resource_type = "whatsapp_contact"
+        parent_resource_id = contact_ids_by_phone[normalized_phone]
+    else:
+        raise auth.AuthorizationError(
+            "Informe um projeto ou telefone pertencente a organizacao ativa."
+        )
     with _client() as c:
         resp = c.get("/audios", params=params)
         resp.raise_for_status()
-        return resp.json()
+        audios = resp.json()
+    return _registered_audios(audios, parent_resource_type, parent_resource_id)
 
 
 def get_audio_status(audio_id: int) -> Dict:
@@ -146,6 +454,7 @@ def get_audio_status(audio_id: int) -> Dict:
     Retorna o status de processamento de um áudio.
     Campos relevantes: status, has_result_json, has_transcription
     """
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/status")
         resp.raise_for_status()
@@ -158,6 +467,7 @@ def get_audio_result(audio_id: int) -> Dict:
     A rota GET /audios/{id}/result retorna um JobResponse com result_json
     já parseado como dict pelo validator do Pydantic.
     """
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/result")
         resp.raise_for_status()
@@ -171,6 +481,7 @@ def get_audio_result(audio_id: int) -> Dict:
 
 def get_audio_transcript(audio_id: int) -> str:
     """Baixa a transcrição em texto puro de um áudio."""
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/transcript")
         resp.raise_for_status()
@@ -186,33 +497,79 @@ def get_api_projects() -> List[Dict]:
     with _client() as c:
         resp = c.get("/projects")
         resp.raise_for_status()
-        return resp.json()
+        projects = resp.json()
+    owned_project_ids = _owned_resource_ids("whatsapp_api_project")
+    return [project for project in projects if str(project.get("id")) in owned_project_ids]
 
 
-def create_api_project(name: str, organization: str) -> Dict:
+def create_api_project(
+    name: str,
+    organization: str,
+    code: Optional[str] = None,
+    channel_type: str = "centralized",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Dict:
     """Cria um novo projeto na API."""
-    body = {"name": name, "organization": organization}
+    body = {"name": name, "organization": organization, "channel_type": channel_type}
+    if code:
+        body["code"] = code
+    if start_date:
+        body["start_date"] = start_date
+    if end_date:
+        body["end_date"] = end_date
     with _client() as c:
         resp = c.post("/projects", json=body)
         resp.raise_for_status()
-        return resp.json()
+        project = resp.json()
+    project_id = project.get("id", project.get("project_id")) if isinstance(project, dict) else None
+    if project_id is None:
+        raise RuntimeError("A API nao retornou o identificador do projeto criado.")
+    claim_external_resource(
+        "whatsapp_api_project",
+        project_id,
+        {"name": name, "organization": organization, "code": project.get("code")},
+        created=True,
+    )
+    return project
 
 
 def get_api_project(project_id: int) -> Dict:
     """Retorna detalhes de um projeto na API pelo ID."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.get(f"/projects/{project_id}")
         resp.raise_for_status()
         return resp.json()
 
 
-def update_api_project(project_id: int, name: Optional[str] = None, organization: Optional[str] = None) -> Dict:
+def update_api_project(
+    project_id: int,
+    name: Optional[str] = None,
+    organization: Optional[str] = None,
+    code: Optional[str] = None,
+    status: Optional[str] = None,
+    channel_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Dict:
     """Atualiza um projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     body = {}
     if name is not None:
         body["name"] = name
     if organization is not None:
         body["organization"] = organization
+    if code is not None:
+        body["code"] = code
+    if status is not None:
+        body["status"] = status
+    if channel_type is not None:
+        body["channel_type"] = channel_type
+    if start_date is not None:
+        body["start_date"] = start_date
+    if end_date is not None:
+        body["end_date"] = end_date
     with _client() as c:
         resp = c.patch(f"/projects/{project_id}", json=body)
         resp.raise_for_status()
@@ -221,23 +578,99 @@ def update_api_project(project_id: int, name: Optional[str] = None, organization
 
 def delete_api_project(project_id: int) -> None:
     """Exclui um projeto na API pelo ID."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.delete(f"/projects/{project_id}")
         resp.raise_for_status()
+    release_external_resource("whatsapp_api_project", project_id)
     return None
+
+
+# ---------------------------------------------------------------------------
+# QR Codes de Projetos API
+# ---------------------------------------------------------------------------
+
+def get_project_qr_codes(project_id: int) -> List[Dict]:
+    """Lista todos os QR Codes associados a um projeto."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/qr-codes")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def create_project_qr_code(
+    project_id: int,
+    name: str,
+    description: Optional[str] = None,
+    code: Optional[str] = None,
+) -> Dict:
+    """Cria um novo QR Code para o projeto."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    body = {"name": name}
+    if description:
+        body["description"] = description
+    if code:
+        body["code"] = code
+    with _client() as c:
+        resp = c.post(f"/projects/{project_id}/qr-codes", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def update_project_qr_code(
+    project_id: int,
+    qr_code_id: int,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    status: Optional[str] = None,
+) -> Dict:
+    """Atualiza um QR Code do projeto."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    body = {}
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    if status is not None:
+        body["status"] = status
+    with _client() as c:
+        resp = c.patch(f"/projects/{project_id}/qr-codes/{qr_code_id}", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def delete_project_qr_code(project_id: int, qr_code_id: int) -> None:
+    """Exclui um QR Code do projeto."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.delete(f"/projects/{project_id}/qr-codes/{qr_code_id}")
+        resp.raise_for_status()
+
+
+def get_project_participations(project_id: int) -> List[Dict]:
+    """Lista as participações registradas em um projeto."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/participations")
+        resp.raise_for_status()
+        return resp.json()
 
 
 # Sub-rotas de projeto
 def get_project_audios(project_id: int) -> List[Dict]:
     """Lista os áudios associados a um projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.get(f"/projects/{project_id}/audios")
         resp.raise_for_status()
-        return resp.json()
+        audios = resp.json()
+    return _registered_audios(audios, "whatsapp_api_project", project_id)
 
 
 def upload_audio_to_project(project_id: int, file: Any, label: Optional[str] = None) -> Dict:
     """Faz upload de um arquivo de áudio diretamente para o projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     files = {"file": file}
     data = {}
     if label:
@@ -245,27 +678,47 @@ def upload_audio_to_project(project_id: int, file: Any, label: Optional[str] = N
     with _client(timeout=300.0) as c:
         resp = c.post(f"/projects/{project_id}/audios/upload", files=files, data=data)
         resp.raise_for_status()
-        return resp.json()
+        audio = resp.json()
+    if isinstance(audio, dict):
+        _register_audio_from_parent(audio, "whatsapp_api_project", project_id)
+    return audio
 
 
 def get_project_campaigns(project_id: int) -> List[Dict]:
     """Lista as campanhas associadas a um projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.get(f"/projects/{project_id}/campaigns")
         resp.raise_for_status()
-        return resp.json()
+        campaigns = resp.json()
+    owned_campaign_ids = _owned_resource_ids("whatsapp_campaign")
+    return [
+        campaign
+        for campaign in campaigns
+        if str(campaign.get("id")) in owned_campaign_ids
+    ]
 
 
 def get_project_contacts(project_id: int) -> List[Dict]:
     """Lista os contatos vinculados a um projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.get(f"/projects/{project_id}/contacts")
         resp.raise_for_status()
-        return resp.json()
+        contacts = resp.json()
+    owned_contact_ids = _owned_resource_ids("whatsapp_contact")
+    return [
+        contact
+        for contact in contacts
+        if str(contact.get("id", contact.get("contact_id"))) in owned_contact_ids
+    ]
 
 
 def link_contact_to_project(project_id: int, phone: str, name: Optional[str] = None) -> Dict:
     """Vincula/cria um contato para o projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    if _normalize_phone(phone) not in _owned_contact_ids_by_phone():
+        raise auth.AuthorizationError("O contato nao pertence a organizacao ativa.")
     body = {"phone": phone}
     if name:
         body["name"] = name
@@ -288,40 +741,74 @@ def fetch_audios_for_sync(
     Busca áudios da API prontos para sincronização.
 
     Estratégia:
-    - Se api_project_id fornecido: busca todos os áudios associados ao projeto na API
-    - Se campaign_id fornecido: busca contatos da campanha → seus telefones → áudios
-    - Se phones fornecido: busca áudios filtrados por esses telefones
-    - Se nenhum: busca TODOS os áudios da API
+    - Se api_project_id fornecido: busca áudios do projeto externo pertencente a organizacao
+    - Se campaign_id fornecido: busca telefones pertencentes a organizacao na campanha
+    - Se phones fornecido: busca somente telefones pertencentes a organizacao
 
     Retorna apenas áudios cujo processamento está 'done' (tem result_json).
     """
-    target_phones: Optional[List[str]] = phones
+    def normalize_phone(value: Any) -> str:
+        return "".join(filter(str.isdigit, str(value or "")))
+
+    owned_api_project_ids = {
+        resource["id"]
+        for resource in list_external_resources("whatsapp_api_project")
+    }
+    owned_campaign_ids = {
+        resource["id"]
+        for resource in list_external_resources("whatsapp_campaign")
+    }
+    owned_contact_resources = list_external_resources("whatsapp_contact")
+    owned_contact_ids = {resource["id"] for resource in owned_contact_resources}
+    owned_phones = {
+        normalize_phone(resource["metadata"].get("phone"))
+        for resource in owned_contact_resources
+        if normalize_phone(resource["metadata"].get("phone"))
+    }
+
+    target_phones: Optional[List[str]] = [
+        normalize_phone(phone) for phone in phones or [] if normalize_phone(phone)
+    ]
     all_audios: List[Dict] = []
 
     if api_project_id:
+        if str(api_project_id) not in owned_api_project_ids:
+            raise auth.AuthorizationError("O projeto externo nao pertence a organizacao ativa.")
         try:
             all_audios = get_project_audios(api_project_id)
         except Exception:
             all_audios = []
+    elif campaign_id:
+        if str(campaign_id) not in owned_campaign_ids:
+            raise auth.AuthorizationError("A campanha externa nao pertence a organizacao ativa.")
+        contacts = get_campaign_contacts(campaign_id)
+        target_phones = [
+            normalize_phone(contact.get("phone"))
+            for contact in contacts
+            if (
+                str(contact.get("id", contact.get("contact_id"))) in owned_contact_ids
+                or normalize_phone(contact.get("phone")) in owned_phones
+            )
+            and normalize_phone(contact.get("phone"))
+        ]
+    elif target_phones:
+        unauthorized_phones = set(target_phones).difference(owned_phones)
+        if unauthorized_phones:
+            raise auth.AuthorizationError("Um ou mais telefones nao pertencem a organizacao ativa.")
     else:
-        # Se tem campanha, buscar telefones dela
-        if campaign_id and not target_phones:
-            try:
-                contacts = get_campaign_contacts(campaign_id)
-                target_phones = [c.get("phone") for c in contacts if c.get("phone")]
-            except Exception:
-                target_phones = None  # fallback: buscar tudo
+        raise ValueError(
+            "Informe um projeto, campanha ou telefone pertencente a organizacao para sincronizar."
+        )
 
-        # Buscar áudios
-        if target_phones:
-            for phone in target_phones:
-                try:
-                    audios = get_all_audios(phone=phone)
-                    all_audios.extend(audios)
-                except Exception:
-                    pass
-        else:
-            all_audios = get_all_audios()
+    if target_phones and not all_audios:
+        audios_by_id: Dict[str, Dict] = {}
+        for phone in target_phones:
+            try:
+                for audio in get_all_audios(phone=phone):
+                    audios_by_id[str(audio.get("id"))] = audio
+            except Exception:
+                pass
+        all_audios = list(audios_by_id.values())
 
     # Filtrar apenas com resultado pronto
     ready_audios: List[Dict] = []
@@ -638,7 +1125,7 @@ def get_audio_file(audio_id: int, kind: str = "wav") -> bytes:
 # Contatos
 # ---------------------------------------------------------------------------
 
-def list_contacts(search: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[Dict]:
+def _list_contacts_from_api(search: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[Dict]:
     """Lista os contatos cadastrados na API."""
     params = {"skip": skip, "limit": limit}
     if search:
@@ -649,7 +1136,7 @@ def list_contacts(search: Optional[str] = None, skip: int = 0, limit: int = 100)
         return resp.json()
 
 
-def create_contact(phone: str, name: Optional[str] = None) -> Dict:
+def _create_contact_from_api(phone: str, name: Optional[str] = None) -> Dict:
     """Cria um novo contato na API."""
     body = {"phone": phone}
     if name:
@@ -660,14 +1147,14 @@ def create_contact(phone: str, name: Optional[str] = None) -> Dict:
         return resp.json()
 
 
-def delete_contact(contact_id: int) -> None:
+def _delete_contact_from_api(contact_id: int) -> None:
     """Exclui um contato da API pelo ID."""
     with _client() as c:
         resp = c.delete(f"/contacts/{contact_id}")
         resp.raise_for_status()
 
 
-def import_contacts_csv(csv_bytes: bytes) -> Dict:
+def _import_contacts_csv_from_api(csv_bytes: bytes) -> Dict:
     """Importa contatos a partir de um arquivo CSV (formato com colunas phone, name)."""
     with _client() as c:
         files = {"file": ("contacts.csv", csv_bytes, "text/csv")}
@@ -680,7 +1167,7 @@ def import_contacts_csv(csv_bytes: bytes) -> Dict:
 # Campanhas
 # ---------------------------------------------------------------------------
 
-def create_campaign(name: str, template_name: str, language_code: str, contact_ids: List[int], project_id: Optional[int] = None) -> Dict:
+def _create_campaign_from_api(name: str, template_name: str, language_code: str, contact_ids: List[int], project_id: Optional[int] = None) -> Dict:
     """Cria uma nova campanha e inicia os envios para a lista de contatos, vinculando a um projeto na API se fornecido."""
     body = {
         "name": name,
@@ -699,7 +1186,7 @@ def create_campaign(name: str, template_name: str, language_code: str, contact_i
 # Jobs de Processamento
 # ---------------------------------------------------------------------------
 
-def list_jobs(audio_id: Optional[int] = None, status: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[Dict]:
+def _list_jobs_from_api(audio_id: Optional[int] = None, status: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[Dict]:
     """Lista os jobs de processamento de áudio cadastrados na API."""
     params = {"skip": skip, "limit": limit}
     if audio_id is not None:
@@ -714,6 +1201,7 @@ def list_jobs(audio_id: Optional[int] = None, status: Optional[str] = None, skip
 
 def get_job(job_id: int) -> Dict:
     """Retorna detalhes de um job pelo ID."""
+    _require_owned_resource("whatsapp_job", job_id)
     with _client() as c:
         resp = c.get(f"/jobs/{job_id}")
         resp.raise_for_status()
@@ -722,6 +1210,7 @@ def get_job(job_id: int) -> Dict:
 
 def reprocess_audio(audio_id: int) -> Dict:
     """Solicita o reprocessamento de um áudio na API (DevAIce + Whisper)."""
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.post(f"/audios/{audio_id}/reprocess")
         resp.raise_for_status()

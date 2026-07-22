@@ -6,6 +6,9 @@ listagem, exclusão e teste de busca.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("jornada_compra")
 
 from utils.ai_provider import get_openai_client, get_vector_store_id, save_vector_store_id
 

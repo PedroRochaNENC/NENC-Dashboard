@@ -9,11 +9,16 @@ Exibe:
 
 import io
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
+
 import pandas as pd
 import base64
 
 from utils.prosodia_db import init_db, get_audio, get_project
 from utils.prosodia_loader import load_prosodia_from_uploads, _session_id_from_name
+from utils.organization_data import list_external_resources
 from utils.prosodia_charts import (
     create_vad_timeline,
     create_speaker_stats,
@@ -46,12 +51,22 @@ if not audio_id:
 
 audio = get_audio(audio_id)
 if not audio:
+    st.session_state.pop("pros_audio_id", None)
+    st.session_state.pop("pros_timeline_focus", None)
     st.error("Entrevista não encontrada no banco.")
     if st.button("← Entrevistas"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
-project = get_project(project_id) if project_id else {}
+project = get_project(project_id) if project_id else None
+if not project or audio.get("project_id") != project.get("id"):
+    st.session_state.pop("pros_project_id", None)
+    st.session_state.pop("pros_audio_id", None)
+    st.session_state.pop("pros_timeline_focus", None)
+    st.error("A entrevista selecionada não pertence ao projeto ativo.")
+    if st.button("← Entrevistas"):
+        st.switch_page("modules/prosodia/entrevistas.py")
+    st.stop()
 sid = audio["session_id"]
 
 focus = st.session_state.get("pros_timeline_focus")
@@ -228,23 +243,33 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 audio_api_id = int(parts[-1])
             except ValueError:
                 pass
+    if audio_api_id is not None:
+        owned_audio_ids = {
+            resource["id"]
+            for resource in list_external_resources("whatsapp_audio")
+        }
+        if str(audio_api_id) not in owned_audio_ids:
+            audio_api_id = None
 
     # Obter áudio da API
+    audio_b64 = ""
     audio_html = ""
     if audio_api_id:
-        audio_base64 = ""
-        audio_err = ""
         try:
             audio_bytes = _load_audio_bytes(audio_api_id)
-            audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+            if audio_bytes:
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
         except Exception as e:
-            audio_err = str(e)
-        
-        if audio_err:
-            audio_html = f'<div style="padding: 10px; background: #3c1e1e; border-radius: 8px; margin-bottom: 15px; color: #ff8080; text-align: center;">{audio_err}</div>'
-        else:
-            audio_src = f"data:audio/wav;base64,{audio_base64}"
-            audio_html = f'<audio id="audio-player" controls style="width: 100%; margin-bottom: 15px; border-radius: 8px;"><source src="{audio_src}" type="audio/wav"></audio>'
+            st.warning(f"Não foi possível carregar o áudio da API: {e}")
+
+        audio_html = """
+        <div id="audio-loading-placeholder" style="padding: 12px; background: #21262d; border-radius: 8px; margin-bottom: 15px; color: #8b949e; text-align: center; display: none;">
+          <span>Carregando áudio...</span>
+        </div>
+        <audio id="audio-player" controls style="width: 100%; margin-bottom: 15px; border-radius: 8px;">
+          <source src="" type="audio/wav">
+        </audio>
+        """
     else:
         audio_html = '<div style="padding: 10px; background: #262730; border-radius: 8px; margin-bottom: 15px; color: #808495; text-align: center;">Áudio disponível apenas para sincronização WhatsApp API (manual upload)</div>'
 
@@ -646,43 +671,88 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 }
             }
 
-            if (audio) {
+            // Background audio loading and retry logic
+            if (audio && audio.id === 'audio-player') {
+                const placeholder = document.getElementById('audio-loading-placeholder');
+                const audioB64 = "__AUDIO_B64__";
+                if (audioB64 && audioB64.length > 0) {
+                    const audioUrl = "data:audio/wav;base64," + audioB64;
+                    audio.src = audioUrl;
+                    audio.style.display = 'block';
+                    if (placeholder) placeholder.style.display = 'none';
+
+                    audio.addEventListener('timeupdate', () => {
+                        updatePlayback(audio.currentTime);
+                    });
+
+                    if (focusSeconds > 0) {
+                        audio.currentTime = focusSeconds;
+                        setTimeout(() => {
+                            let activeTurn = null;
+                            turns.forEach(turn => {
+                                const start = parseFloat(turn.getAttribute('data-seconds'));
+                                const end = parseFloat(turn.getAttribute('data-end'));
+
+                                if (focusSeconds >= start && focusSeconds < end) {
+                                    turn.classList.add('active');
+                                    const spkColor = turn.getAttribute('data-color');
+                                    turn.style.borderLeftColor = spkColor;
+                                    activeTurn = turn;
+                                } else {
+                                    turn.classList.remove('active');
+                                    turn.style.borderLeftColor = 'transparent';
+                                }
+                            });
+
+                            if (activeTurn) {
+                                activeTurn.scrollIntoView({
+                                    behavior: 'auto',
+                                    block: 'center'
+                                });
+                                activeTurn.classList.add('scrolled');
+                            }
+                            audio.play().catch(e => console.log('Autoplay blocked:', e));
+                        }, 200);
+                    }
+                } else if (placeholder) {
+                    placeholder.style.display = 'block';
+                    placeholder.innerHTML = '<span style="color: #8b949e;">Áudio da API não carregado</span>';
+                }
+            } else if (audio) {
+                // If it's a generic audio (not audio-player)
                 audio.addEventListener('timeupdate', () => {
                     updatePlayback(audio.currentTime);
                 });
-            }
-
-            // Focus redirection seek on load
-            if (focusSeconds > 0 && audio) {
-                audio.currentTime = focusSeconds;
                 
-                setTimeout(() => {
-                    let activeTurn = null;
-                    turns.forEach(turn => {
-                        const start = parseFloat(turn.getAttribute('data-seconds'));
-                        const end = parseFloat(turn.getAttribute('data-end'));
+                if (focusSeconds > 0) {
+                    audio.currentTime = focusSeconds;
+                    setTimeout(() => {
+                        let activeTurn = null;
+                        turns.forEach(turn => {
+                            const start = parseFloat(turn.getAttribute('data-seconds'));
+                            const end = parseFloat(turn.getAttribute('data-end'));
 
-                        if (focusSeconds >= start && focusSeconds < end) {
-                            turn.classList.add('active');
-                            const spkColor = turn.getAttribute('data-color');
-                            turn.style.borderLeftColor = spkColor;
-                            activeTurn = turn;
-                        } else {
-                            turn.classList.remove('active');
-                            turn.style.borderLeftColor = 'transparent';
-                        }
-                    });
-
-                    if (activeTurn) {
-                        activeTurn.scrollIntoView({
-                            behavior: 'auto',
-                            block: 'center'
+                            if (focusSeconds >= start && focusSeconds < end) {
+                                turn.classList.add('active');
+                                const spkColor = turn.getAttribute('data-color');
+                                turn.style.borderLeftColor = spkColor;
+                                activeTurn = turn;
+                            } else {
+                                turn.classList.remove('active');
+                                turn.style.borderLeftColor = 'transparent';
+                            }
                         });
-                        activeTurn.classList.add('scrolled');
-                    }
-                    
-                    audio.play().catch(e => console.log('Autoplay blocked:', e));
-                }, 200);
+
+                        if (activeTurn) {
+                            activeTurn.scrollIntoView({
+                                behavior: 'auto',
+                                block: 'center'
+                            });
+                            activeTurn.classList.add('scrolled');
+                        }
+                        audio.play().catch(e => console.log('Autoplay blocked:', e));
+                    }, 200);
+                }
             }
         </script>
     </body>
@@ -691,9 +761,11 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
 
     # Realizar as substituições no template HTML
     widget_html = widget_html.replace("__AUDIO_HTML__", audio_html)
+    widget_html = widget_html.replace("__AUDIO_B64__", audio_b64)
     widget_html = widget_html.replace("__TURNS_JOINED__", turns_joined)
     widget_html = widget_html.replace("__ACOUSTIC_DATA__", sinc_json)
     widget_html = widget_html.replace("__FOCUS_SECONDS__", str(focus_seconds))
+    widget_html = widget_html.replace("__AUDIO_ID__", str(audio_id))
 
     # Renderizar o widget customizado unificado
     import streamlit.components.v1 as components

@@ -6,6 +6,9 @@ upload de documentos, listagem, exclusão e teste de busca.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
 
 from utils.ai_provider import (
     get_openai_client,
@@ -13,7 +16,7 @@ from utils.ai_provider import (
     save_prosodia_vector_store_id,
 )
 
-st.title("📚 Base de Conhecimento — Prosódia")
+st.title("📚 Base de Conhecimento — NencLex")
 
 client = get_openai_client()
 
@@ -34,11 +37,11 @@ vs_id = get_prosodia_vector_store_id()
 if vs_id:
     st.success(f"Vector Store ativo: `{vs_id}`")
 else:
-    st.warning("Nenhum Vector Store configurado para Prosódia.")
+    st.warning("Nenhum Vector Store configurado para NencLex.")
     if st.button("➕ Criar novo Vector Store", type="primary"):
         with st.spinner("Criando vector store..."):
             try:
-                vs = client.vector_stores.create(name="NENC Prosodia KB")
+                vs = client.vector_stores.create(name="NENC NencLex KB")
                 save_prosodia_vector_store_id(vs.id)
                 st.success(f"Vector Store criado: `{vs.id}`")
                 st.rerun()
@@ -75,7 +78,7 @@ if uploaded_files:
             projeto = st.text_input("Projeto", key="pr_kb_projeto")
         with col2:
             ano = st.number_input("Ano", min_value=2000, max_value=2030, value=2025, key="pr_kb_ano")
-            tema = st.text_input("Tema / Área", placeholder="Ex: prosódia, emoção vocal", key="pr_kb_tema")
+            tema = st.text_input("Tema / Área", placeholder="Ex: NencLex, emoção vocal", key="pr_kb_tema")
 
         submitted = st.form_submit_button("📤 Enviar para a base", type="primary")
 

@@ -6,6 +6,8 @@ Controlador de navegação: st.navigation() com páginas dinâmicas por módulo.
 
 import streamlit as st
 
+from utils import auth
+
 st.set_page_config(
     page_title="NENC Insights",
     page_icon="🧠",
@@ -14,14 +16,29 @@ st.set_page_config(
 )
 
 
-def _build_pages():
+def _with_admin_pages(user: auth.User, pages):
+    if user.is_admin:
+        pages["Administracao"] = [
+            st.Page(
+                "pages/admin_users.py",
+                title="Administracao de usuarios",
+                icon="👤",
+            )
+        ]
+    return pages
+
+
+def _build_pages(user: auth.User):
     """Constrói lista de páginas com base no módulo selecionado."""
     modulo = st.session_state.get("modulo")
+    if modulo and not auth.can_access_module(user, modulo):
+        st.session_state.pop("modulo", None)
+        modulo = None
 
     home = st.Page("home.py", title="Início", icon="🧠", default=True)
 
     if modulo == "teste_sensorial":
-        return {
+        return _with_admin_pages(user, {
             "": [home],
             "Teste Sensorial": [
                 st.Page(
@@ -40,10 +57,10 @@ def _build_pages():
                     icon="👥",
                 ),
             ],
-        }
+        })
 
     if modulo == "jornada_compra":
-        return {
+        return _with_admin_pages(user, {
             "": [home],
             "Jornada de Compra": [
                 st.Page(
@@ -62,7 +79,7 @@ def _build_pages():
                     icon="🔍",
                 ),
             ],
-        }
+        })
 
     if modulo == "prosodia":
         # Registra páginas internas para permitir switch_page,
@@ -91,9 +108,9 @@ def _build_pages():
             unsafe_allow_html=True,
         )
 
-        return {
+        return _with_admin_pages(user, {
             "": [home],
-            "Prosódia": [
+            "NencLex": [
                 st.Page(
                     "modules/prosodia/projetos.py",
                     title="Projetos",
@@ -134,10 +151,16 @@ def _build_pages():
                     title="Base de Conhecimento",
                     icon="📚",
                 ),
-                st.Page(
-                    "modules/prosodia/whatsapp_config.py",
-                    title="Config API",
-                    icon="🔧",
+                *(
+                    [
+                        st.Page(
+                            "modules/prosodia/whatsapp_config.py",
+                            title="Config API",
+                            icon="🔧",
+                        ),
+                    ]
+                    if user.is_platform_admin
+                    else []
                 ),
                 st.Page(
                     "modules/prosodia/whatsapp_contatos.py",
@@ -155,10 +178,46 @@ def _build_pages():
                     icon="📡",
                 ),
             ],
-        }
+        })
 
-    return {"": [home]}
+    return _with_admin_pages(user, {"": [home]})
 
 
-pg = st.navigation(_build_pages())
+def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
+    active_organization_id = auth.active_organization_id(user)
+    state_key = "_nenc_ui_state_organization_id"
+    previous_organization_id = st.session_state.get(state_key)
+    if (
+        previous_organization_id is not None
+        and previous_organization_id != active_organization_id
+    ):
+        for session_key in (
+            "modulo",
+            "pros_project_id",
+            "pros_audio_id",
+            "pros_timeline_focus",
+            "prep_campaign_select",
+            "editor_importacao",
+            "mon_filter_phone",
+            "api_audio_file",
+            "api_audio_label",
+            "jc_metric",
+            "jc_participants",
+            "jc_aois",
+            "jc_marcas",
+            "jc_ai_model",
+            "jc_ai_mode",
+            "jc_use_kb",
+        ):
+            st.session_state.pop(session_key, None)
+    st.session_state[state_key] = active_organization_id
+
+
+authenticated_user = auth.render_login_page()
+if authenticated_user is None:
+    st.stop()
+
+auth.render_auth_sidebar(authenticated_user)
+_clear_organization_ui_state_if_needed(authenticated_user)
+pg = st.navigation(_build_pages(authenticated_user))
 pg.run()

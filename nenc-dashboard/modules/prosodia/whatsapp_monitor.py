@@ -6,6 +6,10 @@ e realizar a importação manual de áudios para qualquer projeto local.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
+
 import pandas as pd
 import io as _io
 from datetime import datetime
@@ -13,7 +17,7 @@ from utils.whatsapp_api_client import (
     get_all_audios,
     get_audio_status,
     get_audio_result,
-    list_jobs,
+    list_owned_jobs,
     map_api_result_to_all_formats,
     is_configured
 )
@@ -42,6 +46,104 @@ from utils.ai_provider import (
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils.organization_data import (
+    claim_external_resource,
+    list_external_resources,
+    register_derived_external_resource,
+)
+
+
+_STATUS_EMOJIS = {
+    "pending": "🟡 Pendente",
+    "processing": "🔵 Processando",
+    "done": "🟢 Concluído",
+    "failed": "🔴 Falhou",
+    "not_processed": "⚪ Não Processado",
+}
+
+
+def _normalize_phone(value) -> str:
+    return "".join(filter(str.isdigit, str(value or "")))
+
+
+def _owned_contact_ids_by_phone() -> dict[str, str]:
+    contact_ids_by_phone = {}
+    for resource in list_external_resources("whatsapp_contact"):
+        phone = _normalize_phone(resource["metadata"].get("phone"))
+        if phone:
+            contact_ids_by_phone[phone] = resource["id"]
+    return contact_ids_by_phone
+
+
+def _owned_api_project_ids(projects: list[dict]) -> list[int]:
+    api_project_ids = []
+    for project in projects:
+        api_project_id = project.get("api_project_id")
+        if api_project_id is None:
+            continue
+        try:
+            claim_external_resource(
+                "whatsapp_api_project",
+                api_project_id,
+                {"project_id": project["id"]},
+            )
+        except auth.AuthorizationError:
+            continue
+        api_project_ids.append(api_project_id)
+    return api_project_ids
+
+
+def _register_owned_audio(audio: dict, parent_type: str, parent_id) -> bool:
+    audio_id = audio.get("id")
+    if audio_id is None:
+        return False
+    try:
+        register_derived_external_resource(
+            "whatsapp_audio",
+            audio_id,
+            parent_type,
+            parent_id,
+            {
+                "phone": _normalize_phone(audio.get("contact_phone")),
+                "whatsapp_message_id": str(audio.get("whatsapp_message_id") or ""),
+            },
+        )
+    except auth.AuthorizationError:
+        return False
+    return True
+
+
+def _owned_audios(
+    phone_filter: str,
+    limit: int,
+    api_project_ids: list[int],
+    contact_ids_by_phone: dict[str, str],
+) -> list[dict]:
+    contact_phones = set(contact_ids_by_phone)
+    normalized_phone_filter = _normalize_phone(phone_filter)
+    if normalized_phone_filter:
+        if normalized_phone_filter not in contact_phones:
+            return []
+        return [
+            audio
+            for audio in get_all_audios(phone=normalized_phone_filter, limit=limit)
+            if _register_owned_audio(
+                audio,
+                "whatsapp_contact",
+                contact_ids_by_phone[normalized_phone_filter],
+            )
+        ]
+
+    audios_by_id = {}
+    for api_project_id in api_project_ids:
+        for audio in get_all_audios(project_id=api_project_id, limit=limit):
+            if _register_owned_audio(audio, "whatsapp_api_project", api_project_id):
+                audios_by_id[str(audio.get("id"))] = audio
+    for phone, contact_id in contact_ids_by_phone.items():
+        for audio in get_all_audios(phone=phone, limit=limit):
+            if _register_owned_audio(audio, "whatsapp_contact", contact_id):
+                audios_by_id[str(audio.get("id"))] = audio
+    return list(audios_by_id.values())[:limit]
 
 st.title("📡 Monitor de Áudios e Jobs")
 st.markdown(
@@ -63,6 +165,10 @@ if not is_configured():
         st.switch_page("modules/prosodia/whatsapp_config.py")
     st.stop()
 
+projects = get_projects()
+owned_api_project_ids = _owned_api_project_ids(projects)
+owned_contact_ids_by_phone = _owned_contact_ids_by_phone()
+
 # Abas do Monitor
 tab_audios, tab_jobs = st.tabs([
     "🎙️ Áudios Recebidos",
@@ -82,13 +188,18 @@ with tab_audios:
         
     try:
         with st.spinner("Buscando áudios na API..."):
-            audios_api = get_all_audios(
-                phone=filtro_phone.strip() if filtro_phone.strip() else None,
-                limit=filtro_limit
+            audios_api = _owned_audios(
+                filtro_phone,
+                filtro_limit,
+                owned_api_project_ids,
+                owned_contact_ids_by_phone,
             )
+        if filtro_phone.strip() and not audios_api:
+            if _normalize_phone(filtro_phone) not in owned_contact_ids_by_phone:
+                st.warning("O telefone informado nao pertence a organizacao ativa.")
             
         if not audios_api:
-            st.info("Nenhum áudio encontrado na API com os filtros selecionados.")
+            st.info("Nenhum áudio pertencente a esta organização foi encontrado.")
         else:
             # Enriquecer com status de cada áudio
             dados_enriquecidos = []
@@ -97,6 +208,7 @@ with tab_audios:
                 dados_enriquecidos.append({
                     "ID": a["id"],
                     "Telefone": a.get("contact_phone", ""),
+                    "QR Code": a.get("qr_code_name") or a.get("qr_code_code") or "Geral",
                     "Mensagem ID": a.get("whatsapp_message_id", ""),
                     "Duração (s)": a.get("duration_sec") or status_info.get("duration_sec") or 0.0,
                     "Status": status_info.get("status", "desconhecido"),
@@ -109,14 +221,9 @@ with tab_audios:
             if "Data" in df_audios.columns:
                 df_audios["Data"] = pd.to_datetime(df_audios["Data"]).dt.strftime("%d/%m/%Y %H:%M")
                 
-            status_emojis = {
-                "pending": "🟡 Pendente",
-                "processing": "🔵 Processando",
-                "done": "🟢 Concluído",
-                "failed": "🔴 Falhou",
-                "not_processed": "⚪ Não Processado"
-            }
-            df_audios["Status"] = df_audios["Status"].map(lambda x: status_emojis.get(x, x))
+            df_audios["Status"] = df_audios["Status"].map(
+                lambda value: _STATUS_EMOJIS.get(value, value)
+            )
             
             st.markdown("### Selecione os áudios prontos (Concluídos) para importar")
             
@@ -130,7 +237,7 @@ with tab_audios:
                 df_selecionavel,
                 use_container_width=True,
                 hide_index=True,
-                disabled=["ID", "Telefone", "Mensagem ID", "Duração (s)", "Status", "Data"],
+                disabled=["ID", "Telefone", "QR Code", "Mensagem ID", "Duração (s)", "Status", "Data"],
                 key="editor_importacao"
             )
             
@@ -142,7 +249,7 @@ with tab_audios:
                 st.subheader("📥 Ação: Importar Selecionados")
                 
                 # Selecionar o projeto destino
-                projetos = get_projects()
+                projetos = projects
                 if not projetos:
                     st.error("Nenhum projeto cadastrado no dashboard. Crie um projeto na página principal primeiro.")
                 else:
@@ -182,11 +289,11 @@ with tab_audios:
                                     pass
                             
                             # Iterar sobre as linhas selecionadas
-                            for i, row in enumerate(selecionados.itertuples()):
-                                wa_msg_id = row._3 # "Mensagem ID"
-                                audio_api_id = row.ID
-                                phone = row.Telefone
-                                status_txt = row.Status
+                            for i, row in enumerate(selecionados.to_dict("records")):
+                                wa_msg_id = row["Mensagem ID"]
+                                audio_api_id = row["ID"]
+                                phone = row["Telefone"]
+                                status_txt = row["Status"]
                                 
                                 session_id = f"wa_{phone}_{audio_api_id}"
                                 prog_bar.progress((i + 1) / total_imp, text=f"Importando {session_id} ({i+1}/{total_imp})…")
@@ -197,6 +304,17 @@ with tab_audios:
                                 
                                 if wa_msg_id in existing_wa_ids:
                                     st.info(f"ℹ️ Áudio {session_id} já importado anteriormente. Pulando.")
+                                    pulados_count += 1
+                                    continue
+
+                                owned_audio_ids = {
+                                    resource["id"]
+                                    for resource in list_external_resources("whatsapp_audio")
+                                }
+                                if str(audio_api_id) not in owned_audio_ids:
+                                    st.warning(
+                                        f"⚠️ Áudio {session_id} não pertence mais à organização ativa. Pulando."
+                                    )
                                     pulados_count += 1
                                     continue
                                     
@@ -362,7 +480,7 @@ with tab_jobs:
     
     try:
         status_filter = None if col_job_status == "Todos" else col_job_status
-        jobs = list_jobs(status=status_filter, limit=100)
+        jobs = list_owned_jobs(status=status_filter, limit=100)
         
         if not jobs:
             st.info("Nenhum job de processamento encontrado.")
@@ -380,7 +498,9 @@ with tab_jobs:
             })
             
             if "Status" in df_jobs.columns:
-                df_jobs["Status"] = df_jobs["Status"].map(lambda x: status_emojis.get(x, x))
+                df_jobs["Status"] = df_jobs["Status"].map(
+                    lambda value: _STATUS_EMOJIS.get(value, value)
+                )
             
             if "Início" in df_jobs.columns:
                 df_jobs["Início"] = pd.to_datetime(df_jobs["Início"]).dt.strftime("%d/%m/%Y %H:%M")

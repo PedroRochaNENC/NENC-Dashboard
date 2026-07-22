@@ -5,14 +5,23 @@ Permite listar, criar, importar em lote (via CSV) e excluir contatos na API.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
+
 import pandas as pd
 from utils.whatsapp_api_client import (
-    list_contacts,
-    create_contact,
-    delete_contact,
-    import_contacts_csv,
+    list_owned_contacts,
+    create_owned_contact,
+    delete_owned_contact,
+    import_owned_contacts_csv,
     is_configured
 )
+
+
+def _normalize_phone(value) -> str:
+    return "".join(filter(str.isdigit, str(value or "")))
+
 
 st.title("👤 Gerenciamento de Contatos (WhatsApp API)")
 st.markdown(
@@ -52,7 +61,10 @@ with tab_lista:
     
     try:
         # Carrega contatos
-        contatos = list_contacts(search=busca if busca else None, limit=1000)
+        contatos = list_owned_contacts(
+            search=busca if busca else None,
+            limit=1000,
+        )
         
         if not contatos:
             st.info("Nenhum contato encontrado.")
@@ -96,7 +108,7 @@ with tab_lista:
                 if st.button("🗑️ Excluir", type="primary", use_container_width=True):
                     if opcao_del:
                         try:
-                            delete_contact(opcao_del["id"])
+                            delete_owned_contact(opcao_del["id"])
                             st.success(f"Contato {opcao_del.get('phone')} excluído com sucesso!")
                             st.rerun()
                         except Exception as e:
@@ -126,13 +138,17 @@ with tab_novo:
         
     if submitted_contato:
         # Validação simples
-        tel_clean = "".join(filter(str.isdigit, telefone.strip()))
+        tel_clean = _normalize_phone(telefone)
         if not tel_clean:
             st.error("Por favor, insira um número de telefone válido.")
         else:
             try:
-                create_contact(phone=tel_clean, name=nome.strip() if nome.strip() else None)
+                create_owned_contact(
+                    phone=tel_clean,
+                    name=nome.strip() if nome.strip() else None,
+                )
                 st.success(f"✅ Contato {tel_clean} cadastrado com sucesso!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Erro ao cadastrar contato: {e}")
 
@@ -175,14 +191,24 @@ with tab_import:
                 if st.button("📥 Confirmar Importação em Lote", type="primary"):
                     with st.spinner("Enviando e processando lista na API..."):
                         try:
-                            # Chamar a função da API
-                            resultado = import_contacts_csv(csv_file.read())
+                            resultado, claimed_count, unavailable_count = (
+                                import_owned_contacts_csv(
+                                    csv_file.read(),
+                                    df_preview["phone"].tolist(),
+                                )
+                            )
                             
                             st.success(
                                 f"✅ Importação finalizada!\n\n"
                                 f"- **Contatos Criados:** {resultado.get('created', 0)}\n"
-                                f"- **Ignorados (já existiam):** {resultado.get('skipped', 0)}"
+                                f"- **Ignorados (já existiam):** {resultado.get('skipped', 0)}\n"
+                                f"- **Associados à organização:** {claimed_count}"
                             )
+                            if unavailable_count:
+                                st.warning(
+                                    "Alguns contatos existentes pertencem a outra organizacao e nao foram associados."
+                                )
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Erro ao importar arquivo: {e}")
         except Exception as e:

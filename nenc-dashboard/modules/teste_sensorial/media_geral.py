@@ -3,11 +3,16 @@ Teste Sensorial — Média Geral por Etapa.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("teste_sensorial")
+
 import pandas as pd
 from groq import Groq
 
 from utils.charts import create_average_by_etapa, create_perifericos_by_etapa
 from utils.data_loader import get_etapas
+from utils.organization_data import hydrate_session_state
 
 
 def _format_summary_table(df: pd.DataFrame, title: str) -> str:
@@ -30,6 +35,8 @@ INDICADORES_METRICS = [
 PERIFERICOS_RAW = ["BPM", "RMSSD", "GSR_CAL_mean"]
 PERIFERICOS_Z = ["BPM_zscore", "RMSSD_zscore", "GSR_CAL_zscore"]
 
+
+hydrate_session_state("teste_sensorial", ("ts_data",))
 
 st.title("👥 Média Geral por Etapa")
 

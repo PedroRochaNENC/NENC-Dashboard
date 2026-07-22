@@ -5,17 +5,50 @@ Permite listar campanhas, visualizar status de envio e criar novas campanhas dis
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
+
 import pandas as pd
 from datetime import datetime
 from utils.whatsapp_api_client import (
     get_campaigns,
     get_campaign,
     get_campaign_contacts,
-    create_campaign,
-    list_contacts,
+    create_owned_campaign,
+    list_owned_contacts,
     is_configured
 )
+from utils.organization_data import list_external_resources
 from utils.prosodia_db import get_projects, get_project, update_project
+
+
+def _owned_resource_ids(resource_type: str) -> set[str]:
+    return {
+        resource["id"]
+        for resource in list_external_resources(resource_type)
+    }
+
+
+def _contact_id(contact: dict):
+    return contact.get("id", contact.get("contact_id"))
+
+
+def _update_project_campaign(project: dict, campaign_id) -> None:
+    update_project(
+        project_id=project["id"],
+        name=project["name"],
+        especialidade=project.get("especialidade", ""),
+        historico=project.get("historico", ""),
+        problemas=project.get("problemas", ""),
+        questions=project.get("questions", ""),
+        entities=project.get("entities", ""),
+        briefing_filename=project.get("briefing_filename", ""),
+        briefing_text=project.get("briefing_text", ""),
+        whatsapp_campaign_id=campaign_id,
+        quality_thresholds=project.get("quality_thresholds"),
+        api_project_id=project.get("api_project_id"),
+    )
 
 st.title("📢 Campanhas do WhatsApp")
 st.markdown(
@@ -37,10 +70,19 @@ if not is_configured():
         st.switch_page("modules/prosodia/whatsapp_config.py")
     st.stop()
 
+projects = get_projects()
+
 # Obter projeto ativo se houver
 project_id = st.session_state.get("pros_project_id")
 project = get_project(project_id) if project_id else None
+if project_id and project is None:
+    st.session_state.pop("pros_project_id", None)
+    project_id = None
 api_project_id = project.get("api_project_id") if project else None
+owned_api_project_ids = _owned_resource_ids("whatsapp_api_project")
+if api_project_id is not None and str(api_project_id) not in owned_api_project_ids:
+    st.warning("O projeto externo vinculado nao foi registrado para a organizacao ativa.")
+    api_project_id = None
 
 if api_project_id:
     st.info(f"🔗 **Filtro Ativo**: Exibindo e associando campanhas ao Projeto API #{api_project_id} ({project['name']})")
@@ -58,7 +100,12 @@ with tab_lista:
     st.subheader("Histórico de Campanhas")
     
     try:
-        campanhas = get_campaigns(project_id=api_project_id)
+        owned_campaign_ids = _owned_resource_ids("whatsapp_campaign")
+        campanhas = [
+            campaign
+            for campaign in get_campaigns(project_id=api_project_id)
+            if str(campaign.get("id")) in owned_campaign_ids
+        ]
         
         if not campanhas:
             st.info("Nenhuma campanha foi criada ainda.")
@@ -111,7 +158,12 @@ with tab_lista:
                 # Buscar detalhes frescos
                 with st.spinner("Buscando detalhes da campanha..."):
                     camp_details = get_campaign(camp_id)
-                    camp_contacts = get_campaign_contacts(camp_id)
+                    owned_contact_ids = _owned_resource_ids("whatsapp_contact")
+                    camp_contacts = [
+                        contact
+                        for contact in get_campaign_contacts(camp_id)
+                        if str(_contact_id(contact)) in owned_contact_ids
+                    ]
                 
                 # Exibir métricas da campanha selecionada
                 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -126,7 +178,7 @@ with tab_lista:
                 
                 # Área de vinculação ao projeto local do Dashboard
                 st.markdown("#### 🔗 Vinculação com Projeto Local")
-                projetos = get_projects()
+                projetos = projects
                 
                 # Encontrar qual projeto local já está vinculado a esta campanha
                 projeto_vinculado = None
@@ -138,18 +190,7 @@ with tab_lista:
                 if projeto_vinculado:
                     st.success(f"🔗 Esta campanha está vinculada ao projeto: **{projeto_vinculado['name']}**")
                     if st.button("🔗 Desvincular Campanha", key="btn_desvincular"):
-                        # Atualizar projeto setando campaign_id como None
-                        update_project(
-                            project_id=projeto_vinculado["id"],
-                            name=projeto_vinculado["name"],
-                            especialidade=projeto_vinculado.get("especialidade", ""),
-                            historico=projeto_vinculado.get("historico", ""),
-                            problemas=projeto_vinculado.get("problemas", ""),
-                            questions=projeto_vinculado.get("questions", ""),
-                            briefing_filename=projeto_vinculado.get("briefing_filename", ""),
-                            briefing_text=projeto_vinculado.get("briefing_text", ""),
-                            whatsapp_campaign_id=None
-                        )
+                        _update_project_campaign(projeto_vinculado, None)
                         st.info("Campanha desvinculada com sucesso!")
                         st.rerun()
                 else:
@@ -169,17 +210,7 @@ with tab_lista:
                         st.write("")
                         if st.button("🔗 Vincular ao Projeto", type="primary", use_container_width=True):
                             if proj_opcao:
-                                update_project(
-                                    project_id=proj_opcao["id"],
-                                    name=proj_opcao["name"],
-                                    especialidade=proj_opcao.get("especialidade", ""),
-                                    historico=proj_opcao.get("historico", ""),
-                                    problemas=proj_opcao.get("problemas", ""),
-                                    questions=proj_opcao.get("questions", ""),
-                                    briefing_filename=proj_opcao.get("briefing_filename", ""),
-                                    briefing_text=proj_opcao.get("briefing_text", ""),
-                                    whatsapp_campaign_id=camp_id
-                                )
+                                _update_project_campaign(proj_opcao, camp_id)
                                 st.success(f"Campanha vinculada a **{proj_opcao['name']}**!")
                                 st.rerun()
                 
@@ -225,7 +256,7 @@ with tab_nova:
     st.subheader("Criar e Disparar Campanha")
     
     try:
-        contatos_disponiveis = list_contacts(limit=1000)
+        contatos_disponiveis = list_owned_contacts(limit=1000)
         
         if not contatos_disponiveis:
             st.warning("⚠️ Nenhum contato cadastrado na API. Cadastre contatos primeiro antes de criar uma campanha.")
@@ -271,15 +302,18 @@ with tab_nova:
                 else:
                     try:
                         with st.spinner("Criando campanha e disparando mensagens na API..."):
-                            create_campaign(
+                            created_campaign = create_owned_campaign(
                                 name=nome_campanha.strip(),
                                 template_name=template_name.strip(),
                                 language_code=language_code.strip(),
                                 contact_ids=contatos_selecionados,
                                 project_id=api_project_id
                             )
+                            if not isinstance(created_campaign, dict) or created_campaign.get("id") is None:
+                                raise RuntimeError("A API nao retornou o identificador da campanha criada.")
                         st.success(f"✅ Campanha '{nome_campanha}' criada e disparada em background com sucesso!")
                         st.balloons()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao disparar campanha: {e}")
                         

@@ -12,6 +12,9 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
 from fpdf import FPDF
 
 from utils.prosodia_db import (
@@ -62,7 +65,7 @@ def _build_project_analysis_markdown(
     citations: list,
 ) -> str:
     lines = [
-        "# Analise Geral do Projeto - Prosodia",
+        "# Analise Geral do Projeto - NencLex",
         "",
         f"- Projeto: {project_name or '-'}",
         f"- Modelo: {model or '-'}",
@@ -219,7 +222,7 @@ def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
     if not client:
         return False, "OpenAI nao configurado para envio a base de conhecimento."
     if not prosodia_vs_id:
-        return False, "PROSODIA_VECTOR_STORE_ID nao configurado."
+        return False, "A base de conhecimento do NencLex nao esta configurada para a organizacao ativa."
 
     try:
         uploaded = client.files.create(
@@ -693,6 +696,7 @@ if not project_id:
 
 project = get_project(project_id)
 if not project:
+    st.session_state.pop("pros_project_id", None)
     st.error("Projeto nao encontrado.")
     if st.button("<- Projetos"):
         st.switch_page("modules/prosodia/projetos.py")

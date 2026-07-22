@@ -32,7 +32,7 @@ def _session_id_from_name(name: str) -> str:
       35523510_Fim.json           →  35523510_Fim
     """
     stem = re.sub(r"\.(json|csv|xlsx)$", "", name, flags=re.IGNORECASE)
-    for prefix in ("Prosodia-", "Transcricao-", "Sincronizado-", "prosodia-", "transcricao-", "sincronizado-"):
+    for prefix in ("Prosodia-", "Transcricao-", "Sincronizado-", "prosodia-", "transcricao-", "sincronizado-", "NencLex-", "nenclex-"):
         if stem.startswith(prefix):
             stem = stem[len(prefix):]
             break

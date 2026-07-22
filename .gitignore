@@ -1,5 +1,19 @@
-.env
+# Virtual environments
+.venv/
+venv/
+
+# Databases
+*.db
+*.sqlite3
+
+# Credentials & keys
 chave api
+*.key
+.env
+
+# Python cache
 __pycache__/
 *.pyc
-.venv/
+
+# Local static temporary files
+static/audio_*.wav

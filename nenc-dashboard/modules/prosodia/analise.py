@@ -10,6 +10,7 @@ import pandas as pd
 from io import BytesIO
 from fpdf import FPDF
 
+from utils import auth
 from utils.prosodia_loader import (
     get_prosodia_sessions,
     get_prosodia_speakers,
@@ -30,6 +31,8 @@ from utils.prosodia_prompts import (
     PROSODIA_SYSTEM_PROMPT_STRATEGIC,
     build_prosodia_user_prompt,
 )
+
+auth.require_module("prosodia")
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +139,7 @@ def _build_pdf(projeto: dict, tables_text: str, ai_text: str) -> bytes:
     pdf.set_auto_page_break(auto=True, margin=15)
 
     pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 12, "NENC Insights - Prosodia", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 12, "NENC Insights - NencLex", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     if projeto.get("nome"):
@@ -180,7 +183,7 @@ def _build_pdf(projeto: dict, tables_text: str, ai_text: str) -> bytes:
 # Página principal
 # ===========================================================================
 
-st.title("🔍 Análise — Prosódia")
+st.title("🔍 Análise — NencLex")
 
 data = st.session_state.get("pr_data", {})
 sessions = get_prosodia_sessions(data)
@@ -548,7 +551,7 @@ with col_nav2:
     st.download_button(
         "📄 Exportar PDF",
         data=pdf_bytes,
-        file_name=f"{projeto.get('nome', 'analise_prosodia')}.pdf",
+        file_name=f"{projeto.get('nome', 'analise_nenclex')}.pdf",
         mime="application/pdf",
         width='stretch',
         type="primary",

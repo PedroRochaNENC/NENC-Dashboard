@@ -4,9 +4,15 @@ Página Inicial — Seleção de módulo.
 
 import streamlit as st
 from utils.ai_provider import get_openai_client, get_vector_store_id
+from utils import auth
+from utils.organization_data import load_module_state
+
+
+user = auth.require_login()
 
 
 def _select_module(module_key: str, navigate_to: str | None = None):
+    auth.require_module(module_key)
     st.session_state["modulo"] = module_key
     if navigate_to:
         st.session_state["_navigate_to"] = navigate_to
@@ -26,115 +32,128 @@ st.markdown(
 
 st.divider()
 
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.subheader("🧪 Teste Sensorial")
-    st.markdown(
+module_cards = (
+    (
+        "teste_sensorial",
+        "🧪 Teste Sensorial",
         "Análise de dados de **EEG e sinais periféricos** "
         "(BPM, GSR, RMSSD) coletados durante testes sensoriais.\n\n"
         "**Páginas:**\n"
         "- 📂 Preparação de Dados\n"
         "- 📊 Timeline sincronizada\n"
-        "- 👥 Média Geral por Etapa"
-    )
-    st.button(
+        "- 👥 Média Geral por Etapa",
         "Abrir Teste Sensorial →",
-        key="btn_ts",
-        on_click=_select_module,
-        args=("teste_sensorial", "modules/teste_sensorial/preparacao.py"),
-        width='stretch',
-        type="primary",
-    )
-
-with col2:
-    st.subheader("🛒 Jornada de Compra")
-    st.markdown(
+        "btn_ts",
+        "modules/teste_sensorial/preparacao.py",
+    ),
+    (
+        "jornada_compra",
+        "🛒 Jornada de Compra",
         "Análise de dados de **eye-tracking** (fixações, sacadas, AOIs) "
         "coletados durante jornadas de compra.\n\n"
         "**Páginas:**\n"
         "- 📂 Preparação de Dados\n"
         "- 📚 Base de Conhecimento\n"
-        "- 🔍 Análise"
-    )
-    st.button(
+        "- 🔍 Análise",
         "Abrir Jornada de Compra →",
-        key="btn_jc",
-        on_click=_select_module,
-        args=("jornada_compra", "modules/jornada_compra/preparacao.py"),
-        width='stretch',
-        type="primary",
-    )
-
-with col3:
-    st.subheader("🎙️ Prosódia")
-    st.markdown(
-        "Análise de **prosódia e transcrições de entrevistas** — "
+        "btn_jc",
+        "modules/jornada_compra/preparacao.py",
+    ),
+    (
+        "prosodia",
+        "🎙️ NencLex",
+        "Análise do **NencLex e transcrições de entrevistas** — "
         "segmentos VAD, features acústicas, qualidade de entrevista e análise com IA.\n\n"
         "**Páginas:**\n"
         "- 🎙️ Projetos\n"
         "- 📤 Uploads\n"
         "- 🗂️ Entrevistas\n"
         "- 📊 Timeline\n"
-        "- 🤖 Análise + Qualidade"
-    )
-    st.button(
-        "Abrir Prosódia →",
-        key="btn_pr",
-        on_click=_select_module,
-        args=("prosodia", "modules/prosodia/projetos.py"),
-        width='stretch',
-        type="primary",
-    )
+        "- 🤖 Análise + Qualidade",
+        "Abrir NencLex →",
+        "btn_pr",
+        "modules/prosodia/projetos.py",
+    ),
+)
+available_cards = [
+    card for card in module_cards if auth.can_access_module(user, card[0])
+]
+
+if not available_cards:
+    st.info("Nenhum modulo esta disponivel para esta conta. Contate um administrador.")
+else:
+    for column, card in zip(st.columns(len(available_cards)), available_cards):
+        module_key, title, description, button_label, button_key, page_path = card
+        with column:
+            st.subheader(title)
+            st.markdown(description)
+            st.button(
+                button_label,
+                key=button_key,
+                on_click=_select_module,
+                args=(module_key, page_path),
+                width="stretch",
+                type="primary",
+            )
 
 # ------------------------------------------------------------------
 # Status dos dados carregados
 # ------------------------------------------------------------------
-st.divider()
-st.markdown("### 📌 Status dos dados")
+if available_cards:
+    st.divider()
+    st.markdown("### 📌 Status dos dados")
+    available_modules = {card[0] for card in available_cards}
+    ts_data = (
+        load_module_state("teste_sensorial")
+        if "teste_sensorial" in available_modules
+        else {}
+    )
+    jc_data = (
+        load_module_state("jornada_compra")
+        if "jornada_compra" in available_modules
+        else {}
+    )
 
-ts_data = st.session_state.get("ts_data", {})
-jc_data = st.session_state.get("jc_data", {})
-pr_data = st.session_state.get("pr_data", {})
+    for column, card in zip(st.columns(len(available_cards)), available_cards):
+        with column:
+            if card[0] == "teste_sensorial":
+                if ts_data and {"indicadores", "perifericos", "psd_results"}.intersection(ts_data):
+                    st.success("✅ Teste Sensorial — dados carregados")
+                else:
+                    st.info("Teste Sensorial — sem dados")
+            elif card[0] == "jornada_compra":
+                if jc_data and any(key for key in jc_data if key != "_errors"):
+                    st.success("✅ Jornada de Compra — dados carregados")
+                else:
+                    st.info("Jornada de Compra — sem dados")
+                vector_store_id = get_vector_store_id()
+                if vector_store_id:
+                    knowledge_client = get_openai_client()
+                    if knowledge_client:
+                        try:
+                            files = list(
+                                knowledge_client.vector_stores.files.list(
+                                    vector_store_id=vector_store_id
+                                )
+                            )
+                            st.success("📚 Base de Conhecimento — {} documentos".format(len(files)))
+                        except Exception:
+                            st.info("📚 Base de Conhecimento — configurada")
+            elif card[0] == "prosodia":
+                try:
+                    from utils.prosodia_db import get_projects, init_db
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    if ts_data and {"indicadores", "perifericos", "psd_results"}.intersection(ts_data):
-        st.success("✅ Teste Sensorial — dados carregados")
-    else:
-        st.info("Teste Sensorial — sem dados")
-
-with c2:
-    if jc_data and any(k for k in jc_data if k != "_errors"):
-        st.success("✅ Jornada de Compra — dados carregados")
-    else:
-        st.info("Jornada de Compra — sem dados")
-
-    # Knowledge base status
-    _vs_id = get_vector_store_id()
-    if _vs_id:
-        _kb_client = get_openai_client()
-        if _kb_client:
-            try:
-                _vs_files = list(_kb_client.vector_stores.files.list(vector_store_id=_vs_id))
-                st.success(f"📚 Base de Conhecimento — {len(_vs_files)} documentos")
-            except Exception:
-                st.info("📚 Base de Conhecimento — configurada")
-
-with c3:
-    try:
-        from utils.prosodia_db import init_db, get_projects
-        init_db()
-        _projects = get_projects()
-        if _projects:
-            _n_proj = len(_projects)
-            _n_aud = sum(p.get("n_audios", 0) for p in _projects)
-            st.success(f"✅ Prosódia — {_n_proj} projeto(s), {_n_aud} entrevista(s)")
-        else:
-            st.info("Prosódia — nenhum projeto criado")
-    except Exception:
-        pr_sessions = pr_data.get("sessions", [])
-        if pr_sessions:
-            st.success(f"✅ Prosódia — {len(pr_sessions)} sessão(ões) carregada(s)")
-        else:
-            st.info("Prosódia — sem dados")
+                    init_db()
+                    projects = get_projects()
+                    if projects:
+                        project_count = len(projects)
+                        audio_count = sum(project.get("n_audios", 0) for project in projects)
+                        st.success(
+                            "✅ NencLex — {} projeto(s), {} entrevista(s)".format(
+                                project_count, audio_count
+                            )
+                        )
+                    else:
+                        st.info("NencLex — nenhum projeto criado")
+                except Exception as error:
+                    st.warning("NencLex indisponivel: {}".format(error))

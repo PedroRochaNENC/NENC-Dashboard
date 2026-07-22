@@ -6,6 +6,10 @@ heatmap de atenção, ANOVA e análise de IA com contexto do projeto.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("jornada_compra")
+
 import pandas as pd
 from io import BytesIO
 from openai import OpenAI
@@ -33,6 +37,15 @@ from utils.neuro_prompts import (
     NEURO_SYSTEM_PROMPT_STATISTICAL,
     NEURO_SYSTEM_PROMPT_STRATEGIC,
     build_user_prompt,
+)
+from utils.organization_data import hydrate_session_state, save_session_state
+
+
+_JORNADA_STATE_KEYS = (
+    "jc_data",
+    "jc_pptx_text",
+    "jc_projeto",
+    "jc_entrevistas_summary",
 )
 
 
@@ -82,7 +95,10 @@ e elementos visuais que influenciam escolhas somente quando sustentados pelas fa
         temperature=0.4,
         max_output_tokens=1000,
     )
-    return response.output_text
+    summary = response.output_text
+    st.session_state["jc_entrevistas_summary"] = summary
+    save_session_state("jornada_compra", _JORNADA_STATE_KEYS)
+    return summary
 
 
 def _sanitize(text: str) -> str:
@@ -148,6 +164,8 @@ def _build_pdf(projeto: dict, tables_text: str, ai_text: str, entrevistas_summar
     pdf.output(buf)
     return buf.getvalue()
 
+
+hydrate_session_state("jornada_compra", _JORNADA_STATE_KEYS)
 
 st.title("🔍 Análise — Jornada de Compra")
 

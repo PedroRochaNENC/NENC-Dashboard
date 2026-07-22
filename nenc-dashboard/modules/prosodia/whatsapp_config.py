@@ -8,18 +8,25 @@ testar a conectividade e visualizar informações de diagnóstico.
 import os
 from pathlib import Path
 import streamlit as st
+from utils import auth
+
+auth.require_admin(platform_only=True)
+
 from dotenv import load_dotenv, set_key
 
 from utils.whatsapp_api_client import test_connection, is_configured
+from utils.organization_data import migrate_legacy_external_resource
 
-# Caminho para os arquivos .env
-_MODULES_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-_ROOT_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+# Use the same dotenv lookup order as the application runtime.
+_APPLICATION_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent / ".env"
+_ENV_PATH = next(
+    (path for path in (_APPLICATION_ENV_PATH, _WORKSPACE_ENV_PATH) if path.exists()),
+    _APPLICATION_ENV_PATH,
+)
 
 # Garantir carregamento das variáveis
-load_dotenv(_MODULES_ENV_PATH)
-if _ROOT_ENV_PATH.exists():
-    load_dotenv(_ROOT_ENV_PATH)
+load_dotenv(_ENV_PATH)
 
 st.title("⚙️ Configuração da WhatsApp API")
 st.markdown(
@@ -36,15 +43,44 @@ with nav_col:
 st.divider()
 
 # Ler valores atuais
-current_url = st.session_state.get("whatsapp_api_url") or os.getenv("WHATSAPP_API_URL", "")
-current_key = st.session_state.get("whatsapp_api_key") or os.getenv("WHATSAPP_API_KEY", "")
+current_url = os.getenv("WHATSAPP_API_URL", "")
+current_key = os.getenv("WHATSAPP_API_KEY", "")
 
-# Garantir que st.session_state esteja alinhado
-if "whatsapp_api_url" not in st.session_state:
-    st.session_state["whatsapp_api_url"] = current_url
-if "whatsapp_api_key" not in st.session_state:
-    st.session_state["whatsapp_api_key"] = current_key
+st.subheader("Migração de Recursos Legados")
+with st.form("form_whatsapp_legacy_resource", clear_on_submit=True):
+    legacy_resource_type = st.selectbox(
+        "Tipo de recurso",
+        [
+            "whatsapp_contact",
+            "whatsapp_campaign",
+            "whatsapp_api_project",
+            "whatsapp_audio",
+            "whatsapp_job",
+        ],
+    )
+    legacy_resource_id = st.text_input("ID externo")
+    legacy_phone = st.text_input("Telefone do contato", disabled=legacy_resource_type != "whatsapp_contact")
+    legacy_name = st.text_input("Nome do contato", disabled=legacy_resource_type != "whatsapp_contact")
+    migrate_legacy_resource = st.form_submit_button("Migrar recurso legado")
 
+if migrate_legacy_resource:
+    metadata = {}
+    if legacy_resource_type == "whatsapp_contact":
+        metadata = {
+            "phone": "".join(filter(str.isdigit, legacy_phone)),
+            "name": legacy_name.strip(),
+        }
+    try:
+        migrate_legacy_external_resource(
+            legacy_resource_type,
+            legacy_resource_id,
+            metadata,
+        )
+        st.success("Recurso legado migrado para a organização ativa.")
+    except Exception as error:
+        st.error(f"Não foi possível migrar o recurso legado: {error}")
+
+st.divider()
 col_form, col_status = st.columns([6, 4])
 
 with col_form:
@@ -52,13 +88,13 @@ with col_form:
     with st.form("form_whatsapp_config"):
         api_url = st.text_input(
             "URL da API de WhatsApp",
-            value=st.session_state["whatsapp_api_url"],
+            value=current_url,
             placeholder="Ex: http://localhost:8000 ou URL ngrok",
             help="Endereço base onde o backend FastAPI está rodando.",
         )
         api_key = st.text_input(
             "Chave de API (X-API-Key)",
-            value=st.session_state["whatsapp_api_key"],
+            value=current_key,
             type="password",
             placeholder="Chave de autenticação configurada no backend",
             help="Token de segurança exigido pela API para validar as requisições.",
@@ -70,19 +106,10 @@ with col_form:
         url_stripped = api_url.strip().rstrip("/")
         key_stripped = api_key.strip()
         
-        st.session_state["whatsapp_api_url"] = url_stripped
-        st.session_state["whatsapp_api_key"] = key_stripped
-        
-        # Persistir nos arquivos .env
+        # Persistir no mesmo .env carregado pelo processo da aplicacao.
         try:
-            # Salvar no env de modules
-            set_key(str(_MODULES_ENV_PATH), "WHATSAPP_API_URL", url_stripped)
-            set_key(str(_MODULES_ENV_PATH), "WHATSAPP_API_KEY", key_stripped)
-            
-            # Salvar no env da raiz se existir
-            if _ROOT_ENV_PATH.exists():
-                set_key(str(_ROOT_ENV_PATH), "WHATSAPP_API_URL", url_stripped)
-                set_key(str(_ROOT_ENV_PATH), "WHATSAPP_API_KEY", key_stripped)
+            set_key(str(_ENV_PATH), "WHATSAPP_API_URL", url_stripped)
+            set_key(str(_ENV_PATH), "WHATSAPP_API_KEY", key_stripped)
             
             os.environ["WHATSAPP_API_URL"] = url_stripped
             os.environ["WHATSAPP_API_KEY"] = key_stripped

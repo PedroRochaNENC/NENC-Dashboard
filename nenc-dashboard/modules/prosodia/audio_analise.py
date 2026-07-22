@@ -13,6 +13,10 @@ import re
 import unicodedata
 from datetime import datetime
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
+
 import pandas as pd
 
 from utils.prosodia_db import (
@@ -338,7 +342,7 @@ def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
     if not client:
         return False, "OpenAI não configurado para envio à base de conhecimento."
     if not prosodia_vs_id:
-        return False, "PROSODIA_VECTOR_STORE_ID não configurado."
+        return False, "A base de conhecimento do NencLex nao esta configurada para a organizacao ativa."
 
     try:
         uploaded = client.files.create(
@@ -367,12 +371,20 @@ if not audio_id:
 
 audio = get_audio(audio_id)
 if not audio:
+    st.session_state.pop("pros_audio_id", None)
     st.error("Entrevista não encontrada no banco.")
     if st.button("← Entrevistas"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
-project = get_project(project_id) if project_id else {}
+project = get_project(project_id) if project_id else None
+if not project or audio.get("project_id") != project.get("id"):
+    st.session_state.pop("pros_project_id", None)
+    st.session_state.pop("pros_audio_id", None)
+    st.error("A entrevista selecionada não pertence ao projeto ativo.")
+    if st.button("← Entrevistas"):
+        st.switch_page("modules/prosodia/entrevistas.py")
+    st.stop()
 sid = audio["session_id"]
 
 # Parse thresholds customizados se existirem
@@ -462,7 +474,7 @@ with h4:
 
 if is_wa and h2 is not None:
     h2.write("")
-    if h2.button("🔄 Reprocessar", type="secondary", width='stretch', help="Solicitar reprocessamento da transcrição e prosódia via WhatsApp API"):
+    if h2.button("🔄 Reprocessar", type="secondary", width='stretch', help="Solicitar reprocessamento da transcrição e NencLex via WhatsApp API"):
         parts = sid.split("_")
         if len(parts) >= 3:
             try:
@@ -653,7 +665,7 @@ if is_wa and h2 is not None:
                         )
                         _append_result_to_kb(kb_doc_name_a, kb_doc_a)
                         
-                        status_container.success("🎉 Áudio, transcrição, prosódia e análise reprocessados com sucesso!")
+                        status_container.success("🎉 Áudio, transcrição, NencLex e análise reprocessados com sucesso!")
                         time.sleep(2)
                         st.rerun()
                     else:

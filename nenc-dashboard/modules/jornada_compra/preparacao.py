@@ -5,6 +5,10 @@ Upload de arquivos de eye-tracking + formulário de contexto do projeto.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("jornada_compra")
+
 from io import BytesIO
 from pptx import Presentation
 
@@ -14,6 +18,15 @@ from utils.jornada_loader import (
     get_jornada_participants,
     get_jornada_aois,
     get_jornada_marcas,
+)
+from utils.organization_data import hydrate_session_state, save_session_state
+
+
+_JORNADA_STATE_KEYS = (
+    "jc_data",
+    "jc_pptx_text",
+    "jc_projeto",
+    "jc_entrevistas_summary",
 )
 
 
@@ -41,6 +54,8 @@ def _extract_pptx_text(file_bytes: bytes) -> str:
             slides_text.append(f"--- Slide {i} ---\n" + "\n".join(parts))
     return "\n\n".join(slides_text)
 
+
+hydrate_session_state("jornada_compra", _JORNADA_STATE_KEYS)
 
 st.title("📂 Preparação de Dados — Jornada de Compra")
 
@@ -114,8 +129,7 @@ relatorio_file = st.file_uploader(
 if relatorio_file is not None:
     pptx_text = _extract_pptx_text(relatorio_file.getvalue())
     st.session_state["jc_pptx_text"] = pptx_text
-else:
-    st.session_state.pop("jc_pptx_text", None)
+    save_session_state("jornada_compra", _JORNADA_STATE_KEYS)
 
 # Carregar se algum arquivo foi enviado
 any_file = any([
@@ -135,6 +149,7 @@ if any_file:
         entrevistas_file=entrevistas_file,
     )
     st.session_state["jc_data"] = data
+    save_session_state("jornada_compra", _JORNADA_STATE_KEYS)
 
     # Avisos
     if "_errors" in data:
@@ -279,6 +294,7 @@ with st.form("projeto_form", clear_on_submit=False):
             "historico": historico,
             "problemas": problemas,
         }
+        save_session_state("jornada_compra", _JORNADA_STATE_KEYS)
         st.success("Contexto do projeto salvo com sucesso!")
 
 # ==================================================================

@@ -8,6 +8,10 @@ automática de análise e verificação de qualidade.
 import io
 import json
 import streamlit as st
+from utils import auth
+
+auth.require_module("prosodia")
+
 import pandas as pd
 
 from utils.prosodia_db import (
@@ -37,6 +41,7 @@ from utils.ai_provider import (
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils.organization_data import claim_external_resource
 
 init_db()
 
@@ -52,6 +57,7 @@ if not project_id:
 
 project = get_project(project_id)
 if not project:
+    st.session_state.pop("pros_project_id", None)
     st.error("Projeto não encontrado.")
     if st.button("← Projetos"):
         st.switch_page("modules/prosodia/projetos.py")
@@ -80,12 +86,12 @@ st.subheader("📤 Adicionar Entrevistas")
 st.markdown(
     "O matching entre JSON e CSV é feito automaticamente pelo ID de sessão "
     "extraído do nome do arquivo "
-    "(`Prosodia-**<id>**.json` ↔ `Transcricao-**<id>**.csv`)."
+    "(`NencLex-**<id>**.json` ↔ `Transcricao-**<id>**.csv`)."
 )
 
 uc1, uc2, uc3 = st.columns(3)
 with uc1:
-    st.markdown("**🎙️ Prosódia (JSON)**")
+    st.markdown("**🎙️ NencLex (JSON)**")
     json_files = st.file_uploader(
         "JSON",
         type=["json"],
@@ -324,6 +330,17 @@ if json_files or csv_files or sinc_files:
 api_project_id = project.get("api_project_id")
 
 if api_project_id:
+    try:
+        claim_external_resource(
+            "whatsapp_api_project",
+            api_project_id,
+            {"project_id": project_id},
+        )
+    except auth.AuthorizationError:
+        st.error("O projeto externo vinculado nao pertence a organizacao ativa.")
+        api_project_id = None
+
+if api_project_id:
     st.divider()
     st.subheader("📡 Upload Direto de Áudio para a API")
     st.markdown(
@@ -341,9 +358,13 @@ if api_project_id:
                 type=["wav", "mp3", "m4a", "ogg", "aac"],
                 key="api_audio_file"
             )
+        
+        default_label = audio_file.name if audio_file else ""
+        
         with col_l:
             audio_label = st.text_input(
                 "Identificador / Marcador (Label)",
+                value=default_label,
                 placeholder="Ex: Entrevistado A, Sessão 1",
                 key="api_audio_label"
             )

@@ -1,0 +1,5 @@
+# Ignorar áudios baixados temporariamente para serving estático
+static/audio_*.wav
+__pycache__/
+*.db
+.env

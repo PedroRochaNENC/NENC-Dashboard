@@ -3,6 +3,10 @@ Teste Sensorial — Timeline sincronizada por participante ou média geral.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("teste_sensorial")
+
 import pandas as pd
 
 from utils.data_loader import get_participants, get_etapas
@@ -12,6 +16,7 @@ from utils.resampler import (
     get_etapa_boundaries,
 )
 from utils.charts import create_synchronized_timeline, INDICATOR_COLORS
+from utils.organization_data import hydrate_session_state
 
 AVAILABLE_INDICATORS = [
     "atencao",
@@ -26,6 +31,8 @@ AVAILABLE_INDICATORS = [
 
 DEFAULT_ON = {"atencao", "WTP", "assimetria"}
 
+
+hydrate_session_state("teste_sensorial", ("ts_data",))
 
 st.title("📊 Timeline Sincronizada")
 

@@ -6,3 +6,4 @@ textColor = "#FAFAFA"
 
 [server]
 maxUploadSize = 200
+enableStaticServing = true

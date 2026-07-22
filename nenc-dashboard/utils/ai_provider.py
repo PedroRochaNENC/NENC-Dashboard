@@ -8,6 +8,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from utils.organization_data import (
+    get_vector_store_id as get_organization_vector_store_id,
+    save_vector_store_id as save_organization_vector_store_id,
+)
+
 # Load .env — search nenc-dashboard/ first, then workspace root
 _ENV_PATH = next(
     (p for p in [
@@ -28,49 +33,31 @@ def get_openai_client() -> OpenAI | None:
 
 
 def get_vector_store_id() -> str | None:
-    """Return the Jornada de Compra vector store ID from .env, or None if not set."""
-    vs_id = os.getenv("VECTOR_STORE_ID", "").strip()
-    return vs_id if vs_id else None
+    """Return the Jornada vector store owned by the active organization."""
+
+    return get_organization_vector_store_id(
+        "jornada_compra", legacy_environment_key="VECTOR_STORE_ID"
+    )
 
 
 def get_prosodia_vector_store_id() -> str | None:
-    """Return the Prosódia vector store ID from .env, or None if not set."""
-    vs_id = os.getenv("PROSODIA_VECTOR_STORE_ID", "").strip()
-    return vs_id if vs_id else None
+    """Return the Prosodia vector store owned by the active organization."""
+
+    return get_organization_vector_store_id(
+        "prosodia", legacy_environment_key="PROSODIA_VECTOR_STORE_ID"
+    )
 
 
 def save_vector_store_id(vs_id: str) -> None:
-    """Persist VECTOR_STORE_ID to the .env file."""
-    _save_env_var("VECTOR_STORE_ID", vs_id)
+    """Persist the Jornada vector store for the active organization."""
+
+    save_organization_vector_store_id("jornada_compra", vs_id)
 
 
 def save_prosodia_vector_store_id(vs_id: str) -> None:
-    """Persist PROSODIA_VECTOR_STORE_ID to the .env file."""
-    _save_env_var("PROSODIA_VECTOR_STORE_ID", vs_id)
+    """Persist the Prosodia vector store for the active organization."""
 
-
-def _save_env_var(key: str, value: str) -> None:
-    """Write or update a key=value line in the .env file."""
-    env_path = _ENV_PATH
-    if env_path.exists():
-        content = env_path.read_text(encoding="utf-8")
-    else:
-        content = ""
-
-    lines = content.splitlines()
-    new_lines = []
-    found = False
-    for line in lines:
-        if line.startswith(key):
-            new_lines.append(f"{key}={value}")
-            found = True
-        else:
-            new_lines.append(line)
-    if not found:
-        new_lines.append(f"{key}={value}")
-
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    os.environ[key] = value
+    save_organization_vector_store_id("prosodia", vs_id)
 
 
 def create_analysis(

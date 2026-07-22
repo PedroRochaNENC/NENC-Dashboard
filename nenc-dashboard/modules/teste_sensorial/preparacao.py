@@ -6,6 +6,10 @@ Pré-visualização e validação dos dados.
 """
 
 import streamlit as st
+from utils import auth
+
+auth.require_module("teste_sensorial")
+
 import pandas as pd
 from pathlib import Path
 
@@ -15,7 +19,10 @@ from utils.data_loader import (
     get_data_summary,
     get_participants,
 )
+from utils.organization_data import hydrate_session_state, save_session_state
 
+
+hydrate_session_state("teste_sensorial", ("ts_data",))
 
 st.title("📂 Preparação de Dados — Teste Sensorial")
 
@@ -60,6 +67,7 @@ if mode == "Upload de arquivos":
     if ind_file or per_file:
         data = load_from_uploads(ind_file, per_file, psd_file)
         st.session_state["ts_data"] = data
+        save_session_state("teste_sensorial", ("ts_data",))
 
 else:
     folder = st.text_input(
@@ -71,6 +79,7 @@ else:
     if folder and Path(folder).exists():
         data = load_from_folder(folder)
         st.session_state["ts_data"] = data
+        save_session_state("teste_sensorial", ("ts_data",))
     elif folder:
         st.error("Pasta não encontrada.")
 
