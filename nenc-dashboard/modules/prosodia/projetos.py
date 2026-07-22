@@ -201,19 +201,23 @@ else:
 
                     st.markdown(f"**Estatísticas**: {len(qr_codes)} QR Code(s) cadastrado(s) | {len(participations)} participante(s) inscrito(s)")
 
-                    # Obter números de WhatsApp cadastrados na organização
-                    from utils.organization_data import list_external_resources
-                    org_contacts = list_external_resources("whatsapp_contact")
-                    org_phones = []
-                    for c in org_contacts:
-                        meta = c.get("metadata") or {}
-                        p = meta.get("phone") or c.get("external_id")
-                        if p:
-                            clean_p = "".join(filter(str.isdigit, str(p)))
-                            if clean_p and clean_p not in org_phones:
-                                org_phones.append(clean_p)
+                    # Obter números de WhatsApp cadastrados na entidade Organização
+                    active_org_id = auth.active_organization_id(user)
+                    org_phones = auth.get_organization_whatsapp_numbers(active_org_id)
+                    if not org_phones:
+                        # Fallback para contatos importados caso a organização não tenha cadastrado números em Administração
+                        from utils.organization_data import list_external_resources
+                        org_contacts = list_external_resources("whatsapp_contact")
+                        for c in org_contacts:
+                            meta = c.get("metadata") or {}
+                            p = meta.get("phone") or c.get("external_id")
+                            if p:
+                                clean_p = "".join(filter(str.isdigit, str(p)))
+                                if clean_p and clean_p not in org_phones:
+                                    org_phones.append(clean_p)
                     if not org_phones:
                         org_phones = ["5511975218007", "5516981360051"]
+                        st.caption("💡 *Cadastre os números de WhatsApp oficiais da sua organização na página de **Administração de Usuários**.*")
 
                     default_welcome_text = (
                         "Quero agradecer muito a sua participação. Grave um áudio com o conteúdo que achar importante "
