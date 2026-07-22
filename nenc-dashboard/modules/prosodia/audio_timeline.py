@@ -30,7 +30,7 @@ from utils.prosodia_charts import (
 init_db()
 
 @st.cache_data(show_spinner="Carregando áudio da API...")
-def _load_audio_bytes(api_audio_id: int) -> bytes:
+def _load_audio_bytes(api_audio_id: int, wa_msg_id: str = "") -> bytes:
     from utils.whatsapp_api_client import get_audio_file, is_configured
     if not is_configured():
         raise RuntimeError("WhatsApp API não está configurada.")
@@ -256,7 +256,8 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     audio_html = ""
     if audio_api_id:
         try:
-            audio_bytes = _load_audio_bytes(audio_api_id)
+            wa_msg_id = str(audio.get("whatsapp_message_id") or "")
+            audio_bytes = _load_audio_bytes(audio_api_id, wa_msg_id)
             if audio_bytes:
                 audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
         except Exception as e:
