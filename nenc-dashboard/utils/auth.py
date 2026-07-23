@@ -1124,8 +1124,12 @@ def audit_business_access(
 ) -> None:
     """Audit every cross-organization operation executed by a platform admin."""
 
-    user = require_login(database_path)
-    if not user.is_platform_admin or user.organization_id == organization_id:
+    try:
+        user = current_user(database_path)
+    except Exception:
+        user = None
+
+    if user is None or not getattr(user, "is_platform_admin", False) or user.organization_id == organization_id:
         return
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
