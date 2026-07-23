@@ -152,7 +152,7 @@ def _run_sync_worker(project_id: int, organization_id: int) -> None:
 
             if cand_sid not in local_audios_by_sid:
                 try:
-                    status_info = get_audio_status(a_id)
+                    status_info = get_audio_status(a_id, organization_id=organization_id)
                     status = status_info.get("status")
                     if status == "done" and status_info.get("has_result_json"):
                         audios_to_process.append({
@@ -204,7 +204,7 @@ def _run_sync_worker(project_id: int, organization_id: int) -> None:
                 local_status = local_audio.get("quality_status", "pending")
                 if local_status in ("processing", "pending", "running", "failed"):
                     try:
-                        status_info = get_audio_status(a_id)
+                        status_info = get_audio_status(a_id, organization_id=organization_id)
                         status = status_info.get("status")
                         if status == "done" and status_info.get("has_result_json"):
                             audios_to_process.append({
@@ -258,7 +258,7 @@ def _run_sync_worker(project_id: int, organization_id: int) -> None:
 
             _update_progress(f"Baixando resultados de {session_id}...", idx, total_count)
             try:
-                result_json = get_audio_result(audio_api_id)
+                result_json = get_audio_result(audio_api_id, organization_id=organization_id)
             except Exception as e:
                 logger.warning("Falha ao baixar resultado de %s: %s", session_id, e)
                 continue

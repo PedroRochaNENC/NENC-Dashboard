@@ -118,59 +118,79 @@ st.divider()
 # ------------------------------------------------------------------
 # Sincronização com WhatsApp API (em Segundo Plano)
 # ------------------------------------------------------------------
+# Sincronização WhatsApp (UI em Tempo Real)
+# ------------------------------------------------------------------
 from utils.whatsapp_api_client import is_configured as wa_configured
 from utils.whatsapp_sync import get_sync_job_status, is_sync_running, start_background_sync
 
-sync_status = get_sync_job_status(project_id)
-if sync_status:
-    s_state = sync_status.get("status")
-    s_prog = sync_status.get("progress", "")
-    s_comp = sync_status.get("completed", 0)
-    s_tot = sync_status.get("total", 0)
 
-    if s_state == "running":
-        st.info(f"🔄 **Sincronização em segundo plano em andamento...** ({s_comp}/{s_tot}) — *{s_prog}*")
-    elif s_state == "completed":
-        st.success(f"✅ **{s_prog}**")
-    elif s_state == "failed":
-        st.error(f"❌ **Falha na sincronização:** {sync_status.get('error')}")
+@st.fragment(run_every=2)
+def _render_whatsapp_sync_panel(p_id: int, p_data: dict, current_user: auth.User):
+    running = is_sync_running(p_id)
+    was_running_key = f"_sync_was_running_{p_id}"
+    was_running = st.session_state.get(was_running_key, False)
 
-if wa_configured():
-    campaign_id = project.get("whatsapp_campaign_id")
-    api_project_id = project.get("api_project_id")
+    if was_running and not running:
+        st.session_state[was_running_key] = False
+        st.rerun()
 
-    sync_label = "🔄 Sincronizar com WhatsApp"
-    if api_project_id:
-        sync_label += f" (Projeto API #{api_project_id})"
-    elif campaign_id:
-        sync_label += f" (Campanha #{campaign_id})"
-    else:
-        sync_label += " (associe uma campanha ou projeto API)"
+    if running:
+        st.session_state[was_running_key] = True
 
-    if is_sync_running(project_id):
-        st.button("🔄 Sincronização em Andamento...", disabled=True, key="wa_sync_btn_disabled")
-    else:
-        if st.button(sync_label, type="secondary", key="wa_sync_btn"):
-            active_org_id = auth.active_organization_id(user)
-            if api_project_id:
-                claim_external_resource(
-                    "whatsapp_api_project",
-                    api_project_id,
-                    {"project_id": project_id},
-                )
-            elif campaign_id:
-                claim_external_resource(
-                    "whatsapp_campaign",
-                    campaign_id,
-                    {"project_id": project_id},
-                )
+    sync_status = get_sync_job_status(p_id)
+    if sync_status:
+        s_state = sync_status.get("status")
+        s_prog = sync_status.get("progress", "")
+        s_comp = sync_status.get("completed", 0)
+        s_tot = sync_status.get("total", 0)
 
-            started = start_background_sync(project_id, active_org_id)
-            if started:
-                st.toast("🚀 Sincronização iniciada em segundo plano!")
-                st.rerun()
-            else:
-                st.warning("Já existe uma sincronização em andamento para este projeto.")
+        if s_state == "running":
+            st.info(f"🔄 **Sincronização em segundo plano em andamento...** ({s_comp}/{s_tot}) — *{s_prog}*")
+        elif s_state == "completed":
+            st.success(f"✅ **{s_prog}**")
+        elif s_state == "failed":
+            st.error(f"❌ **Falha na sincronização:** {sync_status.get('error')}")
+
+    if wa_configured():
+        campaign_id = p_data.get("whatsapp_campaign_id")
+        api_project_id = p_data.get("api_project_id")
+
+        sync_label = "🔄 Sincronizar com WhatsApp"
+        if api_project_id:
+            sync_label += f" (Projeto API #{api_project_id})"
+        elif campaign_id:
+            sync_label += f" (Campanha #{campaign_id})"
+        else:
+            sync_label += " (associe uma campanha ou projeto API)"
+
+        if running:
+            st.button("🔄 Sincronização em Andamento...", disabled=True, key="wa_sync_btn_disabled")
+        else:
+            if st.button(sync_label, type="secondary", key="wa_sync_btn"):
+                active_org_id = auth.active_organization_id(current_user)
+                if api_project_id:
+                    claim_external_resource(
+                        "whatsapp_api_project",
+                        api_project_id,
+                        {"project_id": p_id},
+                    )
+                elif campaign_id:
+                    claim_external_resource(
+                        "whatsapp_campaign",
+                        campaign_id,
+                        {"project_id": p_id},
+                    )
+
+                started = start_background_sync(p_id, active_org_id)
+                if started:
+                    st.session_state[was_running_key] = True
+                    st.toast("🚀 Sincronização iniciada em segundo plano!")
+                    st.rerun()
+                else:
+                    st.warning("Já existe uma sincronização em andamento para este projeto.")
+
+
+_render_whatsapp_sync_panel(project_id, project, user)
 
 # ------------------------------------------------------------------
 # Dados

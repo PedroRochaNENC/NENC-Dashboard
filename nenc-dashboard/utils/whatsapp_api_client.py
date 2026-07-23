@@ -450,25 +450,25 @@ def get_all_audios(phone: Optional[str] = None, limit: int = 500, project_id: Op
     return _registered_audios(audios, parent_resource_type, parent_resource_id)
 
 
-def get_audio_status(audio_id: int) -> Dict:
+def get_audio_status(audio_id: int, organization_id: Optional[int] = None) -> Dict:
     """
     Retorna o status de processamento de um áudio.
     Campos relevantes: status, has_result_json, has_transcription
     """
-    _require_owned_resource("whatsapp_audio", audio_id)
+    _require_owned_resource("whatsapp_audio", audio_id, organization_id=organization_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/status")
         resp.raise_for_status()
         return resp.json()
 
 
-def get_audio_result(audio_id: int) -> Dict:
+def get_audio_result(audio_id: int, organization_id: Optional[int] = None) -> Dict:
     """
     Baixa o resultado completo do job mais recente (DevAIce + Whisper).
     A rota GET /audios/{id}/result retorna um JobResponse com result_json
     já parseado como dict pelo validator do Pydantic.
     """
-    _require_owned_resource("whatsapp_audio", audio_id)
+    _require_owned_resource("whatsapp_audio", audio_id, organization_id=organization_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/result")
         resp.raise_for_status()
@@ -480,9 +480,9 @@ def get_audio_result(audio_id: int) -> Dict:
         return result_json or {}
 
 
-def get_audio_transcript(audio_id: int) -> str:
+def get_audio_transcript(audio_id: int, organization_id: Optional[int] = None) -> str:
     """Baixa a transcrição em texto puro de um áudio."""
-    _require_owned_resource("whatsapp_audio", audio_id)
+    _require_owned_resource("whatsapp_audio", audio_id, organization_id=organization_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/transcript")
         resp.raise_for_status()
