@@ -394,9 +394,10 @@ def get_projects() -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def get_project(project_id: int) -> Optional[Dict]:
+def get_project(project_id: int, organization_id: Optional[int] = None) -> Optional[Dict]:
     """Retorna um projeto pelo ID, ou None se não encontrado."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM projects WHERE id = ? AND organization_id = ?",
@@ -494,9 +495,11 @@ def create_audio(
     sincronizado_csv: Optional[bytes] = None,
     whatsapp_message_id: Optional[str] = None,
     qr_code_name: Optional[str] = None,
+    organization_id: Optional[int] = None,
 ) -> int:
     """Salva um áudio com seus arquivos brutos. Retorna o ID gerado."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
         cur = conn.execute(
@@ -512,9 +515,10 @@ def create_audio(
     return audio_id
 
 
-def get_audios(project_id: int) -> List[Dict]:
+def get_audios(project_id: int, organization_id: Optional[int] = None) -> List[Dict]:
     """Retorna todos os áudios de um projeto com status de KB e análise."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -754,9 +758,11 @@ def update_audio_openai_ids(
     audio_id: int,
     file_id_prosodia: Optional[str],
     file_id_transcricao: Optional[str],
+    organization_id: Optional[int] = None,
 ) -> None:
     """Atualiza os IDs de arquivo OpenAI de um áudio."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         result = conn.execute(
             """UPDATE audios
@@ -773,9 +779,11 @@ def update_audio_content(
     prosodia_json: bytes,
     transcricao_csv: bytes,
     sincronizado_csv: bytes,
+    organization_id: Optional[int] = None,
 ) -> None:
     """Atualiza os blobs de conteúdo (prosódia, transcrição, sincronizado) de um áudio."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         result = conn.execute(
             """UPDATE audios
@@ -796,9 +804,11 @@ def save_analysis(
     model: str,
     analysis_text: str,
     citations: Optional[list] = None,
+    organization_id: Optional[int] = None,
 ) -> int:
     """Salva uma análise de IA. Retorna o ID gerado."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
         cur = conn.execute(
@@ -915,9 +925,11 @@ def save_quality_check(
     overall_status: str,
     checks: list,
     coverage: list,
+    organization_id: Optional[int] = None,
 ) -> int:
     """Salva resultado de verificação de qualidade. Retorna o ID gerado."""
-    organization_id = _active_organization_id()
+    if organization_id is None:
+        organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
         cur = conn.execute(
@@ -949,9 +961,9 @@ def get_latest_quality_check(audio_id: int) -> Optional[Dict]:
     return d
 
 
-def get_project_questions(project_id: int) -> List[str]:
+def get_project_questions(project_id: int, organization_id: Optional[int] = None) -> List[str]:
     """Retorna a lista de perguntas do projeto (uma por linha)."""
-    project = get_project(project_id)
+    project = get_project(project_id, organization_id=organization_id)
     if not project:
         return []
     raw = project.get("questions", "") or ""
