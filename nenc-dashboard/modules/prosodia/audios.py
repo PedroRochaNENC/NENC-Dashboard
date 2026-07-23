@@ -199,31 +199,26 @@ if json_files or csv_files or sinc_files:
                 except Exception:
                     pass
 
-            # -- Upload OpenAI KB --
+            # -- Upload OpenAI KB com resiliência a erros 504 / timeout --
             file_id_prosodia = None
             file_id_transcricao = None
             if openai_client:
                 try:
+                    from utils.ai_provider import upload_file_to_vector_store
                     if json_bytes:
-                        fp = openai_client.files.create(
-                            file=(f"Prosodia-{sid}.json", io.BytesIO(json_bytes), "application/json"),
-                            purpose="assistants",
+                        file_id_prosodia = upload_file_to_vector_store(
+                            f"Prosodia-{sid}.json",
+                            json_bytes,
+                            mime_type="application/json",
+                            vector_store_id=vs_id,
                         )
-                        file_id_prosodia = fp.id
-                        if vs_id:
-                            openai_client.vector_stores.files.create(
-                                vector_store_id=vs_id, file_id=fp.id
-                            )
                     if csv_bytes:
-                        fc = openai_client.files.create(
-                            file=(f"Transcricao-{sid}.csv", io.BytesIO(csv_bytes), "text/csv"),
-                            purpose="assistants",
+                        file_id_transcricao = upload_file_to_vector_store(
+                            f"Transcricao-{sid}.csv",
+                            csv_bytes,
+                            mime_type="text/csv",
+                            vector_store_id=vs_id,
                         )
-                        file_id_transcricao = fc.id
-                        if vs_id:
-                            openai_client.vector_stores.files.create(
-                                vector_store_id=vs_id, file_id=fc.id
-                            )
                     update_audio_openai_ids(audio_id, file_id_prosodia, file_id_transcricao)
                 except Exception as e:
                     st.warning(f"[{sid}] Falha no upload para KB: {e}")

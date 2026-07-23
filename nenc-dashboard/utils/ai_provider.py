@@ -24,12 +24,17 @@ _ENV_PATH = next(
 load_dotenv(_ENV_PATH)
 
 
+import io
+import time
+from typing import Optional
+
+
 def get_openai_client() -> OpenAI | None:
     """Return an OpenAI client if the API key is configured, else None."""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key or api_key == "sk-proj-YOUR_KEY_HERE":
         return None
-    return OpenAI(api_key=api_key)
+    return OpenAI(api_key=api_key, max_retries=5, timeout=120.0)
 
 
 def get_vector_store_id() -> str | None:
@@ -60,6 +65,51 @@ def save_prosodia_vector_store_id(vs_id: str) -> None:
     save_organization_vector_store_id("prosodia", vs_id)
 
 
+def upload_file_to_vector_store(
+    filename: str,
+    content_bytes: bytes,
+    mime_type: str = "text/plain",
+    vector_store_id: str | None = None,
+    max_attempts: int = 3,
+) -> str | None:
+    """Upload a file to OpenAI and attach it to a vector store with automatic retry on 504 / timeout errors."""
+    client = get_openai_client()
+    if not client or not content_bytes:
+        return None
+
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            buf = io.BytesIO(content_bytes)
+            uploaded_file = client.files.create(
+                file=(filename, buf, mime_type),
+                purpose="assistants",
+            )
+            if vector_store_id:
+                try:
+                    client.vector_stores.files.create(
+                        vector_store_id=vector_store_id,
+                        file_id=uploaded_file.id,
+                    )
+                except Exception as vs_err:
+                    err_str = str(vs_err)
+                    if attempt < max_attempts and ("504" in err_str or "timeout" in err_str.lower() or "cloudflare" in err_str.lower()):
+                        time.sleep(3 * attempt)
+                        continue
+            return uploaded_file.id
+        except Exception as exc:
+            last_error = exc
+            err_str = str(exc)
+            if attempt < max_attempts and ("504" in err_str or "timeout" in err_str.lower() or "cloudflare" in err_str.lower()):
+                time.sleep(3 * attempt)
+                continue
+            raise exc
+
+    if last_error:
+        raise last_error
+    return None
+
+
 def create_analysis(
     system_prompt: str,
     user_prompt: str,
@@ -67,8 +117,9 @@ def create_analysis(
     vector_store_id: str | None = None,
     temperature: float = 0.5,
     max_tokens: int = 4000,
+    max_attempts: int = 3,
 ) -> dict:
-    """Call OpenAI Responses API with optional file_search.
+    """Call OpenAI Responses API with optional file_search and retries for 504 Gateway Timeouts.
 
     Returns:
         dict with keys:
@@ -87,14 +138,29 @@ def create_analysis(
             "vector_store_ids": [vector_store_id],
         })
 
-    response = client.responses.create(
-        model=model,
-        instructions=system_prompt,
-        input=user_prompt,
-        tools=tools if tools else None,
-        temperature=temperature,
-        max_output_tokens=max_tokens,
-    )
+    last_error = None
+    response = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.responses.create(
+                model=model,
+                instructions=system_prompt,
+                input=user_prompt,
+                tools=tools if tools else None,
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+            break
+        except Exception as exc:
+            last_error = exc
+            err_str = str(exc)
+            if attempt < max_attempts and ("504" in err_str or "timeout" in err_str.lower() or "cloudflare" in err_str.lower()):
+                time.sleep(3 * attempt)
+                continue
+            raise exc
+
+    if response is None and last_error:
+        raise last_error
 
     # Extract text and citations from response
     full_text = ""

@@ -357,31 +357,26 @@ if wa_configured():
                             sincronizado_csv=sinc_bytes,
                         )
 
-                    # -- Upload OpenAI KB --
+                    # -- Upload OpenAI KB com resiliência a erros 504 / timeout --
                     file_id_prosodia = None
                     file_id_transcricao = None
                     if openai_client:
                         try:
+                            from utils.ai_provider import upload_file_to_vector_store
                             if json_bytes:
-                                fp = openai_client.files.create(
-                                    file=(f"Prosodia-{session_id}.json", _io.BytesIO(json_bytes), "application/json"),
-                                    purpose="assistants",
+                                file_id_prosodia = upload_file_to_vector_store(
+                                    f"Prosodia-{session_id}.json",
+                                    json_bytes,
+                                    mime_type="application/json",
+                                    vector_store_id=vs_id,
                                 )
-                                file_id_prosodia = fp.id
-                                if vs_id:
-                                    openai_client.vector_stores.files.create(
-                                        vector_store_id=vs_id, file_id=fp.id
-                                    )
                             if csv_bytes:
-                                fc = openai_client.files.create(
-                                    file=(f"Transcricao-{session_id}.csv", _io.BytesIO(csv_bytes), "text/csv"),
-                                    purpose="assistants",
+                                file_id_transcricao = upload_file_to_vector_store(
+                                    f"Transcricao-{session_id}.csv",
+                                    csv_bytes,
+                                    mime_type="text/csv",
+                                    vector_store_id=vs_id,
                                 )
-                                file_id_transcricao = fc.id
-                                if vs_id:
-                                    openai_client.vector_stores.files.create(
-                                        vector_store_id=vs_id, file_id=fc.id
-                                    )
                             update_audio_openai_ids(audio_id, file_id_prosodia, file_id_transcricao)
                         except Exception as e:
                             st.warning(f"[{session_id}] Falha no upload para KB: {e}")
@@ -803,14 +798,7 @@ else:
                                             f"- Checks OK: {n_pass}\n- Alertas: {n_warn}\n- Problemas: {n_fail}\n"
                                         )
                                         q_name = f"qualidade_entrevista_{selected_audio['session_id']}.md"
-                                        uploaded_q = openai_client.files.create(
-                                            file=(q_name, quality_md.encode("utf-8")),
-                                            purpose="assistants"
-                                        )
-                                        openai_client.vector_stores.files.create(
-                                            vector_store_id=vs_id,
-                                            file_id=uploaded_q.id
-                                        )
+                                        upload_file_to_vector_store(q_name, quality_md.encode("utf-8"), mime_type="text/markdown", vector_store_id=vs_id)
                                     except Exception:
                                         pass
                                 
@@ -856,14 +844,7 @@ else:
                                             f"## Resultado\n\n{result_ai['text']}"
                                         )
                                         a_name = f"analise_ia_{selected_audio['session_id']}.md"
-                                        uploaded_a = openai_client.files.create(
-                                            file=(a_name, analysis_md.encode("utf-8")),
-                                            purpose="assistants"
-                                        )
-                                        openai_client.vector_stores.files.create(
-                                            vector_store_id=vs_id,
-                                            file_id=uploaded_a.id
-                                        )
+                                        upload_file_to_vector_store(a_name, analysis_md.encode("utf-8"), mime_type="text/markdown", vector_store_id=vs_id)
                                     except Exception:
                                         pass
                                 
