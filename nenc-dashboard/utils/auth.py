@@ -1028,7 +1028,9 @@ def authenticate(
     return user, create_session(user.id, database_path=database_path)
 
 
-def can_access_module(user: User, module_key: str) -> bool:
+def can_access_module(user: Optional[User], module_key: str) -> bool:
+    if user is None:
+        return False
     return module_key in MODULE_KEYS and (user.is_admin or module_key in user.modules)
 
 

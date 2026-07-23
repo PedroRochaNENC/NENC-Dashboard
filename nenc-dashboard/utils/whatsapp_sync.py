@@ -123,7 +123,7 @@ def _run_sync_worker(project_id: int, organization_id: int) -> None:
         api_project_id = project.get("api_project_id")
 
         if api_project_id:
-            api_audios_raw = get_project_audios(api_project_id)
+            api_audios_raw = get_project_audios(api_project_id, organization_id=organization_id)
         elif campaign_id:
             contacts = get_campaign_contacts(campaign_id)
             target_phones = {
@@ -245,7 +245,7 @@ def _run_sync_worker(project_id: int, organization_id: int) -> None:
                 pass
 
         openai_client = get_openai_client()
-        vs_id = get_prosodia_vector_store_id()
+        vs_id = get_prosodia_vector_store_id(organization_id=organization_id)
 
         for idx, item in enumerate(audios_to_process):
             api_audio = item["api_audio"]

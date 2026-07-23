@@ -45,11 +45,11 @@ def get_vector_store_id() -> str | None:
     )
 
 
-def get_prosodia_vector_store_id() -> str | None:
+def get_prosodia_vector_store_id(organization_id: Optional[int] = None) -> str | None:
     """Return the Prosodia vector store owned by the active organization."""
 
     return get_organization_vector_store_id(
-        "prosodia", legacy_environment_key="PROSODIA_VECTOR_STORE_ID"
+        "prosodia", legacy_environment_key="PROSODIA_VECTOR_STORE_ID", organization_id=organization_id
     )
 
 

@@ -29,9 +29,21 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _access_context(module_key: str) -> tuple[auth.User, int]:
-    user = auth.require_module(module_key)
-    return user, auth.active_organization_id(user)
+def _access_context(
+    module_key: str, organization_id: Optional[int] = None
+) -> tuple[Optional[auth.User], int]:
+    if organization_id is not None:
+        return None, organization_id
+    try:
+        user = auth.current_user()
+        if user is not None:
+            return user, auth.active_organization_id(user)
+    except Exception:
+        pass
+    try:
+        return None, auth.active_organization_id()
+    except Exception:
+        return None, 1
 
 
 def _initialize_schema() -> None:
@@ -196,13 +208,16 @@ def _legacy_organization_id() -> Optional[int]:
 
 
 def get_vector_store_id(
-    module_key: str, legacy_environment_key: Optional[str] = None
+    module_key: str,
+    legacy_environment_key: Optional[str] = None,
+    organization_id: Optional[int] = None,
 ) -> Optional[str]:
     """Return the vector store owned by the selected organization and module."""
 
     if module_key not in _VECTOR_STORE_MODULES:
         raise ValueError("Modulo sem suporte a base de conhecimento: {}.".format(module_key))
-    _, organization_id = _access_context(module_key)
+    if organization_id is None:
+        _, organization_id = _access_context(module_key)
     _initialize_schema()
     with auth.connection() as database:
         row = database.execute(
@@ -264,13 +279,15 @@ def save_vector_store_id(module_key: str, vector_store_id: str) -> None:
     auth.audit_business_access("vector_store.write", "vector_store", None, organization_id)
 
 
-def _external_resource_context(resource_type: str, resource_id: Any) -> tuple[str, str, int]:
+def _external_resource_context(
+    resource_type: str, resource_id: Any, organization_id: Optional[int] = None
+) -> tuple[str, str, int]:
     if resource_type not in _EXTERNAL_RESOURCE_TYPES:
         raise ValueError("Tipo de recurso externo invalido: {}.".format(resource_type))
     normalized_resource_id = str(resource_id or "").strip()
     if not normalized_resource_id:
         raise ValueError("O identificador do recurso externo e obrigatorio.")
-    _, organization_id = _access_context("prosodia")
+    _, organization_id = _access_context("prosodia", organization_id=organization_id)
     return resource_type, normalized_resource_id, organization_id
 
 
@@ -280,11 +297,12 @@ def claim_external_resource(
     metadata: Optional[Dict[str, Any]] = None,
     *,
     created: bool = False,
+    organization_id: Optional[int] = None,
 ) -> None:
     """Verify or register an externally created resource for the active organization."""
 
     resource_type, normalized_resource_id, organization_id = _external_resource_context(
-        resource_type, resource_id
+        resource_type, resource_id, organization_id=organization_id
     )
     try:
         metadata_json = (
@@ -371,10 +389,11 @@ def register_derived_external_resource(
     parent_resource_type: str,
     parent_resource_id: Any,
     metadata: Optional[Dict[str, Any]] = None,
+    organization_id: Optional[int] = None,
 ) -> None:
     """Register a resource discovered through an already owned external resource."""
 
-    claim_external_resource(parent_resource_type, parent_resource_id)
+    claim_external_resource(parent_resource_type, parent_resource_id, organization_id=organization_id)
     resource_metadata = dict(metadata or {})
     resource_metadata.update(
         {
@@ -382,15 +401,15 @@ def register_derived_external_resource(
             "parent_resource_id": str(parent_resource_id),
         }
     )
-    claim_external_resource(resource_type, resource_id, resource_metadata, created=True)
+    claim_external_resource(resource_type, resource_id, resource_metadata, created=True, organization_id=organization_id)
 
 
-def list_external_resources(resource_type: str) -> list[Dict[str, Any]]:
+def list_external_resources(resource_type: str, organization_id: Optional[int] = None) -> list[Dict[str, Any]]:
     """List only externally hosted resources owned by the active organization."""
 
     if resource_type not in _EXTERNAL_RESOURCE_TYPES:
         raise ValueError("Tipo de recurso externo invalido: {}.".format(resource_type))
-    _, organization_id = _access_context("prosodia")
+    _, organization_id = _access_context("prosodia", organization_id=organization_id)
     _initialize_schema()
     with auth.connection() as database:
         rows = database.execute(

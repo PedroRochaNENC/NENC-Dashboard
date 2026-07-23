@@ -61,12 +61,12 @@ def _owned_contact_ids_by_phone() -> dict[str, str]:
     return contact_ids_by_phone
 
 
-def _require_owned_resource(resource_type: str, resource_id: Any) -> None:
-    claim_external_resource(resource_type, resource_id)
+def _require_owned_resource(resource_type: str, resource_id: Any, organization_id: Optional[int] = None) -> None:
+    claim_external_resource(resource_type, resource_id, organization_id=organization_id)
 
 
 def _register_audio_from_parent(
-    audio: Dict, parent_resource_type: str, parent_resource_id: Any
+    audio: Dict, parent_resource_type: str, parent_resource_id: Any, organization_id: Optional[int] = None
 ) -> Optional[Dict]:
     audio_id = audio.get("id")
     if audio_id is None:
@@ -81,6 +81,7 @@ def _register_audio_from_parent(
                 "phone": _normalize_phone(audio.get("contact_phone")),
                 "whatsapp_message_id": str(audio.get("whatsapp_message_id") or ""),
             },
+            organization_id=organization_id,
         )
     except auth.AuthorizationError:
         return None
@@ -88,12 +89,12 @@ def _register_audio_from_parent(
 
 
 def _registered_audios(
-    audios: List[Dict], parent_resource_type: str, parent_resource_id: Any
+    audios: List[Dict], parent_resource_type: str, parent_resource_id: Any, organization_id: Optional[int] = None
 ) -> List[Dict]:
     registered_audios = []
     for audio in audios:
         registered_audio = _register_audio_from_parent(
-            audio, parent_resource_type, parent_resource_id
+            audio, parent_resource_type, parent_resource_id, organization_id=organization_id
         )
         if registered_audio is not None:
             registered_audios.append(registered_audio)
@@ -670,14 +671,14 @@ def get_project_participations(project_id: int) -> List[Dict]:
 
 
 # Sub-rotas de projeto
-def get_project_audios(project_id: int) -> List[Dict]:
+def get_project_audios(project_id: int, organization_id: Optional[int] = None) -> List[Dict]:
     """Lista os áudios associados a um projeto na API."""
-    _require_owned_resource("whatsapp_api_project", project_id)
+    _require_owned_resource("whatsapp_api_project", project_id, organization_id=organization_id)
     with _client() as c:
         resp = c.get(f"/projects/{project_id}/audios")
         resp.raise_for_status()
         audios = resp.json()
-    return _registered_audios(audios, "whatsapp_api_project", project_id)
+    return _registered_audios(audios, "whatsapp_api_project", project_id, organization_id=organization_id)
 
 
 def upload_audio_to_project(project_id: int, file: Any, label: Optional[str] = None) -> Dict:
