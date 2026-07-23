@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 from utils import auth
 
-auth.require_module("prosodia")
+user = auth.require_module("prosodia")
 
 from utils.prosodia_db import (
     init_db,
