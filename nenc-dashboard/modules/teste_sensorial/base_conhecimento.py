@@ -1,36 +1,36 @@
 """
-Jornada de Compra — Base de Conhecimento.
+Teste Sensorial — Base de Conhecimento.
 
-Gerenciamento do vector store OpenAI por projeto: upload de documentos,
-listagem, exclusão e teste de busca RAG.
+Gerenciamento do vector store OpenAI por projeto: upload de documentos de produto,
+listagem, exclusão e busca RAG de laudos e pesquisas sensoriais.
 """
 
 import streamlit as st
 from utils import auth
 
-auth.require_module("jornada_compra")
+auth.require_module("teste_sensorial")
 
-from utils import jornada_db
+from utils import teste_sensorial_db
 from utils.ai_provider import get_openai_client
 
-jornada_db.init_db()
+teste_sensorial_db.init_db()
 
-st.title("📚 Base de Conhecimento — Jornada de Compra")
+st.title("📚 Base de Conhecimento — Teste Sensorial")
 
-project_id = st.session_state.get("jc_project_id")
+project_id = st.session_state.get("ts_project_id")
 
 if not project_id:
     st.warning("⚠️ Nenhum projeto selecionado. Selecione ou crie um projeto primeiro.")
-    if st.button("🎙️ Ir para Projetos", type="primary"):
-        st.switch_page("modules/jornada_compra/projetos.py")
+    if st.button("🧪 Ir para Projetos", type="primary"):
+        st.switch_page("modules/teste_sensorial/projetos.py")
     st.stop()
 
-project = jornada_db.get_project(project_id)
+project = teste_sensorial_db.get_project(project_id)
 if not project:
     st.error("Projeto não encontrado.")
     st.stop()
 
-st.caption(f"Projeto Ativo: **{project['name']}**")
+st.caption(f"Projeto Ativo: **{project['name']}** | Produto: **{project.get('produto_estimulo') or 'N/A'}**")
 
 client = get_openai_client()
 
@@ -42,7 +42,7 @@ if client is None:
     st.stop()
 
 # ==================================================================
-# Seção 1: Configuração do Vector Store do Projeto
+# Seção 1: Configuração do Vector Store
 # ==================================================================
 st.subheader("⚙️ Vector Store do Projeto")
 
@@ -51,12 +51,12 @@ vs_id = project.get("vector_store_id")
 if vs_id:
     st.success(f"Vector Store ativo para o projeto: `{vs_id}`")
 else:
-    st.warning("Este projeto ainda não possui um Vector Store para busca documental RAG.")
+    st.warning("Este projeto ainda não possui um Vector Store para busca RAG.")
     if st.button("➕ Criar Vector Store para este Projeto", type="primary"):
         with st.spinner("Criando vector store..."):
             try:
-                vs = client.vector_stores.create(name=f"JC - {project['name']}")
-                jornada_db.update_project(project_id, vector_store_id=vs.id)
+                vs = client.vector_stores.create(name=f"TS - {project['name']}")
+                teste_sensorial_db.update_project(project_id, vector_store_id=vs.id)
                 st.success(f"Vector Store criado com sucesso: `{vs.id}`")
                 st.rerun()
             except Exception as e:
@@ -67,13 +67,13 @@ else:
 # Seção 2: Upload de Documentos
 # ==================================================================
 st.divider()
-st.subheader("📤 Upload de Documentos do Projeto")
+st.subheader("📤 Upload de Documentos de Produto / Laudos")
 
 uploaded_files = st.file_uploader(
-    "Selecione arquivos para indexar na base do projeto",
+    "Selecione laudos sensoriais, pesquisas ou fichas técnicas",
     type=["pdf", "pptx", "docx", "txt", "csv", "md"],
     accept_multiple_files=True,
-    key="jc_kb_upload",
+    key="ts_kb_upload",
 )
 
 if uploaded_files:
@@ -136,7 +136,7 @@ if file_list:
                 st.error(status)
 
         with col_action:
-            if st.button("🗑️", key=f"del_jc_vs_{vf.id}", help=f"Remover {filename}"):
+            if st.button("🗑️", key=f"del_ts_vs_{vf.id}", help=f"Remover {filename}"):
                 try:
                     client.vector_stores.files.delete(
                         vector_store_id=vs_id,
@@ -157,11 +157,11 @@ st.subheader("🔍 Testar Busca RAG")
 
 test_query = st.text_input(
     "Digite uma pergunta para consultar na base do projeto",
-    placeholder="Ex: quais marcas tiveram maior tempo de fixação?",
-    key="jc_kb_test_query",
+    placeholder="Ex: Qual foi a resposta de valência emocional para a fragrância X?",
+    key="ts_kb_test_query",
 )
 
-if test_query and st.button("Buscar", key="btn_jc_kb_search"):
+if test_query and st.button("Buscar", key="btn_ts_kb_search"):
     with st.spinner("Consultando base de conhecimento..."):
         try:
             response = client.responses.create(
@@ -193,8 +193,8 @@ col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
     if st.button("⬅️ Voltar aos Dados", use_container_width=True):
-        st.switch_page("modules/jornada_compra/preparacao.py")
+        st.switch_page("modules/teste_sensorial/preparacao.py")
 
 with col_nav2:
     if st.button("Avançar para Análise ➡️", use_container_width=True, type="primary"):
-        st.switch_page("modules/jornada_compra/analise.py")
+        st.switch_page("modules/teste_sensorial/analise.py")

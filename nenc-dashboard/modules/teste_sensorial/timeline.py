@@ -9,6 +9,7 @@ auth.require_module("teste_sensorial")
 
 import pandas as pd
 
+from utils import teste_sensorial_db
 from utils.data_loader import get_participants, get_etapas
 from utils.resampler import (
     build_unified_timeline,
@@ -16,7 +17,8 @@ from utils.resampler import (
     get_etapa_boundaries,
 )
 from utils.charts import create_synchronized_timeline, INDICATOR_COLORS
-from utils.organization_data import hydrate_session_state
+
+teste_sensorial_db.init_db()
 
 AVAILABLE_INDICATORS = [
     "atencao",
@@ -31,18 +33,33 @@ AVAILABLE_INDICATORS = [
 
 DEFAULT_ON = {"atencao", "WTP", "assimetria"}
 
+st.title("📊 Timeline Sincronizada — Teste Sensorial")
 
-hydrate_session_state("teste_sensorial", ("ts_data",))
+project_id = st.session_state.get("ts_project_id")
 
-st.title("📊 Timeline Sincronizada")
+if not project_id:
+    st.warning("⚠️ Nenhum projeto está selecionado.")
+    if st.button("🧪 Ir para Projetos", type="primary"):
+        st.switch_page("modules/teste_sensorial/projetos.py")
+    st.stop()
 
-data = st.session_state.get("ts_data", {})
+project = teste_sensorial_db.get_project(project_id)
+if not project:
+    st.error("Projeto não encontrado.")
+    st.stop()
 
-if not data or "indicadores" not in data:
-    st.warning(
-        "⚠️ Nenhum dado carregado. "
-        "Volte à página de Preparação de Dados e carregue os dados."
-    )
+st.caption(f"Projeto Ativo: **{project['name']}**")
+
+# Carregar dados do projeto
+data = st.session_state.get("ts_data")
+if not data or "indicadores" not in data or data["indicadores"].empty:
+    data = teste_sensorial_db.get_dataset(project_id)
+    st.session_state["ts_data"] = data
+
+if not data or "indicadores" not in data or data["indicadores"].empty:
+    st.warning("⚠️ Nenhum dado de indicadores EEG carregado para este projeto.")
+    if st.button("📋 Ir para Dados do Projeto", type="primary"):
+        st.switch_page("modules/teste_sensorial/preparacao.py")
     st.stop()
 
 indicadores: pd.DataFrame = data["indicadores"]
@@ -58,106 +75,48 @@ with st.sidebar:
 
     view_mode = st.radio("Visualização", ["Individual", "Média geral"])
 
-    selected_participant = None
     if view_mode == "Individual":
-        if not participants:
-            st.warning("Nenhum participante encontrado.")
-            st.stop()
-        selected_participant = st.selectbox(
-            "Participante", participants, index=0
-        )
-
-    st.divider()
-
-    st.subheader("Etapas")
-    all_etapas = get_etapas(data, filename=selected_participant)
-    if all_etapas:
-        selected_etapas = st.multiselect(
-            "Etapas para análise",
-            options=all_etapas,
-            default=all_etapas,
-            key="etapas_timeline",
-        )
+        selected_participant = st.selectbox("Participante", participants)
     else:
-        selected_etapas = []
-
-    st.divider()
+        selected_participant = None
 
     st.subheader("Indicadores")
-    selected_indicators: list = []
+    selected_indicators = []
     for ind in AVAILABLE_INDICATORS:
         if ind in indicadores.columns:
-            checked = st.checkbox(
-                ind,
-                value=(ind in DEFAULT_ON),
-                key=f"ind_{ind}",
-            )
-            if checked:
+            default_val = ind in DEFAULT_ON
+            if st.checkbox(ind, value=default_val, key=f"ts_check_{ind}"):
                 selected_indicators.append(ind)
 
-    st.divider()
-
-    use_zscore = st.checkbox("Usar Z-Scores (periféricos)", value=False)
+    perif_indicators = []
+    if not perifericos.empty:
+        st.subheader("Periféricos")
+        possible_perif = [c for c in perifericos.columns if c not in ("participante", "tempo", "etapa")]
+        for p_col in possible_perif:
+            if st.checkbox(p_col, value=False, key=f"ts_check_perif_{p_col}"):
+                perif_indicators.append(p_col)
 
 # ------------------------------------------------------------------
-# Filtrar etapas selecionadas
+# Construção do gráfico
 # ------------------------------------------------------------------
-if selected_etapas:
-    indicadores = indicadores[indicadores["Etapa"].isin(selected_etapas)]
-    if not perifericos.empty and "Etapa" in perifericos.columns:
-        perifericos = perifericos[perifericos["Etapa"].isin(selected_etapas)]
+if not selected_indicators and not perif_indicators:
+    st.info("Selecione pelo menos um indicador na barra lateral para visualizar o gráfico.")
 else:
-    st.warning("Selecione pelo menos uma Etapa.")
-    st.stop()
-
-# ------------------------------------------------------------------
-# Build timeline
-# ------------------------------------------------------------------
-if view_mode == "Individual" and selected_participant:
-    merged = build_unified_timeline(
-        indicadores, perifericos, filename=selected_participant
-    )
-    title = f"Timeline — {selected_participant}"
-else:
-    avg_ind, avg_per = compute_participant_average(indicadores, perifericos)
-    merged = build_unified_timeline(
-        avg_ind, avg_per, filename="Média Geral"
-    )
-    title = "Timeline — Média Geral"
-
-if merged.empty:
-    st.warning("Sem dados para o participante/modo selecionado.")
-    st.stop()
-
-boundaries = get_etapa_boundaries(merged)
-
-# ------------------------------------------------------------------
-# Render chart
-# ------------------------------------------------------------------
-fig = create_synchronized_timeline(
-    merged=merged,
-    boundaries=boundaries,
-    selected_indicators=selected_indicators,
-    use_zscore=use_zscore,
-    title=title,
-)
-
-st.plotly_chart(fig, width='stretch')
-
-# ------------------------------------------------------------------
-# Resumo estatístico
-# ------------------------------------------------------------------
-with st.expander("📋 Resumo estatístico por Etapa"):
-    skip = {
-        "filename", "Etapa", "Codigo", "Tempo",
-        "Tempo_global", "Etapa_inicio", "Etapa_fim",
-    }
-    metric_cols = [c for c in merged.columns if c not in skip]
-    if metric_cols:
-        summary = (
-            merged
-            .groupby("Etapa")[metric_cols]
-            .agg(["mean", "std"])
-            .round(4)
+    if view_mode == "Individual" and selected_participant:
+        part_ind = indicadores[indicadores["participante"] == selected_participant]
+        part_per = (
+            perifericos[perifericos["participante"] == selected_participant]
+            if not perifericos.empty and "participante" in perifericos.columns
+            else pd.DataFrame()
         )
-        st.dataframe(summary, width='stretch')
+        timeline_df = build_unified_timeline(part_ind, part_per)
+        title = f"Timeline — {selected_participant}"
+    else:
+        timeline_df = compute_participant_average(indicadores, perifericos)
+        title = "Timeline — Média Geral de Todos os Participantes"
+
+    boundaries = get_etapa_boundaries(timeline_df)
+
+    all_selected = selected_indicators + perif_indicators
+    fig = create_synchronized_timeline(timeline_df, selected_indicators=all_selected, etapa_boundaries=boundaries, title=title)
+    st.plotly_chart(fig, use_container_width=True)
