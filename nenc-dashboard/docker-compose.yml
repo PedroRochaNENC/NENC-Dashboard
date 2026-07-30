@@ -16,12 +16,14 @@ services:
     environment:
       # URL interna da API no container Docker
       - WHATSAPP_API_URL=http://nenc-whatsapp-api:8000
+      # Caminho do banco SQLite montado via volume persistente
+      - NENC_DB_PATH=/app/data/prosodia.db
     expose:
       - "8501"
     ports:
       - "8501:8501"
     volumes:
-      - ./prosodia.db:/app/prosodia.db
+      - ./data:/app/data
     networks:
       - nenc-network
 
