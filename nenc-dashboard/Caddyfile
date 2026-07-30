@@ -1,0 +1,13 @@
+# ============================================================
+# Configuração do Caddy - Reverse Proxy com SSL Automático
+# ============================================================
+
+# Dashboard NENC
+insights.nenc.in {
+    reverse_proxy nenc-dashboard:8501
+}
+
+# API WhatsApp Prosodia
+whatsapp-api.nenc.in {
+    reverse_proxy nenc-whatsapp-api:8000
+}

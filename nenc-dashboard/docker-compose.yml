@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # ------------------------------------------------------------
+  # NENC-Dashboard (Streamlit)
+  # ------------------------------------------------------------
+  nenc-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nenc-dashboard
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # URL interna da API no container Docker
+      - WHATSAPP_API_URL=http://nenc-whatsapp-api:8000
+    expose:
+      - "8501"
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./prosodia.db:/app/prosodia.db
+    networks:
+      - nenc-network
+
+  # ------------------------------------------------------------
+  # NencProsodiaWhatsapp-API (FastAPI)
+  # ------------------------------------------------------------
+  nenc-whatsapp-api:
+    build:
+      context: ../whatsapp-api
+      dockerfile: Dockerfile
+    container_name: nenc-whatsapp-api
+    restart: always
+    env_file:
+      - ../whatsapp-api/.env
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../whatsapp-api/data:/app/data
+    networks:
+      - nenc-network
+
+  # ------------------------------------------------------------
+  # Reverse Proxy & SSL Automático (Caddy)
+  # ------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: nenc-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nenc-dashboard
+      - nenc-whatsapp-api
+    networks:
+      - nenc-network
+
+networks:
+  nenc-network:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
