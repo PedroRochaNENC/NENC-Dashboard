@@ -8,6 +8,9 @@ services:
       dockerfile: Dockerfile
     container_name: nenc-dashboard
     restart: always
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     env_file:
       - .env
     environment:
@@ -31,6 +34,9 @@ services:
       dockerfile: Dockerfile
     container_name: nenc-whatsapp-api
     restart: always
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     env_file:
       - ../../whatsapp-api/.env
     expose:
@@ -49,6 +55,9 @@ services:
     image: caddy:2-alpine
     container_name: nenc-caddy
     restart: always
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "80:80"
       - "443:443"
