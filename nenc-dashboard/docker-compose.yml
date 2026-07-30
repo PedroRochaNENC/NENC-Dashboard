@@ -29,18 +29,18 @@ services:
   # ------------------------------------------------------------
   nenc-whatsapp-api:
     build:
-      context: ../whatsapp-api
+      context: ../../whatsapp-api
       dockerfile: Dockerfile
     container_name: nenc-whatsapp-api
     restart: always
     env_file:
-      - ../whatsapp-api/.env
+      - ../../whatsapp-api/.env
     expose:
       - "8000"
     ports:
       - "8000:8000"
     volumes:
-      - ../whatsapp-api/data:/app/data
+      - ../../whatsapp-api/data:/app/data
     networks:
       - nenc-network
 
