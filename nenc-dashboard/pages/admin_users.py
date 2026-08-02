@@ -33,9 +33,9 @@ def _user_label(user: auth.User) -> str:
     return "{} ({}, {})".format(user.name, user.email, state)
 
 
-tabs = st.tabs(["Usuarios", "Organizacao"] if actor.is_admin else ["Usuarios"])
+tabs = st.tabs(["Usuarios", "Organizacoes"] if actor.is_platform_admin else ["Usuarios"])
 users_tab = tabs[0]
-organizations_tab = tabs[1] if actor.is_admin else None
+organizations_tab = tabs[1] if actor.is_platform_admin else None
 
 with users_tab:
     search = st.text_input("Buscar usuario", placeholder="Nome ou e-mail")
@@ -187,45 +187,32 @@ with users_tab:
                     st.success("Usuario removido.")
                     st.rerun()
 
-if actor.is_admin and organizations_tab:
+if actor.is_platform_admin:
     with organizations_tab:
         organization_list, organization_names = _organization_options(True)
         st.dataframe(
             [
-                {
-                    "Nome": organization.name,
-                    "Ativa": organization.is_active,
-                    "Telefones WhatsApp": ", ".join(organization.whatsapp_numbers) if organization.whatsapp_numbers else "(Nenhum cadastrado)",
-                }
+                {"Nome": organization.name, "Ativa": organization.is_active}
                 for organization in organization_list
             ],
             hide_index=True,
             use_container_width=True,
         )
-
-        if actor.is_platform_admin:
-            with st.expander("➕ Criar Nova Organizacao", expanded=False):
-                with st.form("create-organization"):
-                    organization_name = st.text_input("Nome da organizacao *")
-                    org_phones_input = st.text_input(
-                        "Numeros de WhatsApp da Organizacao (separados por virgula)",
-                        placeholder="Ex: 5511975218007, 5516981360051",
-                        help="Numeros de atendimento oficiais da organizacao que serao exibidos na selecao de QR Codes.",
-                    )
-                    created = st.form_submit_button("Criar organizacao", type="primary")
-                if created:
-                    try:
-                        raw_list = [p.strip() for p in org_phones_input.split(",") if p.strip()]
-                        auth.create_organization(organization_name, whatsapp_numbers=raw_list, actor=actor)
-                    except (auth.AuthorizationError, ValueError) as error:
-                        st.error(str(error))
-                    else:
-                        st.success("Organizacao criada.")
-                        st.rerun()
+        with st.form("create-organization"):
+            organization_name = st.text_input("Nome da organizacao")
+            created = st.form_submit_button("Criar organizacao", type="primary")
+        if created:
+            try:
+                auth.create_organization(organization_name, actor=actor)
+            except (auth.AuthorizationError, ValueError) as error:
+                st.error(str(error))
+            else:
+                st.success("Organizacao criada.")
+                st.rerun()
 
         if organization_list:
             managed_organization_id = st.selectbox(
-                "Gerenciar organizacao",
+                "Alterar organizacao",
                 [organization.id for organization in organization_list],
                 format_func=lambda value: organization_names[value],
             )
@@ -234,37 +221,16 @@ if actor.is_admin and organizations_tab:
                 for organization in organization_list
                 if organization.id == managed_organization_id
             )
-            with st.form("edit-organization-{}".format(managed_organization.id)):
-                edited_org_name = st.text_input("Nome da organizacao", value=managed_organization.name, disabled=not actor.is_platform_admin)
-                current_phones_str = ", ".join(managed_organization.whatsapp_numbers)
-                edited_org_phones = st.text_input(
-                    "Numeros de WhatsApp da Organizacao (separados por virgula)",
-                    value=current_phones_str,
-                    help="Lista de numeros de atendimento oficiais da organizacao disponiveis para os QR Codes.",
-                )
-                if actor.is_platform_admin:
-                    desired_active = st.checkbox(
-                        "Organizacao ativa",
-                        value=managed_organization.is_active,
-                        key="organization-active-{}".format(managed_organization.id),
-                    )
-                else:
-                    desired_active = managed_organization.is_active
-
-                saved_org = st.form_submit_button("Salvar dados da organizacao", type="primary")
-
-            if saved_org:
+            desired_active = st.checkbox(
+                "Organizacao ativa",
+                value=managed_organization.is_active,
+                key="organization-active-{}".format(managed_organization.id),
+            )
+            if st.button("Salvar estado da organizacao", key="save-organization-state"):
                 try:
-                    raw_list = [p.strip() for p in edited_org_phones.split(",") if p.strip()]
-                    auth.update_organization(
-                        actor,
-                        managed_organization.id,
-                        name=edited_org_name if actor.is_platform_admin else None,
-                        is_active=desired_active if actor.is_platform_admin else None,
-                        whatsapp_numbers=raw_list,
-                    )
+                    auth.set_organization_active(actor, managed_organization.id, desired_active)
                 except (auth.AuthorizationError, ValueError) as error:
                     st.error(str(error))
                 else:
-                    st.success("Dados da organizacao atualizados com sucesso.")
+                    st.success("Estado da organizacao atualizado.")
                     st.rerun()

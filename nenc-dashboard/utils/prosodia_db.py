@@ -290,8 +290,6 @@ def init_db() -> None:
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
             conn.execute("ALTER TABLE audios ADD COLUMN whatsapp_message_id TEXT")
-        if "qr_code_name" not in audio_cols:
-            conn.execute("ALTER TABLE audios ADD COLUMN qr_code_name TEXT")
 
         for table_name in (
             "projects",
@@ -394,10 +392,9 @@ def get_projects() -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def get_project(project_id: int, organization_id: Optional[int] = None) -> Optional[Dict]:
+def get_project(project_id: int) -> Optional[Dict]:
     """Retorna um projeto pelo ID, ou None se não encontrado."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM projects WHERE id = ? AND organization_id = ?",
@@ -459,18 +456,6 @@ def update_project(
         _audit("prosodia.project.update", "project", project_id, organization_id)
 
 
-def update_project_api_id(project_id: int, api_project_id: Optional[int]) -> None:
-    """Atualiza apenas o id da API vinculado ao projeto local."""
-    _claim_external_project_resources(None, api_project_id)
-    organization_id = _active_organization_id()
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE projects SET api_project_id=? WHERE id=? AND organization_id=?",
-            (api_project_id, project_id, organization_id),
-        )
-    _audit("prosodia.project.update_api_id", "project", project_id, organization_id)
-
-
 def delete_project(project_id: int) -> None:
     """Remove projeto (e em cascata: áudios, análises, quality_checks)."""
     organization_id = _active_organization_id()
@@ -494,31 +479,27 @@ def create_audio(
     transcricao_csv: Optional[bytes] = None,
     sincronizado_csv: Optional[bytes] = None,
     whatsapp_message_id: Optional[str] = None,
-    qr_code_name: Optional[str] = None,
-    organization_id: Optional[int] = None,
 ) -> int:
     """Salva um áudio com seus arquivos brutos. Retorna o ID gerado."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
         cur = conn.execute(
             """INSERT INTO audios
                (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-                whatsapp_message_id, qr_code_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                whatsapp_message_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-             whatsapp_message_id, qr_code_name),
+             whatsapp_message_id),
         )
         audio_id = cur.lastrowid
     _audit("prosodia.audio.create", "audio", audio_id, organization_id)
     return audio_id
 
 
-def get_audios(project_id: int, organization_id: Optional[int] = None) -> List[Dict]:
+def get_audios(project_id: int) -> List[Dict]:
     """Retorna todos os áudios de um projeto com status de KB e análise."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -645,7 +626,6 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                 a.project_id,
                 a.session_id,
                 a.created_at,
-                a.qr_code_name,
                 a.prosodia_json,
                 a.transcricao_csv,
                 a.sincronizado_csv,
@@ -758,11 +738,9 @@ def update_audio_openai_ids(
     audio_id: int,
     file_id_prosodia: Optional[str],
     file_id_transcricao: Optional[str],
-    organization_id: Optional[int] = None,
 ) -> None:
     """Atualiza os IDs de arquivo OpenAI de um áudio."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         result = conn.execute(
             """UPDATE audios
@@ -779,11 +757,9 @@ def update_audio_content(
     prosodia_json: bytes,
     transcricao_csv: bytes,
     sincronizado_csv: bytes,
-    organization_id: Optional[int] = None,
 ) -> None:
     """Atualiza os blobs de conteúdo (prosódia, transcrição, sincronizado) de um áudio."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         result = conn.execute(
             """UPDATE audios
@@ -804,11 +780,9 @@ def save_analysis(
     model: str,
     analysis_text: str,
     citations: Optional[list] = None,
-    organization_id: Optional[int] = None,
 ) -> int:
     """Salva uma análise de IA. Retorna o ID gerado."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
         cur = conn.execute(
@@ -925,11 +899,9 @@ def save_quality_check(
     overall_status: str,
     checks: list,
     coverage: list,
-    organization_id: Optional[int] = None,
 ) -> int:
     """Salva resultado de verificação de qualidade. Retorna o ID gerado."""
-    if organization_id is None:
-        organization_id = _active_organization_id()
+    organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
         cur = conn.execute(
@@ -961,9 +933,9 @@ def get_latest_quality_check(audio_id: int) -> Optional[Dict]:
     return d
 
 
-def get_project_questions(project_id: int, organization_id: Optional[int] = None) -> List[str]:
+def get_project_questions(project_id: int) -> List[str]:
     """Retorna a lista de perguntas do projeto (uma por linha)."""
-    project = get_project(project_id, organization_id=organization_id)
+    project = get_project(project_id)
     if not project:
         return []
     raw = project.get("questions", "") or ""

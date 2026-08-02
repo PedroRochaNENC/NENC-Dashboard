@@ -30,7 +30,7 @@ from utils.prosodia_charts import (
 init_db()
 
 @st.cache_data(show_spinner="Carregando áudio da API...")
-def _load_audio_bytes(api_audio_id: int, wa_msg_id: str = "") -> bytes:
+def _load_audio_bytes(api_audio_id: int) -> bytes:
     from utils.whatsapp_api_client import get_audio_file, is_configured
     if not is_configured():
         raise RuntimeError("WhatsApp API não está configurada.")
@@ -252,24 +252,48 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
             audio_api_id = None
 
     # Obter áudio da API
-    audio_b64 = ""
     audio_html = ""
     if audio_api_id:
-        try:
-            wa_msg_id = str(audio.get("whatsapp_message_id") or "")
-            audio_bytes = _load_audio_bytes(audio_api_id, wa_msg_id)
-            if audio_bytes:
-                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-        except Exception as e:
-            st.warning(f"Não foi possível carregar o áudio da API: {e}")
+        import os
+        import threading
 
-        audio_html = """
-        <div id="audio-loading-placeholder" style="padding: 12px; background: #21262d; border-radius: 8px; margin-bottom: 15px; color: #8b949e; text-align: center; display: none;">
-          <span>Carregando áudio...</span>
+        # Certificar que o diretório static existe
+        static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
+        os.makedirs(static_dir, exist_ok=True)
+        audio_filename = f"audio_{audio_id}.wav"
+        audio_filepath = os.path.join(static_dir, audio_filename)
+
+        # Se o arquivo não existir localmente no static, iniciar download em background
+        if not os.path.exists(audio_filepath):
+            if f"audio_loading_{audio_id}" not in st.session_state:
+                st.session_state[f"audio_loading_{audio_id}"] = False
+
+            if not st.session_state[f"audio_loading_{audio_id}"]:
+                st.session_state[f"audio_loading_{audio_id}"] = True
+
+                def download_bg():
+                    try:
+                        audio_bytes = _load_audio_bytes(audio_api_id)
+                        with open(audio_filepath, "wb") as f:
+                            f.write(audio_bytes)
+                    except Exception:
+                        pass
+                    finally:
+                        st.session_state[f"audio_loading_{audio_id}"] = False
+
+                threading.Thread(target=download_bg).start()
+
+        audio_html = f"""
+        <div id="audio-loading-placeholder" style="padding: 12px; background: #21262d; border-radius: 8px; margin-bottom: 15px; color: #8b949e; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
+          <span class="spinner" style="width: 16px; height: 16px; border: 2px solid #8b949e; border-top-color: transparent; border-radius: 50%; display: inline-block; animation: spin 1s linear infinite;"></span>
+          <span>Carregando áudio da API...</span>
         </div>
-        <audio id="audio-player" controls style="width: 100%; margin-bottom: 15px; border-radius: 8px;">
+        <audio id="audio-player" controls style="width: 100%; margin-bottom: 15px; border-radius: 8px; display: none;">
           <source src="" type="audio/wav">
         </audio>
+        <style>
+          @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+        </style>
         """
     else:
         audio_html = '<div style="padding: 10px; background: #262730; border-radius: 8px; margin-bottom: 15px; color: #808495; text-align: center;">Áudio disponível apenas para sincronização WhatsApp API (manual upload)</div>'
@@ -675,50 +699,71 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
             // Background audio loading and retry logic
             if (audio && audio.id === 'audio-player') {
                 const placeholder = document.getElementById('audio-loading-placeholder');
-                const audioB64 = "__AUDIO_B64__";
-                if (audioB64 && audioB64.length > 0) {
-                    const audioUrl = "data:audio/wav;base64," + audioB64;
-                    audio.src = audioUrl;
-                    audio.style.display = 'block';
-                    if (placeholder) placeholder.style.display = 'none';
+                const audioId = __AUDIO_ID__;
+                const audioUrl = "/app/static/audio_" + audioId + ".wav";
+                
+                let retries = 0;
+                const maxRetries = 60; // 2 minutos
+                
+                function tryLoadAudio() {
+                    const tempAudio = new Audio();
+                    tempAudio.src = audioUrl;
+                    
+                    tempAudio.addEventListener('canplaythrough', () => {
+                        audio.src = audioUrl;
+                        audio.style.display = 'block';
+                        if (placeholder) placeholder.style.display = 'none';
+                        
+                        // Set up timeupdate listener
+                        audio.addEventListener('timeupdate', () => {
+                            updatePlayback(audio.currentTime);
+                        });
+                        
+                        // Apply focus seek logic once loaded
+                        if (focusSeconds > 0) {
+                            audio.currentTime = focusSeconds;
+                            setTimeout(() => {
+                                let activeTurn = null;
+                                turns.forEach(turn => {
+                                    const start = parseFloat(turn.getAttribute('data-seconds'));
+                                    const end = parseFloat(turn.getAttribute('data-end'));
 
-                    audio.addEventListener('timeupdate', () => {
-                        updatePlayback(audio.currentTime);
-                    });
-
-                    if (focusSeconds > 0) {
-                        audio.currentTime = focusSeconds;
-                        setTimeout(() => {
-                            let activeTurn = null;
-                            turns.forEach(turn => {
-                                const start = parseFloat(turn.getAttribute('data-seconds'));
-                                const end = parseFloat(turn.getAttribute('data-end'));
-
-                                if (focusSeconds >= start && focusSeconds < end) {
-                                    turn.classList.add('active');
-                                    const spkColor = turn.getAttribute('data-color');
-                                    turn.style.borderLeftColor = spkColor;
-                                    activeTurn = turn;
-                                } else {
-                                    turn.classList.remove('active');
-                                    turn.style.borderLeftColor = 'transparent';
-                                }
-                            });
-
-                            if (activeTurn) {
-                                activeTurn.scrollIntoView({
-                                    behavior: 'auto',
-                                    block: 'center'
+                                    if (focusSeconds >= start && focusSeconds < end) {
+                                        turn.classList.add('active');
+                                        const spkColor = turn.getAttribute('data-color');
+                                        turn.style.borderLeftColor = spkColor;
+                                        activeTurn = turn;
+                                    } else {
+                                        turn.classList.remove('active');
+                                        turn.style.borderLeftColor = 'transparent';
+                                    }
                                 });
-                                activeTurn.classList.add('scrolled');
+
+                                if (activeTurn) {
+                                    activeTurn.scrollIntoView({
+                                        behavior: 'auto',
+                                        block: 'center'
+                                    });
+                                    activeTurn.classList.add('scrolled');
+                                }
+                                audio.play().catch(e => console.log('Autoplay blocked:', e));
+                            }, 200);
+                        }
+                    });
+                    
+                    tempAudio.addEventListener('error', () => {
+                        if (retries < maxRetries) {
+                            retries++;
+                            setTimeout(tryLoadAudio, 2000);
+                        } else {
+                            if (placeholder) {
+                                placeholder.innerHTML = '<span style="color: #ff8080;">Erro ao carregar o áudio (Timeout)</span>';
                             }
-                            audio.play().catch(e => console.log('Autoplay blocked:', e));
-                        }, 200);
-                    }
-                } else if (placeholder) {
-                    placeholder.style.display = 'block';
-                    placeholder.innerHTML = '<span style="color: #8b949e;">Áudio da API não carregado</span>';
+                        }
+                    });
                 }
+                
+                tryLoadAudio();
             } else if (audio) {
                 // If it's a generic audio (not audio-player)
                 audio.addEventListener('timeupdate', () => {
@@ -762,7 +807,6 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
 
     # Realizar as substituições no template HTML
     widget_html = widget_html.replace("__AUDIO_HTML__", audio_html)
-    widget_html = widget_html.replace("__AUDIO_B64__", audio_b64)
     widget_html = widget_html.replace("__TURNS_JOINED__", turns_joined)
     widget_html = widget_html.replace("__ACOUSTIC_DATA__", sinc_json)
     widget_html = widget_html.replace("__FOCUS_SECONDS__", str(focus_seconds))

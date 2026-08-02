@@ -41,6 +41,7 @@ from utils.prosodia_prompts import (
     PROSODIA_PROJECT_SYSTEM_PROMPT,
     PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
     PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC,
+    get_prosodia_project_system_prompt,
     build_project_user_prompt,
 )
 from utils.ai_provider import (
@@ -1180,10 +1181,11 @@ if st.button(btn_label, type="primary"):
                 individual_analyses_text=individual_analyses_text,
             )
 
+            prj_sys_prompt = get_prosodia_project_system_prompt(project.get("tipo_projeto", "Entrevista"))
             if analysis_mode == "Rapida (1 chamada)":
                 if openai_client:
                     result = ai_create_analysis(
-                        system_prompt=PROSODIA_PROJECT_SYSTEM_PROMPT,
+                        system_prompt=prj_sys_prompt,
                         user_prompt=user_prompt,
                         model=openai_model,
                         vector_store_id=vs_id,
@@ -1194,7 +1196,7 @@ if st.button(btn_label, type="primary"):
                     resp = groq_client.chat.completions.create(
                         model=groq_model,
                         messages=[
-                            {"role": "system", "content": PROSODIA_PROJECT_SYSTEM_PROMPT},
+                            {"role": "system", "content": prj_sys_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
                         temperature=0.5,

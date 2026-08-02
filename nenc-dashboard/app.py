@@ -42,14 +42,9 @@ def _build_pages(user: auth.User):
             "": [home],
             "Teste Sensorial": [
                 st.Page(
-                    "modules/teste_sensorial/projetos.py",
-                    title="Projetos",
-                    icon="🧪",
-                ),
-                st.Page(
                     "modules/teste_sensorial/preparacao.py",
-                    title="Dados do Projeto",
-                    icon="📋",
+                    title="Preparação de Dados",
+                    icon="📂",
                 ),
                 st.Page(
                     "modules/teste_sensorial/timeline.py",
@@ -61,16 +56,6 @@ def _build_pages(user: auth.User):
                     title="Média Geral",
                     icon="👥",
                 ),
-                st.Page(
-                    "modules/teste_sensorial/base_conhecimento.py",
-                    title="Base de Conhecimento",
-                    icon="📚",
-                ),
-                st.Page(
-                    "modules/teste_sensorial/analise.py",
-                    title="Análise IA",
-                    icon="🧠",
-                ),
             ],
         })
 
@@ -79,19 +64,9 @@ def _build_pages(user: auth.User):
             "": [home],
             "Jornada de Compra": [
                 st.Page(
-                    "modules/jornada_compra/projetos.py",
-                    title="Projetos",
-                    icon="🛒",
-                ),
-                st.Page(
                     "modules/jornada_compra/preparacao.py",
-                    title="Dados do Projeto",
-                    icon="📋",
-                ),
-                st.Page(
-                    "modules/jornada_compra/entrevistas.py",
-                    title="Entrevistas",
-                    icon="🗂️",
+                    title="Preparação de Dados",
+                    icon="📂",
                 ),
                 st.Page(
                     "modules/jornada_compra/base_conhecimento.py",
@@ -100,7 +75,7 @@ def _build_pages(user: auth.User):
                 ),
                 st.Page(
                     "modules/jornada_compra/analise.py",
-                    title="Análise IA",
+                    title="Análise",
                     icon="🔍",
                 ),
             ],
@@ -226,8 +201,6 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
             "mon_filter_phone",
             "api_audio_file",
             "api_audio_label",
-            "jc_project_id",
-            "jc_data",
             "jc_metric",
             "jc_participants",
             "jc_aois",
@@ -235,10 +208,6 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
             "jc_ai_model",
             "jc_ai_mode",
             "jc_use_kb",
-            "ts_project_id",
-            "ts_data",
-            "ts_ai_model",
-            "ts_use_kb",
         ):
             st.session_state.pop(session_key, None)
     st.session_state[state_key] = active_organization_id

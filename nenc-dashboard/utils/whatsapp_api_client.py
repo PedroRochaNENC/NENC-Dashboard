@@ -61,12 +61,12 @@ def _owned_contact_ids_by_phone() -> dict[str, str]:
     return contact_ids_by_phone
 
 
-def _require_owned_resource(resource_type: str, resource_id: Any, organization_id: Optional[int] = None) -> None:
-    claim_external_resource(resource_type, resource_id, organization_id=organization_id)
+def _require_owned_resource(resource_type: str, resource_id: Any) -> None:
+    claim_external_resource(resource_type, resource_id)
 
 
 def _register_audio_from_parent(
-    audio: Dict, parent_resource_type: str, parent_resource_id: Any, organization_id: Optional[int] = None
+    audio: Dict, parent_resource_type: str, parent_resource_id: Any
 ) -> Optional[Dict]:
     audio_id = audio.get("id")
     if audio_id is None:
@@ -81,7 +81,6 @@ def _register_audio_from_parent(
                 "phone": _normalize_phone(audio.get("contact_phone")),
                 "whatsapp_message_id": str(audio.get("whatsapp_message_id") or ""),
             },
-            organization_id=organization_id,
         )
     except auth.AuthorizationError:
         return None
@@ -89,12 +88,12 @@ def _register_audio_from_parent(
 
 
 def _registered_audios(
-    audios: List[Dict], parent_resource_type: str, parent_resource_id: Any, organization_id: Optional[int] = None
+    audios: List[Dict], parent_resource_type: str, parent_resource_id: Any
 ) -> List[Dict]:
     registered_audios = []
     for audio in audios:
         registered_audio = _register_audio_from_parent(
-            audio, parent_resource_type, parent_resource_id, organization_id=organization_id
+            audio, parent_resource_type, parent_resource_id
         )
         if registered_audio is not None:
             registered_audios.append(registered_audio)
@@ -450,25 +449,25 @@ def get_all_audios(phone: Optional[str] = None, limit: int = 500, project_id: Op
     return _registered_audios(audios, parent_resource_type, parent_resource_id)
 
 
-def get_audio_status(audio_id: int, organization_id: Optional[int] = None) -> Dict:
+def get_audio_status(audio_id: int) -> Dict:
     """
     Retorna o status de processamento de um áudio.
     Campos relevantes: status, has_result_json, has_transcription
     """
-    _require_owned_resource("whatsapp_audio", audio_id, organization_id=organization_id)
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/status")
         resp.raise_for_status()
         return resp.json()
 
 
-def get_audio_result(audio_id: int, organization_id: Optional[int] = None) -> Dict:
+def get_audio_result(audio_id: int) -> Dict:
     """
     Baixa o resultado completo do job mais recente (DevAIce + Whisper).
     A rota GET /audios/{id}/result retorna um JobResponse com result_json
     já parseado como dict pelo validator do Pydantic.
     """
-    _require_owned_resource("whatsapp_audio", audio_id, organization_id=organization_id)
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/result")
         resp.raise_for_status()
@@ -480,9 +479,9 @@ def get_audio_result(audio_id: int, organization_id: Optional[int] = None) -> Di
         return result_json or {}
 
 
-def get_audio_transcript(audio_id: int, organization_id: Optional[int] = None) -> str:
+def get_audio_transcript(audio_id: int) -> str:
     """Baixa a transcrição em texto puro de um áudio."""
-    _require_owned_resource("whatsapp_audio", audio_id, organization_id=organization_id)
+    _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.get(f"/audios/{audio_id}/transcript")
         resp.raise_for_status()
@@ -503,22 +502,9 @@ def get_api_projects() -> List[Dict]:
     return [project for project in projects if str(project.get("id")) in owned_project_ids]
 
 
-def create_api_project(
-    name: str,
-    organization: str,
-    code: Optional[str] = None,
-    channel_type: str = "centralized",
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-) -> Dict:
+def create_api_project(name: str, organization: str) -> Dict:
     """Cria um novo projeto na API."""
-    body = {"name": name, "organization": organization, "channel_type": channel_type}
-    if code:
-        body["code"] = code
-    if start_date:
-        body["start_date"] = start_date
-    if end_date:
-        body["end_date"] = end_date
+    body = {"name": name, "organization": organization}
     with _client() as c:
         resp = c.post("/projects", json=body)
         resp.raise_for_status()
@@ -529,7 +515,7 @@ def create_api_project(
     claim_external_resource(
         "whatsapp_api_project",
         project_id,
-        {"name": name, "organization": organization, "code": project.get("code")},
+        {"name": name, "organization": organization},
         created=True,
     )
     return project
@@ -544,16 +530,7 @@ def get_api_project(project_id: int) -> Dict:
         return resp.json()
 
 
-def update_api_project(
-    project_id: int,
-    name: Optional[str] = None,
-    organization: Optional[str] = None,
-    code: Optional[str] = None,
-    status: Optional[str] = None,
-    channel_type: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-) -> Dict:
+def update_api_project(project_id: int, name: Optional[str] = None, organization: Optional[str] = None) -> Dict:
     """Atualiza um projeto na API."""
     _require_owned_resource("whatsapp_api_project", project_id)
     body = {}
@@ -561,16 +538,6 @@ def update_api_project(
         body["name"] = name
     if organization is not None:
         body["organization"] = organization
-    if code is not None:
-        body["code"] = code
-    if status is not None:
-        body["status"] = status
-    if channel_type is not None:
-        body["channel_type"] = channel_type
-    if start_date is not None:
-        body["start_date"] = start_date
-    if end_date is not None:
-        body["end_date"] = end_date
     with _client() as c:
         resp = c.patch(f"/projects/{project_id}", json=body)
         resp.raise_for_status()
@@ -587,98 +554,15 @@ def delete_api_project(project_id: int) -> None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# QR Codes de Projetos API
-# ---------------------------------------------------------------------------
-
-def get_project_qr_codes(project_id: int) -> List[Dict]:
-    """Lista todos os QR Codes associados a um projeto."""
-    _require_owned_resource("whatsapp_api_project", project_id)
-    with _client() as c:
-        resp = c.get(f"/projects/{project_id}/qr-codes")
-        resp.raise_for_status()
-        return resp.json()
-
-
-def create_project_qr_code(
-    project_id: int,
-    name: str,
-    description: Optional[str] = None,
-    code: Optional[str] = None,
-    target_phone: Optional[str] = None,
-    welcome_message: Optional[str] = None,
-) -> Dict:
-    """Cria um novo QR Code para o projeto."""
-    _require_owned_resource("whatsapp_api_project", project_id)
-    body = {"name": name}
-    if description:
-        body["description"] = description
-    if code:
-        body["code"] = code
-    if target_phone:
-        body["target_phone"] = target_phone
-    if welcome_message:
-        body["welcome_message"] = welcome_message
-    with _client() as c:
-        resp = c.post(f"/projects/{project_id}/qr-codes", json=body)
-        resp.raise_for_status()
-        return resp.json()
-
-
-def update_project_qr_code(
-    project_id: int,
-    qr_code_id: int,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    target_phone: Optional[str] = None,
-    welcome_message: Optional[str] = None,
-    status: Optional[str] = None,
-) -> Dict:
-    """Atualiza um QR Code do projeto."""
-    _require_owned_resource("whatsapp_api_project", project_id)
-    body = {}
-    if name is not None:
-        body["name"] = name
-    if description is not None:
-        body["description"] = description
-    if target_phone is not None:
-        body["target_phone"] = target_phone
-    if welcome_message is not None:
-        body["welcome_message"] = welcome_message
-    if status is not None:
-        body["status"] = status
-    with _client() as c:
-        resp = c.patch(f"/projects/{project_id}/qr-codes/{qr_code_id}", json=body)
-        resp.raise_for_status()
-        return resp.json()
-
-
-def delete_project_qr_code(project_id: int, qr_code_id: int) -> None:
-    """Exclui um QR Code do projeto."""
-    _require_owned_resource("whatsapp_api_project", project_id)
-    with _client() as c:
-        resp = c.delete(f"/projects/{project_id}/qr-codes/{qr_code_id}")
-        resp.raise_for_status()
-
-
-def get_project_participations(project_id: int) -> List[Dict]:
-    """Lista as participações registradas em um projeto."""
-    _require_owned_resource("whatsapp_api_project", project_id)
-    with _client() as c:
-        resp = c.get(f"/projects/{project_id}/participations")
-        resp.raise_for_status()
-        return resp.json()
-
-
 # Sub-rotas de projeto
-def get_project_audios(project_id: int, organization_id: Optional[int] = None) -> List[Dict]:
+def get_project_audios(project_id: int) -> List[Dict]:
     """Lista os áudios associados a um projeto na API."""
-    _require_owned_resource("whatsapp_api_project", project_id, organization_id=organization_id)
+    _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.get(f"/projects/{project_id}/audios")
         resp.raise_for_status()
         audios = resp.json()
-    return _registered_audios(audios, "whatsapp_api_project", project_id, organization_id=organization_id)
+    return _registered_audios(audios, "whatsapp_api_project", project_id)
 
 
 def upload_audio_to_project(project_id: int, file: Any, label: Optional[str] = None) -> Dict:

@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 from utils import auth
 
-user = auth.require_module("prosodia")
+auth.require_module("prosodia")
 
 from utils.prosodia_db import (
     init_db,
@@ -116,81 +116,398 @@ with h5:
 st.divider()
 
 # ------------------------------------------------------------------
-# Sincronização com WhatsApp API (em Segundo Plano)
-# ------------------------------------------------------------------
-# Sincronização WhatsApp (UI em Tempo Real)
+# Sincronização com WhatsApp API
+#
+# Os áudios na API chegam via webhook do WhatsApp e NÃO estão
+# obrigatoriamente vinculados a uma campanha. A sincronização exige:
+# - Um projeto externo pertencente à organização, ou
+# - Telefones de contatos registrados em uma campanha pertencente à organização.
 # ------------------------------------------------------------------
 from utils.whatsapp_api_client import is_configured as wa_configured
-from utils.whatsapp_sync import get_sync_job_status, is_sync_running, start_background_sync
 
+if wa_configured():
+    campaign_id = project.get("whatsapp_campaign_id")
+    api_project_id = project.get("api_project_id")
 
-@st.fragment(run_every=2)
-def _render_whatsapp_sync_panel(p_id: int, p_data: dict, current_user: auth.User):
-    running = is_sync_running(p_id)
-    was_running_key = f"_sync_was_running_{p_id}"
-    was_running = st.session_state.get(was_running_key, False)
+    sync_label = "🔄 Sincronizar com WhatsApp"
+    if api_project_id:
+        sync_label += f" (Projeto API #{api_project_id})"
+    elif campaign_id:
+        sync_label += f" (Campanha #{campaign_id})"
+    else:
+        sync_label += " (associe uma campanha ou projeto API)"
 
-    if was_running and not running:
-        st.session_state[was_running_key] = False
-        st.rerun()
+    if st.button(sync_label, type="secondary", key="wa_sync_btn"):
+        from utils.whatsapp_api_client import (
+            get_audio_result,
+            map_api_result_to_all_formats,
+            get_existing_whatsapp_message_ids,
+        )
 
-    if running:
-        st.session_state[was_running_key] = True
-
-    sync_status = get_sync_job_status(p_id)
-    if sync_status:
-        s_state = sync_status.get("status")
-        s_prog = sync_status.get("progress", "")
-        s_comp = sync_status.get("completed", 0)
-        s_tot = sync_status.get("total", 0)
-
-        if s_state == "running":
-            st.info(f"🔄 **Sincronização em segundo plano em andamento...** ({s_comp}/{s_tot}) — *{s_prog}*")
-        elif s_state == "completed":
-            st.success(f"✅ **{s_prog}**")
-        elif s_state == "failed":
-            st.error(f"❌ **Falha na sincronização:** {sync_status.get('error')}")
-
-    if wa_configured():
-        campaign_id = p_data.get("whatsapp_campaign_id")
-        api_project_id = p_data.get("api_project_id")
-
-        sync_label = "🔄 Sincronizar com WhatsApp"
-        if api_project_id:
-            sync_label += f" (Projeto API #{api_project_id})"
-        elif campaign_id:
-            sync_label += f" (Campanha #{campaign_id})"
-        else:
-            sync_label += " (associe uma campanha ou projeto API)"
-
-        if running:
-            st.button("🔄 Sincronização em Andamento...", disabled=True, key="wa_sync_btn_disabled")
-        else:
-            if st.button(sync_label, type="secondary", key="wa_sync_btn"):
-                active_org_id = auth.active_organization_id(current_user)
+        try:
+            with st.spinner("Buscando áudios na API..."):
+                from utils.whatsapp_api_client import get_project_audios, get_audio_status, get_all_audios
+                
                 if api_project_id:
                     claim_external_resource(
                         "whatsapp_api_project",
                         api_project_id,
-                        {"project_id": p_id},
+                        {"project_id": project_id},
                     )
+                    api_audios_raw = get_project_audios(api_project_id)
                 elif campaign_id:
                     claim_external_resource(
                         "whatsapp_campaign",
                         campaign_id,
-                        {"project_id": p_id},
+                        {"project_id": project_id},
+                    )
+                    from utils.whatsapp_api_client import get_campaign_contacts
+
+                    owned_contact_phones = _owned_contact_phones()
+                    contacts = get_campaign_contacts(campaign_id)
+                    target_phones = {
+                        _normalize_phone(contact.get("phone"))
+                        for contact in contacts
+                        if _normalize_phone(contact.get("phone")) in owned_contact_phones
+                    }
+                    audios_by_id = {}
+                    for phone in target_phones:
+                        for audio in get_all_audios(phone=phone):
+                            audios_by_id[str(audio.get("id"))] = audio
+                    api_audios_raw = list(audios_by_id.values())
+                else:
+                    raise ValueError(
+                        "Associe este projeto a uma campanha ou projeto da API antes de sincronizar."
                     )
 
-                started = start_background_sync(p_id, active_org_id)
-                if started:
-                    st.session_state[was_running_key] = True
-                    st.toast("🚀 Sincronização iniciada em segundo plano!")
+                from utils.prosodia_db import get_audios
+                local_audios = get_audios(project_id)
+                local_audios_by_sid = {a.get("session_id"): a for a in local_audios if a.get("session_id")}
+
+                # Coletar áudios a serem processados (download de resultados e análise)
+                audios_to_process = []
+                processing_new_count = 0
+
+                for a in api_audios_raw:
+                    a_id = a["id"]
+                    wa_msg_id = a.get("whatsapp_message_id")
+                    if wa_msg_id:
+                        phone = a.get("contact_phone", "desconhecido")
+                        cand_sid = f"wa_{phone}_{a_id}"
+                    else:
+                        cand_sid = f"wa_upload_{a_id}"
+                    
+                    if cand_sid not in local_audios_by_sid:
+                        try:
+                            status_info = get_audio_status(a_id)
+                            status = status_info.get("status")
+                            if status == "done" and status_info.get("has_result_json"):
+                                audios_to_process.append({
+                                    "api_audio": a,
+                                    "audio_id": None,
+                                    "is_new": True,
+                                    "session_id": cand_sid
+                                })
+                            elif status in ("pending", "running", "processing"):
+                                from utils.prosodia_db import create_audio, save_quality_check
+                                audio_id = create_audio(
+                                    project_id=project_id,
+                                    session_id=cand_sid,
+                                    prosodia_json=None,
+                                    transcricao_csv=None,
+                                    sincronizado_csv=None,
+                                    whatsapp_message_id=wa_msg_id,
+                                )
+                                save_quality_check(
+                                    audio_id=audio_id,
+                                    overall_status="processing",
+                                    checks=[],
+                                    coverage=[],
+                                )
+                                processing_new_count += 1
+                            elif status == "failed":
+                                from utils.prosodia_db import create_audio, save_quality_check
+                                audio_id = create_audio(
+                                    project_id=project_id,
+                                    session_id=cand_sid,
+                                    prosodia_json=None,
+                                    transcricao_csv=None,
+                                    sincronizado_csv=None,
+                                    whatsapp_message_id=wa_msg_id,
+                                )
+                                save_quality_check(
+                                    audio_id=audio_id,
+                                    overall_status="failed",
+                                    checks=[],
+                                    coverage=[],
+                                )
+                        except Exception:
+                            pass
+                    else:
+                        local_audio = local_audios_by_sid[cand_sid]
+                        local_status = local_audio.get("quality_status", "pending")
+                        if local_status in ("processing", "pending", "running", "failed"):
+                            try:
+                                status_info = get_audio_status(a_id)
+                                status = status_info.get("status")
+                                if status == "done" and status_info.get("has_result_json"):
+                                    audios_to_process.append({
+                                        "api_audio": a,
+                                        "audio_id": local_audio["id"],
+                                        "is_new": False,
+                                        "session_id": cand_sid
+                                    })
+                                elif status == "failed" and local_status != "failed":
+                                    from utils.prosodia_db import save_quality_check
+                                    save_quality_check(
+                                        audio_id=local_audio["id"],
+                                        overall_status="failed",
+                                        checks=[],
+                                        coverage=[],
+                                    )
+                            except Exception:
+                                pass
+
+            if not audios_to_process:
+                if processing_new_count > 0:
+                    st.success(f"✅ Sincronizado: {processing_new_count} novo(s) áudio(s) em processamento foram registrados na tabela!")
                     st.rerun()
                 else:
-                    st.warning("Já existe uma sincronização em andamento para este projeto.")
+                    st.info("✅ Nenhum áudio novo ou concluído para sincronizar.")
+            else:
+                # Importações necessárias para análise automática
+                from utils.prosodia_db import (
+                    create_audio,
+                    update_audio_content,
+                    get_project_questions,
+                    save_analysis,
+                    save_quality_check,
+                    update_audio_openai_ids,
+                )
+                from utils.prosodia_quality import (
+                    run_quality_checks,
+                    check_question_coverage_keywords,
+                    check_question_coverage_ai,
+                    merge_coverage,
+                    compute_overall_status,
+                )
+                from utils.prosodia_prompts import (
+                    PROSODIA_SYSTEM_PROMPT,
+                    build_prosodia_user_prompt,
+                )
+                from utils.ai_provider import (
+                    get_openai_client,
+                    get_prosodia_vector_store_id,
+                    create_analysis as ai_create_analysis,
+                )
+                import io as _io
 
+                questions = get_project_questions(project_id)
+                openai_client = get_openai_client()
+                vs_id = get_prosodia_vector_store_id()
 
-_render_whatsapp_sync_panel(project_id, project, user)
+                total = len(audios_to_process)
+                synced = 0
+                progress = st.progress(0, text=f"Sincronizando 0/{total}…")
+
+                for idx, item in enumerate(audios_to_process):
+                    api_audio = item["api_audio"]
+                    audio_id = item["audio_id"]
+                    is_new = item["is_new"]
+                    session_id = item["session_id"]
+                    audio_api_id = api_audio["id"]
+                    wa_msg_id = api_audio.get("whatsapp_message_id")
+
+                    progress.progress(idx / total, text=f"Processando {session_id}…")
+
+                    # Baixar resultado (DevAIce + Whisper)
+                    try:
+                        result_json = get_audio_result(audio_api_id)
+                    except Exception as e:
+                        st.warning(f"[{session_id}] Falha ao baixar resultado: {e}")
+                        continue
+
+                    if not result_json:
+                        st.warning(f"[{session_id}] Resultado vazio, pulando.")
+                        continue
+
+                    # Converter para JSON de Prosódia, CSV de Transcrição e Sincronizado
+                    json_bytes, csv_bytes, sinc_bytes = map_api_result_to_all_formats(result_json, session_id)
+
+                    # Salvar no banco
+                    if is_new:
+                        audio_id = create_audio(
+                            project_id=project_id,
+                            session_id=session_id,
+                            prosodia_json=json_bytes,
+                            transcricao_csv=csv_bytes,
+                            sincronizado_csv=sinc_bytes,
+                            whatsapp_message_id=wa_msg_id,
+                        )
+                    else:
+                        update_audio_content(
+                            audio_id=audio_id,
+                            prosodia_json=json_bytes,
+                            transcricao_csv=csv_bytes,
+                            sincronizado_csv=sinc_bytes,
+                        )
+
+                    # -- Upload OpenAI KB --
+                    file_id_prosodia = None
+                    file_id_transcricao = None
+                    if openai_client:
+                        try:
+                            if json_bytes:
+                                fp = openai_client.files.create(
+                                    file=(f"Prosodia-{session_id}.json", _io.BytesIO(json_bytes), "application/json"),
+                                    purpose="assistants",
+                                )
+                                file_id_prosodia = fp.id
+                                if vs_id:
+                                    openai_client.vector_stores.files.create(
+                                        vector_store_id=vs_id, file_id=fp.id
+                                    )
+                            if csv_bytes:
+                                fc = openai_client.files.create(
+                                    file=(f"Transcricao-{session_id}.csv", _io.BytesIO(csv_bytes), "text/csv"),
+                                    purpose="assistants",
+                                )
+                                file_id_transcricao = fc.id
+                                if vs_id:
+                                    openai_client.vector_stores.files.create(
+                                        vector_store_id=vs_id, file_id=fc.id
+                                    )
+                            update_audio_openai_ids(audio_id, file_id_prosodia, file_id_transcricao)
+                        except Exception as e:
+                            st.warning(f"[{session_id}] Falha no upload para KB: {e}")
+
+                    # Parse dos dados para análise usando o loader padrão
+                    class _BytesFile:
+                        def __init__(self, data: bytes, name: str):
+                            self._buf = _io.BytesIO(data)
+                            self.name = name
+
+                        def read(self):
+                            return self._buf.read()
+
+                        def seek(self, pos):
+                            return self._buf.seek(pos)
+
+                    from utils.prosodia_loader import load_prosodia_from_uploads
+                    json_files = [_BytesFile(json_bytes, f"Prosodia-{session_id}.json")] if json_bytes else []
+                    csv_files = [_BytesFile(csv_bytes, f"Transcricao-{session_id}.csv")] if csv_bytes else []
+                    sinc_files = [_BytesFile(sinc_bytes, f"Sincronizado-{session_id}.csv")] if sinc_bytes else []
+
+                    parsed = load_prosodia_from_uploads(
+                        json_files=json_files,
+                        csv_files=csv_files,
+                        sincronizado_files=sinc_files,
+                    )
+                    vad_df: pd.DataFrame = parsed.get("vad", pd.DataFrame())
+                    tr_df: pd.DataFrame = parsed.get("transcricao", pd.DataFrame())
+
+                    sinc_df = pd.DataFrame()
+                    if sinc_bytes:
+                        try:
+                            sinc_df = pd.read_csv(_io.BytesIO(sinc_bytes))
+                        except Exception:
+                            pass
+
+                    # -- Análise automática de IA --
+                    proj_ctx = {
+                        "nome": project.get("name", ""),
+                        "especialidade": project.get("especialidade", ""),
+                        "historico": project.get("historico", ""),
+                        "problemas": project.get("problemas", ""),
+                    }
+
+                    tables_lines = []
+                    if not vad_df.empty and "duration" in vad_df.columns:
+                        total_s = vad_df["duration"].sum()
+                        n_segs = len(vad_df)
+                        tables_lines.append(
+                            f"VAD: {n_segs} segmentos, {total_s:.1f}s de fala total."
+                        )
+                    if not tr_df.empty and "SpeakerName" in tr_df.columns:
+                        by_spk = (
+                            tr_df.groupby("SpeakerName")
+                            .agg(msgs=("Text", "count"), words=("word_count", "sum"))
+                            .reset_index()
+                        )
+                        tables_lines.append(
+                            "Participação por locutor:\n" + by_spk.to_string(index=False)
+                        )
+
+                    tables_text = "\n\n".join(tables_lines)
+                    transcript_sample = (
+                        " ".join(tr_df["Text"].fillna("").astype(str).tolist())[:3000]
+                        if not tr_df.empty and "Text" in tr_df.columns
+                        else ""
+                    )
+
+                    analysis_result = {"text": "", "citations": []}
+                    try:
+                        if openai_client:
+                            user_prompt = build_prosodia_user_prompt(
+                                tables_text, proj_ctx, transcript_sample
+                            )
+                            analysis_result = ai_create_analysis(
+                                system_prompt=PROSODIA_SYSTEM_PROMPT,
+                                user_prompt=user_prompt,
+                                model="gpt-4.1-mini",
+                                vector_store_id=vs_id,
+                                temperature=0.5,
+                                max_tokens=3000,
+                            )
+                    except Exception as e:
+                        st.warning(f"[{session_id}] Falha na análise de IA: {e}")
+
+                    if analysis_result["text"]:
+                        save_analysis(
+                            audio_id=audio_id,
+                            model="gpt-4.1-mini",
+                            analysis_text=analysis_result["text"],
+                            citations=analysis_result["citations"],
+                        )
+
+                    # -- Verificação de qualidade --
+                    quality_checks = run_quality_checks(vad_df, tr_df, sinc_df, thresholds)
+                    coverage_kw = check_question_coverage_keywords(tr_df, questions)
+                    coverage_ai = []
+                    if openai_client and questions and transcript_sample:
+                        try:
+                            coverage_ai = check_question_coverage_ai(
+                                transcript_sample,
+                                questions,
+                                openai_client,
+                                model="gpt-4.1-mini",
+                            )
+                        except Exception:
+                            pass
+
+                    coverage_merged = (
+                        merge_coverage(coverage_kw, coverage_ai)
+                        if coverage_ai
+                        else coverage_kw
+                    )
+                    overall = compute_overall_status(quality_checks)
+
+                    save_quality_check(
+                        audio_id=audio_id,
+                        overall_status=overall,
+                        checks=quality_checks,
+                        coverage=coverage_merged,
+                    )
+
+                    synced += 1
+                    progress.progress((idx + 1) / total, text=f"{session_id} concluído.")
+
+                progress.empty()
+                st.success(f"✅ {synced} áudio(s) sincronizado(s) com sucesso!")
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Erro durante sincronização: {e}")
 
 # ------------------------------------------------------------------
 # Dados
@@ -291,11 +608,8 @@ else:
         ai_found = int(a.get("coverage_ai_found", 0))
         kw_found = int(a.get("coverage_kw_found", 0))
 
-        qr_code_label = a.get("qr_code_name") or ("Upload Direto" if not str(a.get("session_id", "")).startswith("wa_") else "Geral")
-
         rows.append({
             "Sessão": a.get("session_id", ""),
-            "QR Code": qr_code_label,
             "Data": str(a.get("created_at", ""))[:10],
             "Duração": a.get("duration_str", "00:00") if not (is_processing or is_failed) else "—",
             "Status Geral": _status_text(status),
@@ -481,7 +795,14 @@ else:
                                             f"- Checks OK: {n_pass}\n- Alertas: {n_warn}\n- Problemas: {n_fail}\n"
                                         )
                                         q_name = f"qualidade_entrevista_{selected_audio['session_id']}.md"
-                                        upload_file_to_vector_store(q_name, quality_md.encode("utf-8"), mime_type="text/markdown", vector_store_id=vs_id)
+                                        uploaded_q = openai_client.files.create(
+                                            file=(q_name, quality_md.encode("utf-8")),
+                                            purpose="assistants"
+                                        )
+                                        openai_client.vector_stores.files.create(
+                                            vector_store_id=vs_id,
+                                            file_id=uploaded_q.id
+                                        )
                                     except Exception:
                                         pass
                                 
@@ -527,7 +848,14 @@ else:
                                             f"## Resultado\n\n{result_ai['text']}"
                                         )
                                         a_name = f"analise_ia_{selected_audio['session_id']}.md"
-                                        upload_file_to_vector_store(a_name, analysis_md.encode("utf-8"), mime_type="text/markdown", vector_store_id=vs_id)
+                                        uploaded_a = openai_client.files.create(
+                                            file=(a_name, analysis_md.encode("utf-8")),
+                                            purpose="assistants"
+                                        )
+                                        openai_client.vector_stores.files.create(
+                                            vector_store_id=vs_id,
+                                            file_id=uploaded_a.id
+                                        )
                                     except Exception:
                                         pass
                                 

@@ -208,7 +208,6 @@ with tab_audios:
                 dados_enriquecidos.append({
                     "ID": a["id"],
                     "Telefone": a.get("contact_phone", ""),
-                    "QR Code": a.get("qr_code_name") or a.get("qr_code_code") or "Geral",
                     "Mensagem ID": a.get("whatsapp_message_id", ""),
                     "Duração (s)": a.get("duration_sec") or status_info.get("duration_sec") or 0.0,
                     "Status": status_info.get("status", "desconhecido"),
@@ -237,7 +236,7 @@ with tab_audios:
                 df_selecionavel,
                 use_container_width=True,
                 hide_index=True,
-                disabled=["ID", "Telefone", "QR Code", "Mensagem ID", "Duração (s)", "Status", "Data"],
+                disabled=["ID", "Telefone", "Mensagem ID", "Duração (s)", "Status", "Data"],
                 key="editor_importacao"
             )
             
