@@ -961,6 +961,35 @@ def get_latest_quality_check(audio_id: int) -> Optional[Dict]:
     return d
 
 
+def get_quality_checks_history_for_project(project_id: int) -> List[Dict]:
+    """Retorna todo o histórico de qualidade das entrevistas de um projeto."""
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        rows = conn.execute(
+            """
+            SELECT q.*, a.project_id
+            FROM quality_checks q
+            JOIN audios a
+              ON a.id = q.audio_id
+             AND a.organization_id = q.organization_id
+            WHERE a.project_id = ?
+              AND q.organization_id = ?
+            ORDER BY q.created_at ASC, q.id ASC
+            """,
+            (project_id, organization_id),
+        ).fetchall()
+
+    _audit("prosodia.quality_check.list_history", "project", project_id, organization_id)
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["checks"] = json.loads(item.get("checks_json") or "[]")
+        item["coverage"] = json.loads(item.get("coverage_json") or "[]")
+        result.append(item)
+    return result
+
+
 def get_project_questions(project_id: int, organization_id: Optional[int] = None) -> List[str]:
     """Retorna a lista de perguntas do projeto (uma por linha)."""
     project = get_project(project_id, organization_id=organization_id)
@@ -999,3 +1028,31 @@ def get_latest_high_activations(audio_id: int) -> Optional[List[Dict]]:
         return None
     d = dict(row)
     return json.loads(d.get("moments_json") or "[]")
+
+
+def get_high_activations_history_for_project(project_id: int) -> List[Dict]:
+    """Retorna todo o histórico de ativações das entrevistas de um projeto."""
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        rows = conn.execute(
+            """
+            SELECT h.*, a.project_id
+            FROM high_activations h
+            JOIN audios a
+              ON a.id = h.audio_id
+             AND a.organization_id = h.organization_id
+            WHERE a.project_id = ?
+              AND h.organization_id = ?
+            ORDER BY h.created_at ASC, h.id ASC
+            """,
+            (project_id, organization_id),
+        ).fetchall()
+
+    _audit("prosodia.high_activation.list_history", "project", project_id, organization_id)
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["moments"] = json.loads(item.get("moments_json") or "[]")
+        result.append(item)
+    return result

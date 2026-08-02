@@ -26,6 +26,7 @@ from utils.prosodia_db import (
     save_project_analysis,
 )
 from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
+from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
 from utils.prosodia_charts import (
     create_speaker_stats,
     create_acoustic_timeline,
@@ -718,6 +719,52 @@ with h3:
     st.write("")
     if st.button("Uploads", width="stretch"):
         st.switch_page("modules/prosodia/audios.py")
+
+st.divider()
+st.subheader("Exportação para Power BI")
+st.caption(
+    "Baixe todas as tabelas relacionáveis do projeto, incluindo históricos de "
+    "análises, verificações de qualidade e ativações prosódicas."
+)
+try:
+    powerbi_workbook, powerbi_filename = export_project_to_powerbi_excel(project_id)
+except ValueError as error:
+    st.error(f"Não foi possível preparar a exportação: {error}")
+else:
+    st.download_button(
+        "📊 Exportar para Power BI (.xlsx)",
+        data=powerbi_workbook,
+        file_name=powerbi_filename,
+        mime=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        key=f"download_powerbi_{project_id}",
+        type="primary",
+        use_container_width=False,
+    )
+
+with st.expander("📖 Guia de Importação e Relacionamentos no Power BI"):
+    st.markdown(
+        """
+1. No Power BI Desktop, selecione **Obter Dados > Excel** e escolha o arquivo
+   exportado. Importe todas as abas.
+2. Use `Projeto[id]` como a dimensão principal e relacione-o com
+   `Perguntas_Projeto[project_id]`, `Entrevistas[project_id]` e
+   `Analises_Projeto[project_id]`.
+3. Use `Entrevistas[id]` para relacionar `Segmentos_VAD`, `Transcricoes`,
+   `Dados_Sincronizados`, `Analises_Entrevista`,
+   `Verificacoes_Qualidade` e `Momentos_Alta_Ativacao` por `audio_id`.
+4. Relacione as tabelas filhas de IA e qualidade pelos IDs de origem:
+   `Citacoes_Analise_Entrevista[analysis_id]`,
+   `Citacoes_Analise_Projeto[project_analysis_id]`,
+   `Checks_Qualidade[quality_check_id]` e
+   `Cobertura_Perguntas[quality_check_id]`.
+
+As abas com sufixo numérico, como `Dados_Sincronizados_2`, são continuações da
+mesma tabela quando o limite de linhas do Excel é atingido. Anexe-as no Power
+Query antes de criar os relacionamentos.
+        """
+    )
 
 if not audios:
     st.info("Nenhuma entrevista disponivel para analise geral. Faca uploads primeiro.")
