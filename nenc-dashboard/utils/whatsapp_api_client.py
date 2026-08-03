@@ -303,14 +303,18 @@ class AudioFileUnavailableError(RuntimeError):
 
 def _get_api_url() -> str:
     """Retorna a URL da API de WhatsApp configurada no ambiente do servidor."""
-
-    return os.getenv("WHATSAPP_API_URL", "").rstrip("/")
+    raw = os.getenv("WHATSAPP_API_URL", "").strip()
+    if (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
+        raw = raw[1:-1].strip()
+    return raw.rstrip("/")
 
 
 def _get_api_key() -> str:
     """Retorna a chave da API de WhatsApp configurada no ambiente do servidor."""
-
-    return os.getenv("WHATSAPP_API_KEY", "")
+    raw = os.getenv("WHATSAPP_API_KEY", "").strip()
+    if (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
+        raw = raw[1:-1].strip()
+    return raw
 
 
 def is_configured() -> bool:
@@ -351,12 +355,21 @@ def _client(timeout: float = 30.0) -> httpx.Client:
 # ---------------------------------------------------------------------------
 
 def test_connection() -> tuple[bool, str]:
-    """Testa a conexão com a API. Retorna (sucesso, mensagem)."""
+    """Testa a conexão com a API e a validade da chave de autenticação. Retorna (sucesso, mensagem)."""
     try:
         with _client() as c:
-            resp = c.get("/health")
-            resp.raise_for_status()
-            return True, "Conexão OK"
+            resp_health = c.get("/health")
+            resp_health.raise_for_status()
+
+            resp_auth = c.get("/campaigns", params={"limit": 1})
+            if resp_auth.status_code in (401, 403):
+                return False, "Servidor alcançado, mas a Chave de API (X-API-Key) foi recusada pelo servidor (HTTP 403 Forbidden)."
+            resp_auth.raise_for_status()
+            return True, "Conexão e autenticação OK"
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403):
+            return False, "Chave de API (X-API-Key) recusada pelo servidor (HTTP 403 Forbidden)."
+        return False, f"Erro HTTP {e.response.status_code}: {e.response.text or str(e)}"
     except Exception as e:
         return False, str(e)
 

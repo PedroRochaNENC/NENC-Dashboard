@@ -305,7 +305,10 @@ with st.container():
                 for c in campaigns
             }
         except Exception as e:
-            st.warning(f"Não foi possível buscar campanhas: {e}")
+            if "403" in str(e):
+                st.warning("⚠️ Não foi possível buscar campanhas: Chave de API do WhatsApp (X-API-Key) recusada pelo servidor (HTTP 403 Forbidden). Verifique as credenciais nas Configurações da WhatsApp API.")
+            else:
+                st.warning(f"Não foi possível buscar campanhas: {e}")
     else:
         st.caption(
             "⚠️ API de WhatsApp não configurada. "

@@ -103,13 +103,13 @@ with col_form:
         submitted = st.form_submit_button("💾 Salvar Configurações", type="primary", use_container_width=True)
 
     if submitted:
-        url_stripped = api_url.strip().rstrip("/")
-        key_stripped = api_key.strip()
+        url_stripped = api_url.strip().strip("'\"").rstrip("/")
+        key_stripped = api_key.strip().strip("'\"")
         
         # Persistir no mesmo .env carregado pelo processo da aplicacao.
         try:
-            set_key(str(_ENV_PATH), "WHATSAPP_API_URL", url_stripped)
-            set_key(str(_ENV_PATH), "WHATSAPP_API_KEY", key_stripped)
+            set_key(str(_ENV_PATH), "WHATSAPP_API_URL", url_stripped, quote_mode="never")
+            set_key(str(_ENV_PATH), "WHATSAPP_API_KEY", key_stripped, quote_mode="never")
             
             os.environ["WHATSAPP_API_URL"] = url_stripped
             os.environ["WHATSAPP_API_KEY"] = key_stripped

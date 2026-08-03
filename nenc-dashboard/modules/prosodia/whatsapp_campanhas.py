@@ -247,7 +247,10 @@ with tab_lista:
                     st.dataframe(df_contacts[cols_to_show], use_container_width=True, hide_index=True)
                     
     except Exception as e:
-        st.error(f"Erro ao buscar campanhas da API: {e}")
+        if "403" in str(e):
+            st.error("❌ Erro ao buscar campanhas da API: A Chave de API (X-API-Key) foi recusada pelo servidor (HTTP 403 Forbidden). Verifique e atualize a chave na tela de Configurações da WhatsApp API.")
+        else:
+            st.error(f"Erro ao buscar campanhas da API: {e}")
 
 # ---------------------------------------------------------------------------
 # TAB 2: Criar Nova Campanha
