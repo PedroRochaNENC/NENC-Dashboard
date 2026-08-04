@@ -236,6 +236,37 @@ else:
                         "Críticas, sugestões e também elogios serão muito bem vindos."
                     )
 
+                    with st.container(border=True):
+                        st.markdown("#### 📝 Texto de Verificação do WhatsApp para o Projeto")
+                        st.caption("Texto pré-preenchido no WhatsApp ao escanear o QR Code de verificação.")
+                        with st.form(key=f"form_global_verif_{proj['id']}"):
+                            global_verif_text = st.text_area(
+                                "Texto de Verificação (WhatsApp)",
+                                value=current_verification_text,
+                                height=85,
+                                help="Texto pré-preenchido no WhatsApp do participante.",
+                                key=f"global_verif_text_{proj['id']}"
+                            )
+                            submit_global_verif = st.form_submit_button("💾 Salvar Texto de Verificação")
+                        if submit_global_verif:
+                            update_project(
+                                proj["id"],
+                                name=proj["name"],
+                                especialidade=proj.get("especialidade", ""),
+                                historico=proj.get("historico", ""),
+                                problemas=proj.get("problemas", ""),
+                                questions=proj.get("questions", ""),
+                                entities=proj.get("entities", ""),
+                                briefing_filename=proj.get("briefing_filename", ""),
+                                briefing_text=proj.get("briefing_text", ""),
+                                whatsapp_campaign_id=proj.get("whatsapp_campaign_id"),
+                                quality_thresholds=proj.get("quality_thresholds"),
+                                api_project_id=proj.get("api_project_id"),
+                                qr_verification_text=global_verif_text.strip(),
+                            )
+                            st.success("Texto de verificação atualizado!")
+                            st.rerun()
+
                     st.markdown("#### ➕ Criar Novo QR Code para Captação")
                     with st.form(key=f"form_new_qr_{proj['id']}"):
                         col_q1, col_q2 = st.columns(2)
@@ -262,22 +293,24 @@ else:
                             new_qr_desc = st.text_area(
                                 "Descrição do Local/Canal",
                                 placeholder="Ex: Cartaz A3 afixado no balcão de entrada principal",
+                                height=110,
                                 key=f"new_qr_desc_{proj['id']}"
-                            )
-                            new_verification_text = st.text_area(
-                                "Texto de Verificação (WhatsApp)",
-                                value=current_verification_text,
-                                height=85,
-                                help="Texto pré-preenchido no WhatsApp ao escanear o QR Code de verificação.",
-                                key=f"new_verification_text_{proj['id']}"
                             )
                             new_welcome_msg = st.text_area(
                                 "Resposta Automática de Boas-Vindas (WhatsApp)",
                                 value=default_welcome_text,
-                                height=85,
+                                height=110,
                                 help="Mensagem de texto enviada pelo WhatsApp assim que o participante escanear o QR Code.",
                                 key=f"new_welcome_msg_{proj['id']}"
                             )
+
+                        new_verification_text = st.text_area(
+                            "Texto de Verificação (WhatsApp)",
+                            value=current_verification_text,
+                            height=85,
+                            help="Texto pré-preenchido no WhatsApp ao escanear o QR Code de verificação.",
+                            key=f"new_verification_text_{proj['id']}"
+                        )
 
                         submit_qr = st.form_submit_button("Gerar e Cadastrar QR Code")
 
