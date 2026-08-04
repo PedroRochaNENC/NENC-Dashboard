@@ -193,6 +193,7 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
     ):
         for session_key in (
             "modulo",
+            "_navigate_to",
             "pros_project_id",
             "pros_audio_id",
             "pros_timeline_focus",
@@ -223,6 +224,9 @@ pg = st.navigation(_build_pages(authenticated_user))
 
 if st.session_state.get("_navigate_to"):
     _target = st.session_state.pop("_navigate_to")
-    st.switch_page(_target)
+    try:
+        st.switch_page(_target)
+    except Exception:
+        pass
 
 pg.run()
