@@ -18,6 +18,11 @@ from utils import auth
 
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "prosodia.db"
 
+DEFAULT_QR_VERIFICATION_TEXT = (
+    "Não delete essas informações. Elas estão associadas ao serviço que você está avaliando. "
+    "Peço que envie agora esse código, antes da sua mensagem."
+)
+
 
 # ---------------------------------------------------------------------------
 # Conexão
@@ -286,6 +291,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE projects ADD COLUMN api_project_id INTEGER")
         if "entities" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN entities TEXT")
+        if "qr_verification_text" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN qr_verification_text TEXT")
 
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -333,6 +340,7 @@ def create_project(
     whatsapp_campaign_id: Optional[int] = None,
     quality_thresholds: Optional[str] = None,
     api_project_id: Optional[int] = None,
+    qr_verification_text: Optional[str] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     _claim_external_project_resources(whatsapp_campaign_id, api_project_id)
@@ -351,8 +359,9 @@ def create_project(
                     briefing_text,
                     whatsapp_campaign_id,
                     quality_thresholds,
-                    api_project_id
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    api_project_id,
+                    qr_verification_text
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 organization_id,
                 name,
@@ -366,6 +375,7 @@ def create_project(
                 whatsapp_campaign_id,
                 quality_thresholds,
                 api_project_id,
+                qr_verification_text,
             ),
         )
         project_id = cur.lastrowid
@@ -417,6 +427,7 @@ def update_project(
     whatsapp_campaign_id: Optional[int] = None,
     quality_thresholds: Optional[str] = None,
     api_project_id: Optional[int] = None,
+    qr_verification_text: Optional[str] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente."""
     _claim_external_project_resources(whatsapp_campaign_id, api_project_id)
@@ -434,7 +445,8 @@ def update_project(
                    briefing_text=?,
                    whatsapp_campaign_id=?,
                    quality_thresholds=?,
-                   api_project_id=?
+                   api_project_id=?,
+                   qr_verification_text=?
                WHERE id=? AND organization_id=?""",
             (
                 name,
@@ -448,6 +460,7 @@ def update_project(
                 whatsapp_campaign_id,
                 quality_thresholds,
                 api_project_id,
+                qr_verification_text,
                 project_id,
                 organization_id,
             ),

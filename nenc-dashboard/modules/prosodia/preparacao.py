@@ -21,6 +21,7 @@ from utils.prosodia_db import (
     create_project,
     get_project,
     update_project,
+    DEFAULT_QR_VERIFICATION_TEXT,
 )
 from utils.ai_provider import get_openai_client, get_prosodia_vector_store_id
 from utils.organization_data import claim_external_resource, list_external_resources
@@ -367,6 +368,23 @@ with st.container():
         )
 
     # ------------------------------------------------------------------
+    # Texto de Verificação do QR Code (WhatsApp)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("💬 Texto de Verificação do QR Code (WhatsApp)")
+    st.markdown(
+        "Personalize o texto que será pré-preenchido na mensagem de WhatsApp do participante "
+        "ao escanear qualquer QR Code deste projeto."
+    )
+    current_qr_verification_text = project.get("qr_verification_text") or DEFAULT_QR_VERIFICATION_TEXT
+    qr_verification_input = st.text_area(
+        "Texto de Verificação",
+        value=current_qr_verification_text,
+        height=100,
+        help="Texto pré-preenchido no WhatsApp ao escanear o QR Code de verificação.",
+    )
+
+    # ------------------------------------------------------------------
     # Limiares de Qualidade Objetiva
     # ------------------------------------------------------------------
     st.divider()
@@ -593,6 +611,7 @@ if submitted:
                 whatsapp_campaign_id=selected_campaign,
                 quality_thresholds=quality_thresholds_json,
                 api_project_id=api_project_id_to_save,
+                qr_verification_text=qr_verification_input.strip() if qr_verification_input else None,
             )
             st.success("Projeto atualizado!")
         else:
@@ -608,6 +627,7 @@ if submitted:
                 whatsapp_campaign_id=selected_campaign,
                 quality_thresholds=quality_thresholds_json,
                 api_project_id=api_project_id_to_save,
+                qr_verification_text=qr_verification_input.strip() if qr_verification_input else None,
             )
             st.session_state["pros_project_id"] = new_id
             saved_project_id = new_id

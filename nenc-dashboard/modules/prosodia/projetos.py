@@ -153,6 +153,284 @@ else:
                 if st.button("🗑️ Excluir", key=f"del_{proj['id']}", width='stretch'):
                     st.session_state[f"confirm_del_{proj['id']}"] = True
 
+            # ------------------------------------------------------------------
+            # Gerenciar QR Codes do Projeto
+            # ------------------------------------------------------------------
+            expander_title = (
+                f"📱 Gerenciar QR Codes do Projeto (API #{api_proj_id})"
+                if api_proj_id
+                else "📱 Gerenciar QR Codes do Projeto"
+            )
+            with st.expander(expander_title, expanded=False):
+                from utils.whatsapp_api_client import (
+                    is_configured,
+                    get_project_qr_codes,
+                    get_project_participations,
+                    create_project_qr_code,
+                    delete_project_qr_code,
+                    generate_qr_code_bytes,
+                    build_whatsapp_deeplink,
+                    create_api_project,
+                )
+                from utils.organization_data import list_external_resources
+                from utils.prosodia_db import DEFAULT_QR_VERIFICATION_TEXT, update_project
+
+                # Obter números de WhatsApp cadastrados na organização
+                org_contacts = list_external_resources("whatsapp_contact")
+                org_phones = []
+                for c in org_contacts:
+                    meta = c.get("metadata") or {}
+                    p = meta.get("phone") or c.get("external_id")
+                    if p:
+                        clean_p = "".join(filter(str.isdigit, str(p)))
+                        if clean_p and clean_p not in org_phones:
+                            org_phones.append(clean_p)
+                if not org_phones:
+                    org_phones = ["5511975218007", "5516981360051"]
+
+                current_verification_text = proj.get("qr_verification_text") or DEFAULT_QR_VERIFICATION_TEXT
+
+                if is_configured() and not api_proj_id:
+                    st.info("🔗 Este projeto local ainda não está vinculado à API de WhatsApp.")
+                    if st.button("🚀 Vincular Projeto à API de WhatsApp agora", key=f"btn_link_api_{proj['id']}"):
+                        try:
+                            resp = create_api_project(proj["name"], user.organization_name)
+                            new_api_id = resp.get("id")
+                            update_project(
+                                proj["id"],
+                                name=proj["name"],
+                                especialidade=proj.get("especialidade", ""),
+                                historico=proj.get("historico", ""),
+                                problemas=proj.get("problemas", ""),
+                                questions=proj.get("questions", ""),
+                                entities=proj.get("entities", ""),
+                                briefing_filename=proj.get("briefing_filename", ""),
+                                briefing_text=proj.get("briefing_text", ""),
+                                whatsapp_campaign_id=proj.get("whatsapp_campaign_id"),
+                                quality_thresholds=proj.get("quality_thresholds"),
+                                api_project_id=new_api_id,
+                                qr_verification_text=proj.get("qr_verification_text"),
+                            )
+                            st.success("Projeto vinculado à API de WhatsApp com sucesso!")
+                            st.rerun()
+                        except Exception as link_err:
+                            st.error(f"Erro ao vincular à API: {link_err}")
+
+                if api_proj_id and is_configured():
+                    qr_codes = []
+                    participations = []
+                    try:
+                        qr_codes = get_project_qr_codes(api_proj_id)
+                        participations = get_project_participations(api_proj_id)
+                    except Exception as e:
+                        st.error(f"Não foi possível carregar QR Codes da API: {e}")
+
+                    st.markdown(
+                        f"**Estatísticas**: {len(qr_codes)} QR Code(s) cadastrado(s) | "
+                        f"{len(participations)} participante(s) inscrito(s)"
+                    )
+
+                    default_welcome_text = (
+                        "Quero agradecer muito a sua participação. Grave um áudio com o conteúdo que achar importante "
+                        "(sugestão, reclamação, saudação, agradecimento... ) que possa colaborar com a melhoria do nosso trabalho. "
+                        "Críticas, sugestões e também elogios serão muito bem vindos."
+                    )
+
+                    st.markdown("#### ➕ Criar Novo QR Code para Captação")
+                    with st.form(key=f"form_new_qr_{proj['id']}"):
+                        col_q1, col_q2 = st.columns(2)
+                        with col_q1:
+                            new_qr_name = st.text_input(
+                                "Nome do QR Code *",
+                                placeholder="Ex: Cartaz Recepção HCFMUSP",
+                                key=f"new_qr_name_{proj['id']}"
+                            )
+                            suggested_code = f"{api_proj_id:02d}-{len(qr_codes)+1:02d}"
+                            new_qr_code = st.text_input(
+                                "Código de Rastreio (opcional)",
+                                value=suggested_code,
+                                placeholder="Ex: 01-01",
+                                key=f"new_qr_code_{proj['id']}"
+                            )
+                            new_target_phone = st.selectbox(
+                                "Número WhatsApp Destino da Organização *",
+                                options=org_phones,
+                                help="Selecione o número de WhatsApp cadastrado na organização que receberá as mensagens deste QR Code.",
+                                key=f"new_target_phone_{proj['id']}"
+                            )
+                        with col_q2:
+                            new_qr_desc = st.text_area(
+                                "Descrição do Local/Canal",
+                                placeholder="Ex: Cartaz A3 afixado no balcão de entrada principal",
+                                key=f"new_qr_desc_{proj['id']}"
+                            )
+                            new_verification_text = st.text_area(
+                                "Texto de Verificação (WhatsApp)",
+                                value=current_verification_text,
+                                height=85,
+                                help="Texto pré-preenchido no WhatsApp ao escanear o QR Code de verificação.",
+                                key=f"new_verification_text_{proj['id']}"
+                            )
+                            new_welcome_msg = st.text_area(
+                                "Resposta Automática de Boas-Vindas (WhatsApp)",
+                                value=default_welcome_text,
+                                height=85,
+                                help="Mensagem de texto enviada pelo WhatsApp assim que o participante escanear o QR Code.",
+                                key=f"new_welcome_msg_{proj['id']}"
+                            )
+
+                        submit_qr = st.form_submit_button("Gerar e Cadastrar QR Code")
+
+                    if submit_qr:
+                        if not new_qr_name.strip():
+                            st.error("Informe o Nome do QR Code.")
+                        else:
+                            try:
+                                if new_verification_text.strip() and new_verification_text.strip() != current_verification_text:
+                                    update_project(
+                                        proj["id"],
+                                        name=proj["name"],
+                                        especialidade=proj.get("especialidade", ""),
+                                        historico=proj.get("historico", ""),
+                                        problemas=proj.get("problemas", ""),
+                                        questions=proj.get("questions", ""),
+                                        entities=proj.get("entities", ""),
+                                        briefing_filename=proj.get("briefing_filename", ""),
+                                        briefing_text=proj.get("briefing_text", ""),
+                                        whatsapp_campaign_id=proj.get("whatsapp_campaign_id"),
+                                        quality_thresholds=proj.get("quality_thresholds"),
+                                        api_project_id=proj.get("api_project_id"),
+                                        qr_verification_text=new_verification_text.strip(),
+                                    )
+                                create_project_qr_code(
+                                    api_proj_id,
+                                    name=new_qr_name.strip(),
+                                    description=new_qr_desc.strip() if new_qr_desc else None,
+                                    code=new_qr_code.strip() if new_qr_code else None,
+                                    target_phone=new_target_phone.strip() if new_target_phone else None,
+                                    welcome_message=new_welcome_msg.strip() if new_welcome_msg else None,
+                                    verification_text=new_verification_text.strip() if new_verification_text else None,
+                                )
+                                st.success("QR Code cadastrado com sucesso!")
+                                st.rerun()
+                            except Exception as err:
+                                st.error(f"Erro ao criar QR Code: {err}")
+
+                    st.divider()
+                    st.markdown("#### 📋 QR Codes Ativos")
+
+                    if not qr_codes:
+                        st.info("Nenhum QR Code gerado para este projeto ainda.")
+                    else:
+                        project_verification_text = proj.get("qr_verification_text") or DEFAULT_QR_VERIFICATION_TEXT
+
+                        for qr in qr_codes:
+                            with st.container(border=True):
+                                col_info, col_img = st.columns([3, 2])
+                                target_ph = "".join(filter(str.isdigit, qr.get("target_phone") or org_phones[0]))
+                                wa_link = build_whatsapp_deeplink(target_ph, project_verification_text, qr.get("code", ""))
+
+                                with col_info:
+                                    st.markdown(f"### {qr['name']}")
+                                    st.markdown(f"**Código de Rastreio**: `{qr['code']}` | **WhatsApp Destino**: `+{target_ph}`")
+                                    if qr.get("description"):
+                                        st.caption(f"**Descrição**: {qr['description']}")
+                                    if qr.get("welcome_message"):
+                                        st.caption(f"💬 **Resposta Automática**: *\"{qr['welcome_message']}\"*")
+                                    st.markdown(f"**Link WhatsApp**: [{wa_link}]({wa_link})")
+                                    st.caption(f"Status: `{qr['status']}` | Criado em: {qr.get('created_at', '')[:10]}")
+
+                                    if st.button("🗑️ Excluir QR Code", key=f"del_qr_{proj['id']}_{qr['id']}"):
+                                        try:
+                                            delete_project_qr_code(api_proj_id, qr["id"])
+                                            st.success("QR Code excluído.")
+                                            st.rerun()
+                                        except Exception as ex:
+                                            st.error(f"Erro ao excluir: {ex}")
+
+                                with col_img:
+                                    try:
+                                        img_bytes = generate_qr_code_bytes(wa_link)
+                                        st.image(img_bytes, width=180, caption=f"Escaneie: {qr['name']}")
+                                        st.download_button(
+                                            label="📥 Baixar Imagem (PNG)",
+                                            data=img_bytes,
+                                            file_name=f"qrcode_{qr['code']}.png",
+                                            mime="image/png",
+                                            key=f"dl_qr_img_{proj['id']}_{qr['id']}",
+                                            use_container_width=True,
+                                        )
+                                    except Exception as img_err:
+                                        st.error(f"Erro ao renderizar imagem do QR Code: {img_err}")
+                else:
+                    st.markdown("#### 📱 Gerar / Baixar QR Code do Projeto")
+                    with st.form(key=f"form_local_qr_{proj['id']}"):
+                        col_l1, col_l2 = st.columns(2)
+                        with col_l1:
+                            target_phone_local = st.selectbox(
+                                "Número WhatsApp Destino *",
+                                options=org_phones,
+                                key=f"local_phone_{proj['id']}"
+                            )
+                            local_code = st.text_input(
+                                "Código de Rastreio (opcional)",
+                                value=f"{proj['id']:02d}-01",
+                                key=f"local_code_{proj['id']}"
+                            )
+                        with col_l2:
+                            local_verif_text = st.text_area(
+                                "Texto de Verificação (WhatsApp)",
+                                value=current_verification_text,
+                                height=85,
+                                help="Texto pré-preenchido no WhatsApp ao escanear o QR Code.",
+                                key=f"local_verif_text_{proj['id']}"
+                            )
+                        btn_gen_local = st.form_submit_button("Gerar e Visualizar QR Code")
+
+                    if btn_gen_local or st.session_state.get(f"show_local_qr_{proj['id']}"):
+                        st.session_state[f"show_local_qr_{proj['id']}"] = True
+                        if local_verif_text.strip() and local_verif_text.strip() != current_verification_text:
+                            update_project(
+                                proj["id"],
+                                name=proj["name"],
+                                especialidade=proj.get("especialidade", ""),
+                                historico=proj.get("historico", ""),
+                                problemas=proj.get("problemas", ""),
+                                questions=proj.get("questions", ""),
+                                entities=proj.get("entities", ""),
+                                briefing_filename=proj.get("briefing_filename", ""),
+                                briefing_text=proj.get("briefing_text", ""),
+                                whatsapp_campaign_id=proj.get("whatsapp_campaign_id"),
+                                quality_thresholds=proj.get("quality_thresholds"),
+                                api_project_id=proj.get("api_project_id"),
+                                qr_verification_text=local_verif_text.strip(),
+                            )
+                            current_verification_text = local_verif_text.strip()
+
+                        clean_target_local = "".join(filter(str.isdigit, target_phone_local))
+                        wa_link_local = build_whatsapp_deeplink(clean_target_local, current_verification_text, local_code)
+
+                        col_l_info, col_l_img = st.columns([3, 2])
+                        with col_l_info:
+                            st.markdown(f"**Link do WhatsApp**: [{wa_link_local}]({wa_link_local})")
+                            st.markdown(f"**WhatsApp Destino**: `+{clean_target_local}` | **Código**: `{local_code}`")
+                            st.caption(f"**Texto de Verificação**: *\"{current_verification_text}\"*")
+
+                        with col_l_img:
+                            try:
+                                img_bytes_local = generate_qr_code_bytes(wa_link_local)
+                                st.image(img_bytes_local, width=180, caption=f"QR Code: {local_code}")
+                                st.download_button(
+                                    label="📥 Baixar Imagem (PNG)",
+                                    data=img_bytes_local,
+                                    file_name=f"qrcode_{proj['id']}_{local_code}.png",
+                                    mime="image/png",
+                                    key=f"dl_local_qr_{proj['id']}",
+                                    use_container_width=True,
+                                )
+                            except Exception as img_err_loc:
+                                st.error(f"Erro ao renderizar QR Code: {img_err_loc}")
+
             # Confirmação de exclusão
             if st.session_state.get(f"confirm_del_{proj['id']}"):
                 st.warning(

@@ -19,11 +19,13 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import urllib.parse
 import httpx
 import pandas as pd
 from dotenv import load_dotenv
 
 from utils import auth
+from utils.prosodia_db import DEFAULT_QR_VERIFICATION_TEXT
 from utils.organization_data import (
     claim_external_resource,
     list_external_resources,
@@ -1125,4 +1127,100 @@ def reprocess_audio(audio_id: int) -> Dict:
         resp = c.post(f"/audios/{audio_id}/reprocess")
         resp.raise_for_status()
         return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Gestão de QR Codes & Links WhatsApp
+# ---------------------------------------------------------------------------
+
+def get_project_qr_codes(project_id: int) -> List[Dict]:
+    """Lista QR codes cadastrados para um projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/qr-codes")
+        if resp.status_code == 404:
+            return []
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_project_participations(project_id: int) -> List[Dict]:
+    """Lista inscrições/participantes registradas no projeto via QR code na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.get(f"/projects/{project_id}/participations")
+        if resp.status_code == 404:
+            return []
+        resp.raise_for_status()
+        return resp.json()
+
+
+def create_project_qr_code(
+    project_id: int,
+    name: str,
+    description: Optional[str] = None,
+    code: Optional[str] = None,
+    target_phone: Optional[str] = None,
+    welcome_message: Optional[str] = None,
+    verification_text: Optional[str] = None,
+) -> Dict:
+    """Cria um novo QR Code associado a um projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    body = {
+        "name": name,
+        "description": description,
+        "code": code,
+        "target_phone": target_phone,
+        "welcome_message": welcome_message,
+        "verification_text": verification_text,
+    }
+    body = {k: v for k, v in body.items() if v is not None}
+    with _client() as c:
+        resp = c.post(f"/projects/{project_id}/qr-codes", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def delete_project_qr_code(project_id: int, qr_id: Any) -> None:
+    """Exclui um QR Code do projeto na API."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.delete(f"/projects/{project_id}/qr-codes/{qr_id}")
+        resp.raise_for_status()
+
+
+def build_whatsapp_deeplink(phone: str, verification_text: str, code: str = "") -> str:
+    """Gera o link pré-preenchido do WhatsApp (https://wa.me/...) com o texto de verificação e código."""
+    clean_phone = "".join(filter(str.isdigit, str(phone)))
+    text = (verification_text or DEFAULT_QR_VERIFICATION_TEXT).strip()
+    if code and code.strip():
+        text = f"{text}\n\n[Código: {code.strip()}]"
+    encoded_text = urllib.parse.quote(text)
+    return f"https://wa.me/{clean_phone}?text={encoded_text}"
+
+
+def generate_qr_code_bytes(data_url: str) -> bytes:
+    """Gera a imagem PNG em bytes a partir de uma URL/texto para exibição ou download."""
+    try:
+        import qrcode
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(data_url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        # Fallback usando API pública de QR Code se qrcode falhar
+        encoded = urllib.parse.quote(data_url)
+        chart_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={encoded}"
+        resp = httpx.get(chart_url, timeout=10.0)
+        resp.raise_for_status()
+        return resp.content
+
 
