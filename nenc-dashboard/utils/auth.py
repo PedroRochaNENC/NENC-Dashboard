@@ -87,6 +87,7 @@ class Organization:
     id: int
     name: str
     is_active: bool
+    whatsapp_numbers: str = ""
 
 
 def _database_path(database_path: Optional[os.PathLike] = None) -> Path:
@@ -196,6 +197,9 @@ def initialize_auth_schema(database_path: Optional[os.PathLike] = None) -> None:
                 ON audit_log(actor_user_id, created_at);
             """
         )
+        org_cols = {row["name"] for row in database.execute("PRAGMA table_info(organizations)").fetchall()}
+        if "whatsapp_numbers" not in org_cols:
+            database.execute("ALTER TABLE organizations ADD COLUMN whatsapp_numbers TEXT DEFAULT ''")
 
 
 def normalize_email(email: str) -> str:
@@ -233,6 +237,7 @@ def hash_password(password: str) -> str:
         n=n_value,
         r=r_value,
         p=p_value,
+        maxmem=128 * 1024 * 1024,
         dklen=32,
     )
     return "scrypt${}${}${}${}${}".format(
@@ -259,6 +264,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
             n=int(n_value),
             r=int(r_value),
             p=int(p_value),
+            maxmem=128 * 1024 * 1024,
             dklen=len(expected_digest),
         )
         return hmac.compare_digest(candidate_digest, expected_digest)
@@ -474,21 +480,103 @@ def list_organizations(
     with connection(database_path) as database:
         trusted_actor = _trusted_actor(database, actor)
         if not trusted_actor.is_platform_admin:
+            row = database.execute(
+                "SELECT id, name, is_active, whatsapp_numbers FROM organizations WHERE id = ?",
+                (trusted_actor.organization_id,),
+            ).fetchone()
+            if row:
+                return [
+                    Organization(
+                        int(row["id"]), row["name"], bool(row["is_active"]), row["whatsapp_numbers"] or ""
+                    )
+                ]
             return [
                 Organization(
                     trusted_actor.organization_id,
                     trusted_actor.organization_name,
                     True,
+                    "",
                 )
             ]
-        query = "SELECT id, name, is_active FROM organizations"
+        query = "SELECT id, name, is_active, whatsapp_numbers FROM organizations"
         if not include_inactive:
             query += " WHERE is_active = 1"
         query += " ORDER BY name COLLATE NOCASE"
         return [
-            Organization(int(row["id"]), row["name"], bool(row["is_active"]))
+            Organization(int(row["id"]), row["name"], bool(row["is_active"]), row["whatsapp_numbers"] or "")
             for row in database.execute(query)
         ]
+
+
+def update_organization(
+    actor: User,
+    organization_id: int,
+    name: Optional[str] = None,
+    whatsapp_numbers: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    database_path: Optional[os.PathLike] = None,
+) -> None:
+    """Atualiza dados da organização (nome, status ativo ou números de WhatsApp cadastrados)."""
+    initialize_auth_schema(database_path)
+    with connection(database_path) as database:
+        trusted_actor = _trusted_actor(database, actor)
+        if not trusted_actor.is_platform_admin and (
+            not trusted_actor.is_organization_admin or trusted_actor.organization_id != organization_id
+        ):
+            raise AuthorizationError("Voce nao tem permissao para editar esta organizacao.")
+        _organization_row(database, organization_id)
+
+        updates = []
+        params = []
+        if name is not None and trusted_actor.is_platform_admin:
+            updates.append("name = ?")
+            params.append(_required_text(name, "Nome da organizacao"))
+        if whatsapp_numbers is not None:
+            updates.append("whatsapp_numbers = ?")
+            params.append(whatsapp_numbers.strip())
+        if is_active is not None and trusted_actor.is_platform_admin:
+            updates.append("is_active = ?")
+            params.append(int(is_active))
+
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(_timestamp())
+            params.append(organization_id)
+            query = "UPDATE organizations SET {} WHERE id = ?".format(", ".join(updates))
+            try:
+                database.execute(query, params)
+            except sqlite3.IntegrityError as error:
+                raise ValueError("Ja existe uma organizacao com esse nome.") from error
+            _audit(
+                database,
+                organization_id,
+                trusted_actor.id,
+                "organization.updated",
+                "organization",
+                organization_id,
+            )
+
+
+def get_organization_whatsapp_numbers(
+    organization_id: int,
+    database_path: Optional[os.PathLike] = None,
+) -> List[str]:
+    """Retorna a lista de números de WhatsApp da organização cadastrados na administração."""
+    initialize_auth_schema(database_path)
+    with connection(database_path) as database:
+        row = database.execute(
+            "SELECT whatsapp_numbers FROM organizations WHERE id = ?",
+            (organization_id,),
+        ).fetchone()
+        if not row or not row["whatsapp_numbers"]:
+            return []
+        raw_numbers = str(row["whatsapp_numbers"]).replace("\n", ",").split(",")
+        cleaned = []
+        for n in raw_numbers:
+            digits = "".join(filter(str.isdigit, n.strip()))
+            if digits and digits not in cleaned:
+                cleaned.append(digits)
+        return cleaned
 
 
 def set_organization_active(

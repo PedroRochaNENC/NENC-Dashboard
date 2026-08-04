@@ -33,9 +33,9 @@ def _user_label(user: auth.User) -> str:
     return "{} ({}, {})".format(user.name, user.email, state)
 
 
-tabs = st.tabs(["Usuarios", "Organizacoes"] if actor.is_platform_admin else ["Usuarios"])
+tabs = st.tabs(["Usuarios", "Organizacoes"])
 users_tab = tabs[0]
-organizations_tab = tabs[1] if actor.is_platform_admin else None
+organizations_tab = tabs[1]
 
 with users_tab:
     search = st.text_input("Buscar usuario", placeholder="Nome ou e-mail")
@@ -187,50 +187,102 @@ with users_tab:
                     st.success("Usuario removido.")
                     st.rerun()
 
-if actor.is_platform_admin:
-    with organizations_tab:
-        organization_list, organization_names = _organization_options(True)
+with organizations_tab:
+    organization_list, organization_names = _organization_options(True)
+
+    if actor.is_platform_admin:
+        st.subheader("📋 Organizações Cadastradas")
         st.dataframe(
             [
-                {"Nome": organization.name, "Ativa": organization.is_active}
+                {
+                    "ID": organization.id,
+                    "Nome": organization.name,
+                    "Ativa": organization.is_active,
+                    "Números WhatsApp": organization.whatsapp_numbers,
+                }
                 for organization in organization_list
             ],
             hide_index=True,
             use_container_width=True,
         )
-        with st.form("create-organization"):
-            organization_name = st.text_input("Nome da organizacao")
-            created = st.form_submit_button("Criar organizacao", type="primary")
-        if created:
-            try:
-                auth.create_organization(organization_name, actor=actor)
-            except (auth.AuthorizationError, ValueError) as error:
-                st.error(str(error))
-            else:
-                st.success("Organizacao criada.")
-                st.rerun()
 
-        if organization_list:
-            managed_organization_id = st.selectbox(
-                "Alterar organizacao",
-                [organization.id for organization in organization_list],
-                format_func=lambda value: organization_names[value],
-            )
-            managed_organization = next(
-                organization
-                for organization in organization_list
-                if organization.id == managed_organization_id
-            )
-            desired_active = st.checkbox(
-                "Organizacao ativa",
-                value=managed_organization.is_active,
-                key="organization-active-{}".format(managed_organization.id),
-            )
-            if st.button("Salvar estado da organizacao", key="save-organization-state"):
+        with st.expander("Criar Nova Organização", expanded=False):
+            with st.form("create-organization"):
+                organization_name = st.text_input("Nome da organização")
+                initial_wa_numbers = st.text_area(
+                    "Números de WhatsApp Destino (um por linha ou separados por vírgula)",
+                    placeholder="Ex:\n5511975218007\n5516981360051",
+                    height=80,
+                )
+                created = st.form_submit_button("Criar organização", type="primary")
+            if created:
                 try:
-                    auth.set_organization_active(actor, managed_organization.id, desired_active)
+                    new_org = auth.create_organization(organization_name, actor=actor)
+                    if initial_wa_numbers.strip():
+                        auth.update_organization(
+                            actor,
+                            new_org.id,
+                            whatsapp_numbers=initial_wa_numbers.strip(),
+                        )
                 except (auth.AuthorizationError, ValueError) as error:
                     st.error(str(error))
                 else:
-                    st.success("Estado da organizacao atualizado.")
+                    st.success("Organização criada com sucesso.")
                     st.rerun()
+
+    st.subheader("📱 Configuração da Organização e Números de WhatsApp")
+    st.markdown(
+        "Cadastre os **números de WhatsApp oficiais da organização** que estarão disponíveis "
+        "no seletor de destino ao criar QR Codes para campanhas do NencLex."
+    )
+
+    if actor.is_platform_admin:
+        managed_organization_id = st.selectbox(
+            "Selecionar Organização para Editar",
+            [organization.id for organization in organization_list],
+            format_func=lambda value: organization_names[value],
+        )
+        managed_organization = next(
+            organization
+            for organization in organization_list
+            if organization.id == managed_organization_id
+        )
+    else:
+        managed_organization_id = active_organization_id
+        managed_organization = next(
+            (org for org in organization_list if org.id == managed_organization_id),
+            auth.Organization(active_organization_id, actor.organization_name, True, "")
+        )
+
+    with st.form("edit-organization-settings"):
+        if actor.is_platform_admin:
+            edited_org_name = st.text_input("Nome da Organização", value=managed_organization.name)
+            desired_active = st.checkbox("Organização ativa", value=managed_organization.is_active)
+        else:
+            edited_org_name = None
+            desired_active = None
+
+        edited_wa_numbers = st.text_area(
+            "Números de WhatsApp Destino da Organização (um por linha ou separados por vírgula)",
+            value=managed_organization.whatsapp_numbers,
+            height=110,
+            placeholder="Ex:\n5511975218007\n5516981360051",
+            help="Estes números alimentam o seletor de WhatsApp Destino na criação de QR Codes do NencLex."
+        )
+
+        saved_org = st.form_submit_button("💾 Salvar Configurações da Organização", type="primary")
+
+    if saved_org:
+        try:
+            auth.update_organization(
+                actor,
+                managed_organization_id,
+                name=edited_org_name,
+                whatsapp_numbers=edited_wa_numbers,
+                is_active=desired_active,
+            )
+        except (auth.AuthorizationError, ValueError) as error:
+            st.error(str(error))
+        else:
+            st.success("Configurações da organização salvas com sucesso!")
+            st.rerun()

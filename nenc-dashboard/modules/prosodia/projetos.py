@@ -175,16 +175,20 @@ else:
                 from utils.organization_data import list_external_resources
                 from utils.prosodia_db import DEFAULT_QR_VERIFICATION_TEXT, update_project
 
-                # Obter números de WhatsApp cadastrados na organização
-                org_contacts = list_external_resources("whatsapp_contact")
-                org_phones = []
-                for c in org_contacts:
-                    meta = c.get("metadata") or {}
-                    p = meta.get("phone") or c.get("external_id")
-                    if p:
-                        clean_p = "".join(filter(str.isdigit, str(p)))
-                        if clean_p and clean_p not in org_phones:
-                            org_phones.append(clean_p)
+                # Obter números de WhatsApp cadastrados na organização (Administração de Usuários)
+                org_phones = auth.get_organization_whatsapp_numbers(auth.active_organization_id(user))
+
+                # Complementar com contatos externos salvos se necessário
+                if not org_phones:
+                    org_contacts = list_external_resources("whatsapp_contact")
+                    for c in org_contacts:
+                        meta = c.get("metadata") or {}
+                        p = meta.get("phone") or c.get("external_id")
+                        if p:
+                            clean_p = "".join(filter(str.isdigit, str(p)))
+                            if clean_p and clean_p not in org_phones:
+                                org_phones.append(clean_p)
+
                 if not org_phones:
                     org_phones = ["5511975218007", "5516981360051"]
 

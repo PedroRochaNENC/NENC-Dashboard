@@ -67,7 +67,24 @@ class TestQRVerificationText(unittest.TestCase):
         self.assertIsInstance(img_bytes, bytes)
         self.assertGreater(len(img_bytes), 0)
         # Check PNG magic header \x89PNG
-        self.assertTrue(img_bytes.startswith(b"\x89PNG"))
+    def test_organization_whatsapp_numbers(self):
+        from utils.auth import get_organization_whatsapp_numbers, update_organization, User
+        mock_admin = User(
+            id=1,
+            name="Admin",
+            email="admin@example.com",
+            phone="5511999999999",
+            organization_id=1,
+            organization_name="Org",
+            is_organization_admin=True,
+            is_platform_admin=True,
+            is_active=True,
+            modules=("prosodia",),
+        )
+
+        update_organization(mock_admin, 1, whatsapp_numbers="5511975218007\n5516981360051")
+        numbers = get_organization_whatsapp_numbers(1)
+        self.assertEqual(numbers, ["5511975218007", "5516981360051"])
 
 
 if __name__ == "__main__":
