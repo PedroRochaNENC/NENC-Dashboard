@@ -220,4 +220,9 @@ if authenticated_user is None:
 auth.render_auth_sidebar(authenticated_user)
 _clear_organization_ui_state_if_needed(authenticated_user)
 pg = st.navigation(_build_pages(authenticated_user))
+
+if st.session_state.get("_navigate_to"):
+    _target = st.session_state.pop("_navigate_to")
+    st.switch_page(_target)
+
 pg.run()

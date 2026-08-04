@@ -20,11 +20,6 @@ def _select_module(module_key: str, navigate_to: str | None = None):
 
 st.title("🧠 NENC Insights")
 
-# Navegação automática por etapas
-if st.session_state.get("_navigate_to"):
-    _target = st.session_state.pop("_navigate_to")
-    st.switch_page(_target)
-
 st.markdown(
     "**Visualização de dados de Neuromarketing** — "
     "Selecione um módulo para começar."
