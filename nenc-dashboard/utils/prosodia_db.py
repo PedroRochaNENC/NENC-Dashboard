@@ -353,7 +353,7 @@ def create_project(
 
 
 def get_projects() -> List[Dict]:
-    """Retorna todos os projetos com contagem de áudios e nome da organização."""
+    """Retorna todos os projetos da organização ativa, ou todos se 'Todas as Organizações' (0) estiver selecionada."""
     organization_id = _active_organization_id()
     with _connect() as conn:
         if not organization_id:

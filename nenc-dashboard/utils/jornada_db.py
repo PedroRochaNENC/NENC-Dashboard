@@ -147,12 +147,11 @@ def init_db() -> None:
 # ---------------------------------------------------------------------------
 
 def list_projects() -> List[Dict[str, Any]]:
-    """Lista todos os projetos da organização ativa ou todos para admin global."""
+    """Lista todos os projetos da organização ativa ou todos se 'Todas as Organizações' (0) estiver selecionada."""
     init_db()
     org_id = _active_organization_id()
-    is_admin = auth.is_current_user_platform_admin()
     with _connect() as conn:
-        if not org_id or is_admin:
+        if not org_id:
             rows = conn.execute(
                 """
                 SELECT p.*, o.name AS organization_name,

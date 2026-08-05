@@ -390,22 +390,34 @@ def register_derived_external_resource(
 
 
 def list_external_resources(resource_type: str) -> list[Dict[str, Any]]:
-    """List only externally hosted resources owned by the active organization."""
+    """List externally hosted resources owned by the active organization or all if 'Todas as Organizações'."""
 
     if resource_type not in _EXTERNAL_RESOURCE_TYPES:
         raise ValueError("Tipo de recurso externo invalido: {}.".format(resource_type))
-    _, organization_id = _access_context("prosodia")
+    user = auth.require_module("prosodia")
+    active_org_id = auth.active_organization_id(user)
     _initialize_schema()
     with auth.connection() as database:
-        rows = database.execute(
-            """
-            SELECT resource_id, metadata_json
-            FROM organization_external_resources
-            WHERE organization_id = ? AND resource_type = ?
-            ORDER BY created_at
-            """,
-            (organization_id, resource_type),
-        ).fetchall()
+        if active_org_id == 0:
+            rows = database.execute(
+                """
+                SELECT resource_id, metadata_json
+                FROM organization_external_resources
+                WHERE resource_type = ?
+                ORDER BY created_at
+                """,
+                (resource_type,),
+            ).fetchall()
+        else:
+            rows = database.execute(
+                """
+                SELECT resource_id, metadata_json
+                FROM organization_external_resources
+                WHERE organization_id = ? AND resource_type = ?
+                ORDER BY created_at
+                """,
+                (active_org_id, resource_type),
+            ).fetchall()
     resources = []
     for row in rows:
         try:
