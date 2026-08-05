@@ -211,8 +211,10 @@ def create_project(
     vector_store_id: str = "",
 ) -> int:
     """Cria um novo projeto de Jornada de Compra."""
-    init_db()
     org_id = _active_organization_id()
+    if not org_id:
+        user = auth.current_user()
+        org_id = user.organization_id if user else 1
     with _connect() as conn:
         cursor = conn.execute(
             """

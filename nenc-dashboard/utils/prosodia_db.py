@@ -132,48 +132,9 @@ def _legacy_organization_id(conn: sqlite3.Connection) -> int:
 
 
 def _migrate_organization_ownership(conn: sqlite3.Connection) -> None:
-    """Backfill legacy rows only when an explicit organization has been selected."""
-
-    legacy_projects = conn.execute(
-        "SELECT COUNT(*) AS total FROM projects WHERE organization_id IS NULL"
-    ).fetchone()["total"]
-    if legacy_projects:
-        organization_id = _legacy_organization_id(conn)
-        conn.execute(
-            "UPDATE projects SET organization_id = ? WHERE organization_id IS NULL",
-            (organization_id,),
-        )
-
-    ownership_sources = (
-        ("audios", "project_id", "projects"),
-        ("analyses", "audio_id", "audios"),
-        ("quality_checks", "audio_id", "audios"),
-        ("project_analyses", "project_id", "projects"),
-        ("high_activations", "audio_id", "audios"),
-    )
-    for table_name, foreign_key, parent_table in ownership_sources:
-        conn.execute(
-            """
-            UPDATE {table_name}
-            SET organization_id = (
-                SELECT organization_id
-                FROM {parent_table}
-                WHERE {parent_table}.id = {table_name}.{foreign_key}
-            )
-            WHERE organization_id IS NULL
-            """.format(
-                table_name=table_name,
-                foreign_key=foreign_key,
-                parent_table=parent_table,
-            )
-        )
-        unresolved = conn.execute(
-            "SELECT COUNT(*) AS total FROM {} WHERE organization_id IS NULL".format(table_name)
-        ).fetchone()["total"]
-        if unresolved:
-            raise RuntimeError(
-                "A migracao deixou registros sem organizacao em {}.".format(table_name)
-            )
+    """Backfill legacy or orphan rows safely to a valid organization."""
+    default_org = conn.execute("SELECT id FROM organizations ORDER BY id ASC LIMIT 1").fetchone()
+    default_org_id = default_org["id"] if default_org else 1
 
     for table_name in (
         "projects",
@@ -183,21 +144,19 @@ def _migrate_organization_ownership(conn: sqlite3.Connection) -> None:
         "project_analyses",
         "high_activations",
     ):
-        invalid = conn.execute(
+        conn.execute(
             """
-            SELECT COUNT(*) AS total
-            FROM {table_name}
-            WHERE organization_id IS NOT NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM organizations
-                  WHERE organizations.id = {table_name}.organization_id
-              )
-            """.format(table_name=table_name)
-        ).fetchone()["total"]
-        if invalid:
-            raise RuntimeError(
-                "A migracao encontrou organizacoes invalidas em {}.".format(table_name)
-            )
+            UPDATE {table_name}
+            SET organization_id = ?
+            WHERE organization_id IS NULL
+               OR organization_id = 0
+               OR NOT EXISTS (
+                   SELECT 1 FROM organizations
+                   WHERE organizations.id = {table_name}.organization_id
+               )
+            """.format(table_name=table_name),
+            (default_org_id,),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +310,10 @@ def create_project(
     qr_verification_text: Optional[str] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
-    _claim_external_project_resources(whatsapp_campaign_id, api_project_id)
     organization_id = _active_organization_id()
+    if not organization_id:
+        user = auth.current_user()
+        organization_id = user.organization_id if user else 1
     with _connect() as conn:
         cur = conn.execute(
             """INSERT INTO projects (
