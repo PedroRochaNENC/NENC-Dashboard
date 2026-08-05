@@ -134,21 +134,35 @@ def init_db() -> None:
 # ---------------------------------------------------------------------------
 
 def get_projects() -> List[Dict[str, Any]]:
-    """Lista todos os projetos da organização ativa."""
+    """Lista todos os projetos da organização ativa ou todos para admin global."""
     init_db()
     org_id = _active_organization_id()
+    is_admin = auth.is_current_user_platform_admin()
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT p.*,
-                   (SELECT COUNT(*) FROM ts_datasets d WHERE d.project_id = p.id) as total_datasets,
-                   (SELECT COUNT(*) FROM ts_analyses a WHERE a.project_id = p.id) as total_analyses
-            FROM ts_projects p
-            WHERE p.organization_id = ?
-            ORDER BY p.updated_at DESC, p.id DESC
-            """,
-            (org_id,),
-        ).fetchall()
+        if not org_id or is_admin:
+            rows = conn.execute(
+                """
+                SELECT p.*, o.name AS organization_name,
+                       (SELECT COUNT(*) FROM ts_datasets d WHERE d.project_id = p.id) as total_datasets,
+                       (SELECT COUNT(*) FROM ts_analyses a WHERE a.project_id = p.id) as total_analyses
+                FROM ts_projects p
+                LEFT JOIN organizations o ON o.id = p.organization_id
+                ORDER BY p.updated_at DESC, p.id DESC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT p.*, o.name AS organization_name,
+                       (SELECT COUNT(*) FROM ts_datasets d WHERE d.project_id = p.id) as total_datasets,
+                       (SELECT COUNT(*) FROM ts_analyses a WHERE a.project_id = p.id) as total_analyses
+                FROM ts_projects p
+                LEFT JOIN organizations o ON o.id = p.organization_id
+                WHERE p.organization_id = ?
+                ORDER BY p.updated_at DESC, p.id DESC
+                """,
+                (org_id,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -156,11 +170,18 @@ def get_project(project_id: int) -> Optional[Dict[str, Any]]:
     """Retorna detalhes de um projeto específico."""
     init_db()
     org_id = _active_organization_id()
+    is_admin = auth.is_current_user_platform_admin()
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM ts_projects WHERE id = ? AND organization_id = ?",
-            (project_id, org_id),
-        ).fetchone()
+        if not org_id or is_admin:
+            row = conn.execute(
+                "SELECT * FROM ts_projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM ts_projects WHERE id = ? AND organization_id = ?",
+                (project_id, org_id),
+            ).fetchone()
         return dict(row) if row else None
 
 

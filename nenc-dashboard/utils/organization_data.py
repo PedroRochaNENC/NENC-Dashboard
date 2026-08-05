@@ -306,11 +306,12 @@ def claim_external_resource(
             (resource_type, normalized_resource_id),
         ).fetchone()
         if row is not None and int(row["organization_id"]) != organization_id:
-            raise auth.AuthorizationError(
-                "Este recurso externo pertence a outra organizacao."
-            )
+            if not auth.is_current_user_platform_admin():
+                raise auth.AuthorizationError(
+                    "Este recurso externo pertence a outra organizacao."
+                )
         if row is None:
-            if not created:
+            if not created and not auth.is_current_user_platform_admin():
                 raise auth.AuthorizationError(
                     "O recurso externo nao foi registrado para a organizacao ativa. "
                     "Recursos legados exigem migracao explicita."

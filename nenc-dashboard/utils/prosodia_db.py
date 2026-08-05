@@ -70,8 +70,12 @@ def _claim_external_project_resources(
         claim_external_resource("whatsapp_api_project", api_project_id)
 
 
+def _is_platform_admin() -> bool:
+    return auth.is_current_user_platform_admin()
+
+
 def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_id: int) -> bool:
-    if not organization_id:
+    if not organization_id or _is_platform_admin():
         return bool(conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone())
     return bool(
         conn.execute(
@@ -82,7 +86,7 @@ def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_
 
 
 def _audio_is_visible(conn: sqlite3.Connection, audio_id: int, organization_id: int) -> bool:
-    if not organization_id:
+    if not organization_id or _is_platform_admin():
         return bool(conn.execute("SELECT 1 FROM audios WHERE id = ?", (audio_id,)).fetchone())
     return bool(
         conn.execute(
@@ -465,53 +469,91 @@ def update_project(
     """Atualiza os campos de um projeto existente."""
     _claim_external_project_resources(whatsapp_campaign_id, api_project_id)
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        result = conn.execute(
-            """UPDATE projects
-               SET name=?,
-                   especialidade=?,
-                   historico=?,
-                   problemas=?,
-                   questions=?,
-                   entities=?,
-                   briefing_filename=?,
-                   briefing_text=?,
-                   whatsapp_campaign_id=?,
-                   quality_thresholds=?,
-                   api_project_id=?,
-                   qr_verification_text=?
-               WHERE id=? AND organization_id=?""",
-            (
-                name,
-                especialidade,
-                historico,
-                problemas,
-                questions,
-                entities,
-                briefing_filename,
-                briefing_text,
-                whatsapp_campaign_id,
-                quality_thresholds,
-                api_project_id,
-                qr_verification_text,
-                project_id,
-                organization_id,
-            ),
-        )
+        if not organization_id or is_admin:
+            result = conn.execute(
+                """UPDATE projects
+                   SET name=?,
+                       especialidade=?,
+                       historico=?,
+                       problemas=?,
+                       questions=?,
+                       entities=?,
+                       briefing_filename=?,
+                       briefing_text=?,
+                       whatsapp_campaign_id=?,
+                       quality_thresholds=?,
+                       api_project_id=?,
+                       qr_verification_text=?
+                   WHERE id=?""",
+                (
+                    name,
+                    especialidade,
+                    historico,
+                    problemas,
+                    questions,
+                    entities,
+                    briefing_filename,
+                    briefing_text,
+                    whatsapp_campaign_id,
+                    quality_thresholds,
+                    api_project_id,
+                    qr_verification_text,
+                    project_id,
+                ),
+            )
+        else:
+            result = conn.execute(
+                """UPDATE projects
+                   SET name=?,
+                       especialidade=?,
+                       historico=?,
+                       problemas=?,
+                       questions=?,
+                       entities=?,
+                       briefing_filename=?,
+                       briefing_text=?,
+                       whatsapp_campaign_id=?,
+                       quality_thresholds=?,
+                       api_project_id=?,
+                       qr_verification_text=?
+                   WHERE id=? AND organization_id=?""",
+                (
+                    name,
+                    especialidade,
+                    historico,
+                    problemas,
+                    questions,
+                    entities,
+                    briefing_filename,
+                    briefing_text,
+                    whatsapp_campaign_id,
+                    quality_thresholds,
+                    api_project_id,
+                    qr_verification_text,
+                    project_id,
+                    organization_id,
+                ),
+            )
     if result.rowcount:
-        _audit("prosodia.project.update", "project", project_id, organization_id)
+        _audit("prosodia.project.update", "project", project_id, organization_id or 0)
 
 
 def delete_project(project_id: int) -> None:
     """Remove projeto (e em cascata: áudios, análises, quality_checks)."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        result = conn.execute(
-            "DELETE FROM projects WHERE id = ? AND organization_id = ?",
-            (project_id, organization_id),
-        )
+        if not organization_id or is_admin:
+            result = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        else:
+            result = conn.execute(
+                "DELETE FROM projects WHERE id = ? AND organization_id = ?",
+                (project_id, organization_id),
+            )
     if result.rowcount:
-        _audit("prosodia.project.delete", "project", project_id, organization_id)
+        _audit("prosodia.project.delete", "project", project_id, organization_id or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -530,16 +572,18 @@ def create_audio(
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
+        proj_row = conn.execute("SELECT organization_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        actual_org_id = proj_row["organization_id"] if proj_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO audios
                (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
                 whatsapp_message_id)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
+            (actual_org_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
              whatsapp_message_id),
         )
         audio_id = cur.lastrowid
-    _audit("prosodia.audio.create", "audio", audio_id, organization_id)
+    _audit("prosodia.audio.create", "audio", audio_id, actual_org_id)
     return audio_id
 
 
@@ -822,25 +866,33 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
 def get_audio(audio_id: int) -> Optional[Dict]:
     """Retorna um áudio pelo ID."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM audios WHERE id = ? AND organization_id = ?",
-            (audio_id, organization_id),
-        ).fetchone()
-    _audit("prosodia.audio.read", "audio", audio_id, organization_id)
+        if not organization_id or is_admin:
+            row = conn.execute("SELECT * FROM audios WHERE id = ?", (audio_id,)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM audios WHERE id = ? AND organization_id = ?",
+                (audio_id, organization_id),
+            ).fetchone()
+    _audit("prosodia.audio.read", "audio", audio_id, organization_id or 0)
     return dict(row) if row else None
 
 
 def delete_audio(audio_id: int) -> None:
     """Remove um áudio (cascata: análises, quality_checks)."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        result = conn.execute(
-            "DELETE FROM audios WHERE id = ? AND organization_id = ?",
-            (audio_id, organization_id),
-        )
+        if not organization_id or is_admin:
+            result = conn.execute("DELETE FROM audios WHERE id = ?", (audio_id,))
+        else:
+            result = conn.execute(
+                "DELETE FROM audios WHERE id = ? AND organization_id = ?",
+                (audio_id, organization_id),
+            )
     if result.rowcount:
-        _audit("prosodia.audio.delete", "audio", audio_id, organization_id)
+        _audit("prosodia.audio.delete", "audio", audio_id, organization_id or 0)
 
 
 def update_audio_openai_ids(
@@ -850,15 +902,24 @@ def update_audio_openai_ids(
 ) -> None:
     """Atualiza os IDs de arquivo OpenAI de um áudio."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        result = conn.execute(
-            """UPDATE audios
-               SET openai_file_id_prosodia=?, openai_file_id_transcricao=?
-               WHERE id=? AND organization_id=?""",
-            (file_id_prosodia, file_id_transcricao, audio_id, organization_id),
-        )
+        if not organization_id or is_admin:
+            result = conn.execute(
+                """UPDATE audios
+                   SET openai_file_id_prosodia=?, openai_file_id_transcricao=?
+                   WHERE id=?""",
+                (file_id_prosodia, file_id_transcricao, audio_id),
+            )
+        else:
+            result = conn.execute(
+                """UPDATE audios
+                   SET openai_file_id_prosodia=?, openai_file_id_transcricao=?
+                   WHERE id=? AND organization_id=?""",
+                (file_id_prosodia, file_id_transcricao, audio_id, organization_id),
+            )
     if result.rowcount:
-        _audit("prosodia.audio.update_openai_ids", "audio", audio_id, organization_id)
+        _audit("prosodia.audio.update_openai_ids", "audio", audio_id, organization_id or 0)
 
 
 def update_audio_content(
@@ -869,15 +930,24 @@ def update_audio_content(
 ) -> None:
     """Atualiza os blobs de conteúdo (prosódia, transcrição, sincronizado) de um áudio."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        result = conn.execute(
-            """UPDATE audios
-               SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?
-               WHERE id=? AND organization_id=?""",
-            (prosodia_json, transcricao_csv, sincronizado_csv, audio_id, organization_id),
-        )
+        if not organization_id or is_admin:
+            result = conn.execute(
+                """UPDATE audios
+                   SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?
+                   WHERE id=?""",
+                (prosodia_json, transcricao_csv, sincronizado_csv, audio_id),
+            )
+        else:
+            result = conn.execute(
+                """UPDATE audios
+                   SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?
+                   WHERE id=? AND organization_id=?""",
+                (prosodia_json, transcricao_csv, sincronizado_csv, audio_id, organization_id),
+            )
     if result.rowcount:
-        _audit("prosodia.audio.update_content", "audio", audio_id, organization_id)
+        _audit("prosodia.audio.update_content", "audio", audio_id, organization_id or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -894,26 +964,36 @@ def save_analysis(
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
+        audio_row = conn.execute("SELECT organization_id FROM audios WHERE id = ?", (audio_id,)).fetchone()
+        actual_org_id = audio_row["organization_id"] if audio_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO analyses (organization_id, audio_id, model, analysis_text, citations)
                VALUES (?, ?, ?, ?, ?)""",
-            (organization_id, audio_id, model, analysis_text, json.dumps(citations or [])),
+            (actual_org_id, audio_id, model, analysis_text, json.dumps(citations or [])),
         )
         analysis_id = cur.lastrowid
-    _audit("prosodia.analysis.create", "analysis", analysis_id, organization_id)
+    _audit("prosodia.analysis.create", "analysis", analysis_id, actual_org_id)
     return analysis_id
 
 
 def get_latest_analysis(audio_id: int) -> Optional[Dict]:
     """Retorna a análise mais recente de um áudio, ou None."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        row = conn.execute(
-            """SELECT * FROM analyses WHERE audio_id = ? AND organization_id = ?
-               ORDER BY created_at DESC LIMIT 1""",
-            (audio_id, organization_id),
-        ).fetchone()
-    _audit("prosodia.analysis.read_latest", "audio", audio_id, organization_id)
+        if not organization_id or is_admin:
+            row = conn.execute(
+                """SELECT * FROM analyses WHERE audio_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (audio_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT * FROM analyses WHERE audio_id = ? AND organization_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (audio_id, organization_id),
+            ).fetchone()
+    _audit("prosodia.analysis.read_latest", "audio", audio_id, organization_id or 0)
     if not row:
         return None
     d = dict(row)
@@ -924,12 +1004,19 @@ def get_latest_analysis(audio_id: int) -> Optional[Dict]:
 def get_analyses(audio_id: int) -> List[Dict]:
     """Retorna todas as análises de um áudio, mais recentes primeiro."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM analyses WHERE audio_id = ? AND organization_id = ? ORDER BY created_at DESC",
-            (audio_id, organization_id),
-        ).fetchall()
-    _audit("prosodia.analysis.list", "audio", audio_id, organization_id)
+        if not organization_id or is_admin:
+            rows = conn.execute(
+                "SELECT * FROM analyses WHERE audio_id = ? ORDER BY created_at DESC",
+                (audio_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM analyses WHERE audio_id = ? AND organization_id = ? ORDER BY created_at DESC",
+                (audio_id, organization_id),
+            ).fetchall()
+    _audit("prosodia.analysis.list", "audio", audio_id, organization_id or 0)
     result = []
     for r in rows:
         d = dict(r)
@@ -952,27 +1039,37 @@ def save_project_analysis(
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
+        proj_row = conn.execute("SELECT organization_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        actual_org_id = proj_row["organization_id"] if proj_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO project_analyses
                (organization_id, project_id, model, analysis_text, citations)
                VALUES (?, ?, ?, ?, ?)""",
-            (organization_id, project_id, model, analysis_text, json.dumps(citations or [])),
+            (actual_org_id, project_id, model, analysis_text, json.dumps(citations or [])),
         )
         analysis_id = cur.lastrowid
-    _audit("prosodia.project_analysis.create", "project_analysis", analysis_id, organization_id)
+    _audit("prosodia.project_analysis.create", "project_analysis", analysis_id, actual_org_id)
     return analysis_id
 
 
 def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
     """Retorna a análise geral mais recente de um projeto, ou None."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        row = conn.execute(
-            """SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ?
-               ORDER BY created_at DESC LIMIT 1""",
-            (project_id, organization_id),
-        ).fetchone()
-    _audit("prosodia.project_analysis.read_latest", "project", project_id, organization_id)
+        if not organization_id or is_admin:
+            row = conn.execute(
+                """SELECT * FROM project_analyses WHERE project_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (project_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (project_id, organization_id),
+            ).fetchone()
+    _audit("prosodia.project_analysis.read_latest", "project", project_id, organization_id or 0)
     if not row:
         return None
     d = dict(row)
@@ -983,13 +1080,20 @@ def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
 def get_project_analyses(project_id: int) -> List[Dict]:
     """Retorna histórico de análises gerais de um projeto, mais recentes primeiro."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ? ORDER BY created_at DESC",
-            (project_id, organization_id),
-        ).fetchall()
+        if not organization_id or is_admin:
+            rows = conn.execute(
+                "SELECT * FROM project_analyses WHERE project_id = ? ORDER BY created_at DESC",
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ? ORDER BY created_at DESC",
+                (project_id, organization_id),
+            ).fetchall()
 
-    _audit("prosodia.project_analysis.list", "project", project_id, organization_id)
+    _audit("prosodia.project_analysis.list", "project", project_id, organization_id or 0)
 
     result = []
     for r in rows:
@@ -1013,27 +1117,37 @@ def save_quality_check(
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
+        audio_row = conn.execute("SELECT organization_id FROM audios WHERE id = ?", (audio_id,)).fetchone()
+        actual_org_id = audio_row["organization_id"] if audio_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO quality_checks
                (organization_id, audio_id, overall_status, checks_json, coverage_json)
                VALUES (?, ?, ?, ?, ?)""",
-            (organization_id, audio_id, overall_status, json.dumps(checks), json.dumps(coverage)),
+            (actual_org_id, audio_id, overall_status, json.dumps(checks), json.dumps(coverage)),
         )
         quality_check_id = cur.lastrowid
-    _audit("prosodia.quality_check.create", "quality_check", quality_check_id, organization_id)
+    _audit("prosodia.quality_check.create", "quality_check", quality_check_id, actual_org_id)
     return quality_check_id
 
 
 def get_latest_quality_check(audio_id: int) -> Optional[Dict]:
     """Retorna a verificação de qualidade mais recente de um áudio, ou None."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        row = conn.execute(
-            """SELECT * FROM quality_checks WHERE audio_id = ? AND organization_id = ?
-               ORDER BY created_at DESC LIMIT 1""",
-            (audio_id, organization_id),
-        ).fetchone()
-    _audit("prosodia.quality_check.read_latest", "audio", audio_id, organization_id)
+        if not organization_id or is_admin:
+            row = conn.execute(
+                """SELECT * FROM quality_checks WHERE audio_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (audio_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT * FROM quality_checks WHERE audio_id = ? AND organization_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (audio_id, organization_id),
+            ).fetchone()
+    _audit("prosodia.quality_check.read_latest", "audio", audio_id, organization_id or 0)
     if not row:
         return None
     d = dict(row)
@@ -1056,26 +1170,36 @@ def save_high_activations(audio_id: int, moments: list) -> int:
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
+        audio_row = conn.execute("SELECT organization_id FROM audios WHERE id = ?", (audio_id,)).fetchone()
+        actual_org_id = audio_row["organization_id"] if audio_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO high_activations (organization_id, audio_id, moments_json)
                VALUES (?, ?, ?)""",
-            (organization_id, audio_id, json.dumps(moments)),
+            (actual_org_id, audio_id, json.dumps(moments)),
         )
         activation_id = cur.lastrowid
-    _audit("prosodia.high_activation.create", "high_activation", activation_id, organization_id)
+    _audit("prosodia.high_activation.create", "high_activation", activation_id, actual_org_id)
     return activation_id
 
 
 def get_latest_high_activations(audio_id: int) -> Optional[List[Dict]]:
     """Retorna a lista de momentos de maior ativação mais recente de um áudio, ou None."""
     organization_id = _active_organization_id()
+    is_admin = _is_platform_admin()
     with _connect() as conn:
-        row = conn.execute(
-            """SELECT * FROM high_activations WHERE audio_id = ? AND organization_id = ?
-               ORDER BY created_at DESC LIMIT 1""",
-            (audio_id, organization_id),
-        ).fetchone()
-    _audit("prosodia.high_activation.read_latest", "audio", audio_id, organization_id)
+        if not organization_id or is_admin:
+            row = conn.execute(
+                """SELECT * FROM high_activations WHERE audio_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (audio_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT * FROM high_activations WHERE audio_id = ? AND organization_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (audio_id, organization_id),
+            ).fetchone()
+    _audit("prosodia.high_activation.read_latest", "audio", audio_id, organization_id or 0)
     if not row:
         return None
     d = dict(row)

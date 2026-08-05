@@ -177,8 +177,8 @@ else:
                 from utils.organization_data import list_external_resources
                 from utils.prosodia_db import DEFAULT_QR_VERIFICATION_TEXT, update_project
 
-                # Obter números de WhatsApp cadastrados na organização (Administração de Usuários)
-                org_phones = auth.get_organization_whatsapp_numbers(auth.active_organization_id(user))
+                target_org_id = proj.get("organization_id") or auth.active_organization_id(user)
+                org_phones = auth.get_organization_whatsapp_numbers(target_org_id)
 
                 # Complementar com contatos externos salvos se necessário
                 if not org_phones:

@@ -448,15 +448,19 @@ def get_all_audios(phone: Optional[str] = None, limit: int = 500, project_id: Op
     elif phone:
         normalized_phone = _normalize_phone(phone)
         contact_ids_by_phone = _owned_contact_ids_by_phone()
-        if normalized_phone not in contact_ids_by_phone:
+        if normalized_phone not in contact_ids_by_phone and not auth.is_current_user_platform_admin():
             raise auth.AuthorizationError("O telefone nao pertence a organizacao ativa.")
         params["phone"] = normalized_phone
         parent_resource_type = "whatsapp_contact"
-        parent_resource_id = contact_ids_by_phone[normalized_phone]
+        parent_resource_id = contact_ids_by_phone.get(normalized_phone, f"admin_{normalized_phone}")
     else:
-        raise auth.AuthorizationError(
-            "Informe um projeto ou telefone pertencente a organizacao ativa."
-        )
+        if auth.is_current_user_platform_admin():
+            parent_resource_type = "whatsapp_api_project"
+            parent_resource_id = 0
+        else:
+            raise auth.AuthorizationError(
+                "Informe um projeto ou telefone pertencente a organizacao ativa."
+            )
     with _client() as c:
         resp = c.get("/audios", params=params)
         resp.raise_for_status()

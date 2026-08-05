@@ -1126,6 +1126,15 @@ def active_organization_id(
     return organization_id
 
 
+def is_current_user_platform_admin(database_path: Optional[os.PathLike] = None) -> bool:
+    """Return True if the active user is a platform administrator."""
+    try:
+        user = current_user(database_path)
+        return bool(user and user.is_platform_admin)
+    except Exception:
+        return False
+
+
 def audit_business_access(
     action: str,
     target_type: str,
