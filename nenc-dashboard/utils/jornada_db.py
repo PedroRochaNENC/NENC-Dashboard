@@ -46,16 +46,44 @@ def _connect() -> Iterator[sqlite3.Connection]:
 
 
 def _active_organization_id() -> int:
-    try:
-        user = auth.current_user()
-        if user is not None:
-            return auth.active_organization_id(user)
-    except Exception:
-        pass
-    try:
-        return auth.active_organization_id()
-    except Exception:
-        return 1
+    """Organização selecionada, validada pelo servidor.
+
+    Os erros propagam de propósito: um fallback silencioso faria a página
+    ler e gravar dados na organização errada.
+    """
+    user = auth.current_user()
+    if user is not None:
+        return auth.active_organization_id(user)
+    return auth.active_organization_id()
+
+
+def _fallback_organization_id() -> int:
+    """Organização do próprio usuário, para quando nenhuma está selecionada."""
+    user = auth.current_user()
+    if user is None:
+        raise auth.AuthorizationError(
+            "Nenhuma sessao ativa para determinar a organizacao."
+        )
+    return user.organization_id
+
+
+def _effective_organization_id(conn: sqlite3.Connection, project_id: int) -> int:
+    """Organização dona dos registros filhos de um projeto.
+
+    Com uma organização selecionada, mantém o escopo do usuário (isolamento).
+    Em 'Todas as Organizações' (0), adota a organização dona do projeto: gravar
+    com id 0 violaria a foreign key de organizations(id).
+    """
+    org_id = _active_organization_id()
+    if org_id:
+        return org_id
+    row = conn.execute(
+        "SELECT organization_id FROM jc_projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    if row and row["organization_id"]:
+        return int(row["organization_id"])
+    return _fallback_organization_id()
 
 
 def _dataframe_to_blob(df: Optional[pd.DataFrame]) -> Optional[bytes]:
@@ -184,9 +212,8 @@ def get_project(project_id: int) -> Optional[Dict[str, Any]]:
     """Retorna detalhes de um projeto específico."""
     init_db()
     org_id = _active_organization_id()
-    is_admin = auth.is_current_user_platform_admin()
     with _connect() as conn:
-        if not org_id or is_admin:
+        if not org_id:
             row = conn.execute(
                 "SELECT * FROM jc_projects WHERE id = ?",
                 (project_id,),
@@ -210,10 +237,8 @@ def create_project(
     vector_store_id: str = "",
 ) -> int:
     """Cria um novo projeto de Jornada de Compra."""
-    org_id = _active_organization_id()
-    if not org_id:
-        user = auth.current_user()
-        org_id = user.organization_id if user else 1
+    init_db()
+    org_id = _active_organization_id() or _fallback_organization_id()
     with _connect() as conn:
         cursor = conn.execute(
             """
@@ -314,14 +339,14 @@ def save_dataset(
 ) -> int:
     """Salva os DataFrames de Eye-Tracking para um projeto."""
     init_db()
-    org_id = _active_organization_id()
-    
+
     tabelas_blob = _dataframe_to_blob(tabelas)
     por_marca_blob = _dataframe_to_blob(por_marca)
     medias_blob = _dataframe_to_blob(medias)
     visual_share_blob = _dataframe_to_blob(visual_share)
 
     with _connect() as conn:
+        org_id = _effective_organization_id(conn, project_id)
         # Remover dataset anterior se houver
         conn.execute(
             "DELETE FROM jc_datasets WHERE project_id = ? AND organization_id = ?",
@@ -353,8 +378,8 @@ def save_dataset(
 def get_dataset(project_id: int) -> Dict[str, pd.DataFrame]:
     """Recupera os DataFrames de Eye-Tracking de um projeto."""
     init_db()
-    org_id = _active_organization_id()
     with _connect() as conn:
+        org_id = _effective_organization_id(conn, project_id)
         row = conn.execute(
             """
             SELECT tabelas_blob, por_marca_blob, medias_blob, visual_share_blob
@@ -398,8 +423,8 @@ def save_interview(
 ) -> int:
     """Salva uma entrevista qualitativa vinculada ao projeto."""
     init_db()
-    org_id = _active_organization_id()
     with _connect() as conn:
+        org_id = _effective_organization_id(conn, project_id)
         cursor = conn.execute(
             """
             INSERT INTO jc_interviews (organization_id, project_id, titulo, participante_id, texto)
@@ -417,8 +442,8 @@ def save_interview(
 def get_interviews(project_id: int) -> List[Dict[str, Any]]:
     """Retorna lista de entrevistas salvas para um projeto."""
     init_db()
-    org_id = _active_organization_id()
     with _connect() as conn:
+        org_id = _effective_organization_id(conn, project_id)
         rows = conn.execute(
             """
             SELECT * FROM jc_interviews
@@ -454,9 +479,9 @@ def save_analysis(
 ) -> int:
     """Salva um relatório de análise de IA gerado."""
     init_db()
-    org_id = _active_organization_id()
     citations_json = json.dumps(citations or [], ensure_ascii=False)
     with _connect() as conn:
+        org_id = _effective_organization_id(conn, project_id)
         cursor = conn.execute(
             """
             INSERT INTO jc_analyses (organization_id, project_id, model, analysis_text, citations)
@@ -474,8 +499,8 @@ def save_analysis(
 def get_analyses(project_id: int) -> List[Dict[str, Any]]:
     """Retorna histórico de análises salvas para o projeto."""
     init_db()
-    org_id = _active_organization_id()
     with _connect() as conn:
+        org_id = _effective_organization_id(conn, project_id)
         rows = conn.execute(
             """
             SELECT * FROM jc_analyses

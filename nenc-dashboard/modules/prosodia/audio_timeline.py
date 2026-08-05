@@ -8,23 +8,24 @@ Exibe:
 """
 
 import io
+import os
+import secrets
+import threading
+import time
 import streamlit as st
 from utils import auth
 
 auth.require_module("prosodia")
 
 import pandas as pd
-import base64
+import html
 
 from utils.prosodia_db import init_db, get_audio, get_project
-from utils.prosodia_loader import load_prosodia_from_uploads, _session_id_from_name
+from utils.prosodia_loader import load_prosodia_from_uploads
 from utils.organization_data import list_external_resources
 from utils.prosodia_charts import (
     create_vad_timeline,
     create_speaker_stats,
-    create_message_timeline,
-    create_acoustic_timeline,
-    create_transcription_markers,
 )
 
 init_db()
@@ -35,6 +36,51 @@ def _load_audio_bytes(api_audio_id: int) -> bytes:
     if not is_configured():
         raise RuntimeError("WhatsApp API não está configurada.")
     return get_audio_file(api_audio_id, kind="wav")
+
+
+# Downloads de áudio em andamento, por caminho de destino. Vive no processo e não
+# em st.session_state porque quem limpa a marcação é a thread de download, que
+# roda sem ScriptRunContext e não pode tocar no estado da sessão.
+_AUDIO_DOWNLOADS: set[str] = set()
+_AUDIO_DOWNLOADS_LOCK = threading.Lock()
+
+# Idade máxima de um .wav no diretório static servido publicamente.
+_STATIC_AUDIO_TTL_SECONDS = 2 * 60 * 60
+
+
+def _claim_audio_download(destino: str) -> bool:
+    """Marca um download como em andamento. False se outra thread já o iniciou."""
+    with _AUDIO_DOWNLOADS_LOCK:
+        if destino in _AUDIO_DOWNLOADS:
+            return False
+        _AUDIO_DOWNLOADS.add(destino)
+        return True
+
+
+def _release_audio_download(destino: str) -> None:
+    with _AUDIO_DOWNLOADS_LOCK:
+        _AUDIO_DOWNLOADS.discard(destino)
+
+
+def _purge_stale_static_audio(static_dir: str) -> None:
+    """Remove áudios antigos do diretório público, incluindo nomes previsíveis.
+
+    O diretório static é servido sem autenticação, então cada arquivo deixado
+    para trás é uma gravação de entrevista exposta por tempo indeterminado.
+    """
+    agora = time.time()
+    for nome in os.listdir(static_dir):
+        if not nome.startswith("audio_") or not nome.endswith((".wav", ".wav.part")):
+            continue
+        caminho = os.path.join(static_dir, nome)
+        try:
+            # Nomes no formato antigo (audio_<id>.wav) são enumeráveis: descartar
+            # sempre, mesmo recentes.
+            legado = nome[len("audio_"):-len(".wav")].isdigit() if nome.endswith(".wav") else False
+            if legado or (agora - os.path.getmtime(caminho)) > _STATIC_AUDIO_TTL_SECONDS:
+                os.remove(caminho)
+        except OSError:
+            pass
 
 
 # ------------------------------------------------------------------
@@ -253,35 +299,47 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
 
     # Obter áudio da API
     audio_html = ""
+    audio_filename = ""
     if audio_api_id:
-        import os
-        import threading
-
         # Certificar que o diretório static existe
         static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
         os.makedirs(static_dir, exist_ok=True)
-        audio_filename = f"audio_{audio_id}.wav"
+        _purge_stale_static_audio(static_dir)
+
+        # O diretorio static do Streamlit e servido SEM autenticacao. Um nome
+        # derivado do audio_id seria sequencial e trivial de enumerar, expondo a
+        # gravacao de qualquer participante. O nome passa a ser um token aleatorio,
+        # preso a esta sessao, e o arquivo e removido por idade.
+        name_key = f"audio_static_name_{audio_id}"
+        if name_key not in st.session_state:
+            st.session_state[name_key] = "audio_{}.wav".format(secrets.token_urlsafe(24))
+        audio_filename = st.session_state[name_key]
         audio_filepath = os.path.join(static_dir, audio_filename)
 
         # Se o arquivo não existir localmente no static, iniciar download em background
         if not os.path.exists(audio_filepath):
-            if f"audio_loading_{audio_id}" not in st.session_state:
-                st.session_state[f"audio_loading_{audio_id}"] = False
+            # A flag de controle nao pode viver em st.session_state: a thread roda
+            # sem ScriptRunContext e nao pode tocar no estado da sessao.
+            if _claim_audio_download(audio_filepath):
 
-            if not st.session_state[f"audio_loading_{audio_id}"]:
-                st.session_state[f"audio_loading_{audio_id}"] = True
-
-                def download_bg():
+                def download_bg(api_id=audio_api_id, destino=audio_filepath):
+                    # Baixa para um arquivo temporario e renomeia: assim o player
+                    # nunca busca um .wav escrito pela metade.
+                    parcial = destino + ".part"
                     try:
-                        audio_bytes = _load_audio_bytes(audio_api_id)
-                        with open(audio_filepath, "wb") as f:
+                        audio_bytes = _load_audio_bytes(api_id)
+                        with open(parcial, "wb") as f:
                             f.write(audio_bytes)
+                        os.replace(parcial, destino)
                     except Exception:
-                        pass
+                        try:
+                            os.remove(parcial)
+                        except OSError:
+                            pass
                     finally:
-                        st.session_state[f"audio_loading_{audio_id}"] = False
+                        _release_audio_download(destino)
 
-                threading.Thread(target=download_bg).start()
+                threading.Thread(target=download_bg, daemon=True).start()
 
         audio_html = f"""
         <div id="audio-loading-placeholder" style="padding: 12px; background: #21262d; border-radius: 8px; margin-bottom: 15px; color: #8b949e; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
@@ -301,12 +359,16 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     # Gerar os elementos HTML de cada turno
     html_turns = []
     for idx, item in enumerate(transcript_items):
-        escaped_text = item["text"].replace('"', '&quot;').replace("'", "&#39;")
+        # Transcricao, nome do locutor e cor vem da API; escapar tudo que entra no HTML.
+        escaped_text = html.escape(str(item["text"]))
+        escaped_speaker = html.escape(str(item["speaker"]))
+        escaped_timestamp = html.escape(str(item["timestamp"]))
+        escaped_color = html.escape(str(item["color"]), quote=True)
         html_turns.append(
-            f'<div class="transcript-turn" id="turn-{idx}" data-seconds="{item["seconds"]}" data-end="{item["end_seconds"]}" data-color="{item["color"]}" style="padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid transparent; background-color: #21262d; transition: all 0.25s ease;">'
-            f'  <div style="font-weight: bold; color: {item["color"]}; font-size: 0.9em; margin-bottom: 4px; display: flex; justify-content: space-between;">'
-            f'    <span>{item["speaker"]}</span>'
-            f'    <span style="font-weight: normal; color: #8b949e; font-size: 0.85em;">{item["timestamp"]}</span>'
+            f'<div class="transcript-turn" id="turn-{idx}" data-seconds="{item["seconds"]}" data-end="{item["end_seconds"]}" data-color="{escaped_color}" style="padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid transparent; background-color: #21262d; transition: all 0.25s ease;">'
+            f'  <div style="font-weight: bold; color: {escaped_color}; font-size: 0.9em; margin-bottom: 4px; display: flex; justify-content: space-between;">'
+            f'    <span>{escaped_speaker}</span>'
+            f'    <span style="font-weight: normal; color: #8b949e; font-size: 0.85em;">{escaped_timestamp}</span>'
             f'  </div>'
             f'  <div style="color: #c9d1d9; font-size: 0.95em; line-height: 1.45;">{escaped_text}</div>'
             f'</div>'
@@ -699,8 +761,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
             // Background audio loading and retry logic
             if (audio && audio.id === 'audio-player') {
                 const placeholder = document.getElementById('audio-loading-placeholder');
-                const audioId = __AUDIO_ID__;
-                const audioUrl = "/app/static/audio_" + audioId + ".wav";
+                const audioUrl = "/app/static/" + __AUDIO_FILENAME__;
                 
                 let retries = 0;
                 const maxRetries = 60; // 2 minutos
@@ -810,7 +871,8 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     widget_html = widget_html.replace("__TURNS_JOINED__", turns_joined)
     widget_html = widget_html.replace("__ACOUSTIC_DATA__", sinc_json)
     widget_html = widget_html.replace("__FOCUS_SECONDS__", str(focus_seconds))
-    widget_html = widget_html.replace("__AUDIO_ID__", str(audio_id))
+    # json.dumps produz um literal JS com aspas e escape corretos.
+    widget_html = widget_html.replace("__AUDIO_FILENAME__", json.dumps(audio_filename))
 
     # Renderizar o widget customizado unificado
     import streamlit.components.v1 as components

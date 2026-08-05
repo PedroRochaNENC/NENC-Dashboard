@@ -12,7 +12,6 @@ auth.require_module("prosodia")
 
 import pandas as pd
 import io as _io
-from datetime import datetime
 from utils.whatsapp_api_client import (
     get_all_audios,
     get_audio_status,

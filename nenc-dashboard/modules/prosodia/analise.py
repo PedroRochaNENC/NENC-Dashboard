@@ -14,7 +14,6 @@ from utils import auth
 from utils.prosodia_loader import (
     get_prosodia_sessions,
     get_prosodia_speakers,
-    get_prosodia_summary,
 )
 from utils.prosodia_charts import (
     create_vad_timeline,

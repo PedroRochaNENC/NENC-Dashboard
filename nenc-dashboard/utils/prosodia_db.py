@@ -75,7 +75,7 @@ def _is_platform_admin() -> bool:
 
 
 def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_id: int) -> bool:
-    if not organization_id or _is_platform_admin():
+    if not organization_id:
         return bool(conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone())
     return bool(
         conn.execute(
@@ -86,7 +86,7 @@ def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_
 
 
 def _audio_is_visible(conn: sqlite3.Connection, audio_id: int, organization_id: int) -> bool:
-    if not organization_id or _is_platform_admin():
+    if not organization_id:
         return bool(conn.execute("SELECT 1 FROM audios WHERE id = ?", (audio_id,)).fetchone())
     return bool(
         conn.execute(
@@ -264,6 +264,8 @@ def init_db() -> None:
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
             conn.execute("ALTER TABLE audios ADD COLUMN whatsapp_message_id TEXT")
+        if "duration_seconds" not in audio_cols:
+            conn.execute("ALTER TABLE audios ADD COLUMN duration_seconds REAL")
 
         for table_name in (
             "projects",
@@ -430,9 +432,8 @@ def update_project(
     """Atualiza os campos de um projeto existente."""
     _claim_external_project_resources(whatsapp_campaign_id, api_project_id)
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             result = conn.execute(
                 """UPDATE projects
                    SET name=?,
@@ -504,9 +505,8 @@ def update_project(
 def delete_project(project_id: int) -> None:
     """Remove projeto (e em cascata: áudios, análises, quality_checks)."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             result = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         else:
             result = conn.execute(
@@ -695,9 +695,7 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.project_id,
                     a.session_id,
                     a.created_at,
-                    a.prosodia_json,
-                    a.transcricao_csv,
-                    a.sincronizado_csv,
+                    a.duration_seconds,
                     a.openai_file_id_prosodia,
                     a.openai_file_id_transcricao,
                     (
@@ -740,9 +738,7 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.project_id,
                     a.session_id,
                     a.created_at,
-                    a.prosodia_json,
-                    a.transcricao_csv,
-                    a.sincronizado_csv,
+                    a.duration_seconds,
                     a.openai_file_id_prosodia,
                     a.openai_file_id_transcricao,
                     (
@@ -811,12 +807,11 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
         )
         d["quality_status"] = d.get("quality_status") or "pending"
 
-        # Calculate duration
-        dur_s = _calculate_duration(
-            d.get("prosodia_json"),
-            d.get("transcricao_csv"),
-            d.get("sincronizado_csv"),
-        )
+        # A duração fica materializada na coluna. Carregar os blobs de todos os
+        # áudios só para recalculá-la a cada render lia o banco quase inteiro.
+        dur_s = d.get("duration_seconds")
+        if dur_s is None:
+            dur_s = _backfill_audio_duration(int(d["id"]))
         d["duration_str"] = _format_duration(dur_s)
 
         result.append(d)
@@ -824,12 +819,32 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
     return result
 
 
+def _backfill_audio_duration(audio_id: int) -> float:
+    """Calcula e materializa a duração de um áudio ainda não medido."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT prosodia_json, transcricao_csv, sincronizado_csv
+            FROM audios WHERE id = ?
+            """,
+            (audio_id,),
+        ).fetchone()
+        if row is None:
+            return 0.0
+        duration = _calculate_duration(
+            row["prosodia_json"], row["transcricao_csv"], row["sincronizado_csv"]
+        )
+        conn.execute(
+            "UPDATE audios SET duration_seconds = ? WHERE id = ?", (duration, audio_id)
+        )
+    return duration
+
+
 def get_audio(audio_id: int) -> Optional[Dict]:
     """Retorna um áudio pelo ID."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             row = conn.execute("SELECT * FROM audios WHERE id = ?", (audio_id,)).fetchone()
         else:
             row = conn.execute(
@@ -843,9 +858,8 @@ def get_audio(audio_id: int) -> Optional[Dict]:
 def delete_audio(audio_id: int) -> None:
     """Remove um áudio (cascata: análises, quality_checks)."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             result = conn.execute("DELETE FROM audios WHERE id = ?", (audio_id,))
         else:
             result = conn.execute(
@@ -863,9 +877,8 @@ def update_audio_openai_ids(
 ) -> None:
     """Atualiza os IDs de arquivo OpenAI de um áudio."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             result = conn.execute(
                 """UPDATE audios
                    SET openai_file_id_prosodia=?, openai_file_id_transcricao=?
@@ -891,19 +904,22 @@ def update_audio_content(
 ) -> None:
     """Atualiza os blobs de conteúdo (prosódia, transcrição, sincronizado) de um áudio."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        # duration_seconds volta a NULL: o conteudo mudou, a duracao materializada
+        # ficou obsoleta e sera recalculada na proxima leitura.
+        if not organization_id:
             result = conn.execute(
                 """UPDATE audios
-                   SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?
+                   SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?,
+                       duration_seconds=NULL
                    WHERE id=?""",
                 (prosodia_json, transcricao_csv, sincronizado_csv, audio_id),
             )
         else:
             result = conn.execute(
                 """UPDATE audios
-                   SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?
+                   SET prosodia_json=?, transcricao_csv=?, sincronizado_csv=?,
+                       duration_seconds=NULL
                    WHERE id=? AND organization_id=?""",
                 (prosodia_json, transcricao_csv, sincronizado_csv, audio_id, organization_id),
             )
@@ -940,9 +956,8 @@ def save_analysis(
 def get_latest_analysis(audio_id: int) -> Optional[Dict]:
     """Retorna a análise mais recente de um áudio, ou None."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             row = conn.execute(
                 """SELECT * FROM analyses WHERE audio_id = ?
                    ORDER BY created_at DESC LIMIT 1""",
@@ -965,9 +980,8 @@ def get_latest_analysis(audio_id: int) -> Optional[Dict]:
 def get_analyses(audio_id: int) -> List[Dict]:
     """Retorna todas as análises de um áudio, mais recentes primeiro."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             rows = conn.execute(
                 "SELECT * FROM analyses WHERE audio_id = ? ORDER BY created_at DESC",
                 (audio_id,),
@@ -1016,9 +1030,8 @@ def save_project_analysis(
 def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
     """Retorna a análise geral mais recente de um projeto, ou None."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             row = conn.execute(
                 """SELECT * FROM project_analyses WHERE project_id = ?
                    ORDER BY created_at DESC LIMIT 1""",
@@ -1041,9 +1054,8 @@ def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
 def get_project_analyses(project_id: int) -> List[Dict]:
     """Retorna histórico de análises gerais de um projeto, mais recentes primeiro."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             rows = conn.execute(
                 "SELECT * FROM project_analyses WHERE project_id = ? ORDER BY created_at DESC",
                 (project_id,),
@@ -1094,9 +1106,8 @@ def save_quality_check(
 def get_latest_quality_check(audio_id: int) -> Optional[Dict]:
     """Retorna a verificação de qualidade mais recente de um áudio, ou None."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             row = conn.execute(
                 """SELECT * FROM quality_checks WHERE audio_id = ?
                    ORDER BY created_at DESC LIMIT 1""",
@@ -1146,9 +1157,8 @@ def save_high_activations(audio_id: int, moments: list) -> int:
 def get_latest_high_activations(audio_id: int) -> Optional[List[Dict]]:
     """Retorna a lista de momentos de maior ativação mais recente de um áudio, ou None."""
     organization_id = _active_organization_id()
-    is_admin = _is_platform_admin()
     with _connect() as conn:
-        if not organization_id or is_admin:
+        if not organization_id:
             row = conn.execute(
                 """SELECT * FROM high_activations WHERE audio_id = ?
                    ORDER BY created_at DESC LIMIT 1""",

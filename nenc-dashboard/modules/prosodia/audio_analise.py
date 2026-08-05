@@ -29,7 +29,6 @@ from utils.prosodia_db import (
     save_analysis,
     get_latest_quality_check,
     save_quality_check,
-    update_audio_openai_ids,
     save_high_activations,
     get_latest_high_activations,
 )
@@ -472,9 +471,76 @@ with h4:
     if st.button("← Entrevistas", width='stretch'):
         st.switch_page("modules/prosodia/entrevistas.py")
 
+# ------------------------------------------------------------------
+# Sidebar
+# ------------------------------------------------------------------
+with st.sidebar:
+    st.header("⚙️ Controles")
+    analysis_mode = st.radio("Modo de análise", ["Rápida (1 chamada)", "Aprofundada (2 etapas)"])
+    use_kb = st.checkbox("Usar Base de Conhecimento", value=True)
+    openai_model = st.selectbox(
+        "Modelo OpenAI",
+        ["gpt-4.1-mini", "gpt-4.1", "gpt-4o"],
+        key="an_oai_model",
+    )
+    groq_key = st.text_input("Chave API Groq (alternativa)", type="password", key="an_groq_key")
+    groq_model = st.selectbox(
+        "Modelo Groq",
+        ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
+        key="an_groq_model",
+    )
+
+# ------------------------------------------------------------------
+# Montar contexto de análise
+# ------------------------------------------------------------------
+proj_ctx = {
+    "nome": project.get("name", ""),
+    "especialidade": project.get("especialidade", ""),
+    "historico": project.get("historico", ""),
+    "problemas": project.get("problemas", ""),
+    "briefing": project.get("briefing_text", ""),
+}
+
+tables_lines = []
+if not vad_df.empty and "duration" in vad_df.columns:
+    total_s = vad_df["duration"].sum()
+    tables_lines.append(f"VAD: {len(vad_df)} segmentos, {total_s:.1f}s de fala total.")
+if not tr_df.empty and "SpeakerName" in tr_df.columns:
+    by_spk = (
+        tr_df.groupby("SpeakerName")
+        .agg(msgs=("Text", "count"), words=("word_count", "sum"))
+        .reset_index()
+    )
+    tables_lines.append("Participação por locutor:\n" + by_spk.to_string(index=False))
+tables_text = "\n\n".join(tables_lines)
+
+if high_activations_list:
+    lines = [
+        "Momentos de Maior Ativação Prosódica na Entrevista:",
+        "| Tópico | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for m in high_activations_list:
+        lines.append(
+            f"| {m.get('topic') or extract_topic_from_text(m.get('Text',''))} | "
+            f"{m.get('SpeakerName','Desconhecido')} | {m.get('Timestamp','')} | "
+            f"\"{m.get('Text','').replace('|','/')}\" | {m.get('dim_arousal',0.0):.2f} | "
+            f"{m.get('f0_variacao',0.0):.2f} | {m.get('loudness_variacao',0.0):.2f} |"
+        )
+    tables_text += "\n\n" + "\n".join(lines)
+
+openai_client = get_openai_client()
+vs_id = get_prosodia_vector_store_id() if use_kb else None
+
+# ------------------------------------------------------------------
+# Reprocessamento via WhatsApp API (botao no cabecalho).
+# Fica apos os controles da sidebar e o contexto do projeto porque o handler
+# depende de openai_client/vs_id/proj_ctx/modelos definidos acima.
+# ------------------------------------------------------------------
 if is_wa and h2 is not None:
     h2.write("")
     if h2.button("🔄 Reprocessar", type="secondary", width='stretch', help="Solicitar reprocessamento da transcrição e NencLex via WhatsApp API"):
+        questions = get_project_questions(project_id) if project_id else []
         parts = sid.split("_")
         if len(parts) >= 3:
             try:
@@ -672,67 +738,6 @@ if is_wa and h2 is not None:
                         st.error("Erro ao baixar o resultado do processamento da API.")
             except Exception as e:
                 st.error(f"Ocorreu um erro no reprocessamento: {e}")
-
-# ------------------------------------------------------------------
-# Sidebar
-# ------------------------------------------------------------------
-with st.sidebar:
-    st.header("⚙️ Controles")
-    analysis_mode = st.radio("Modo de análise", ["Rápida (1 chamada)", "Aprofundada (2 etapas)"])
-    use_kb = st.checkbox("Usar Base de Conhecimento", value=True)
-    openai_model = st.selectbox(
-        "Modelo OpenAI",
-        ["gpt-4.1-mini", "gpt-4.1", "gpt-4o"],
-        key="an_oai_model",
-    )
-    groq_key = st.text_input("Chave API Groq (alternativa)", type="password", key="an_groq_key")
-    groq_model = st.selectbox(
-        "Modelo Groq",
-        ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
-        key="an_groq_model",
-    )
-
-# ------------------------------------------------------------------
-# Montar contexto de análise
-# ------------------------------------------------------------------
-proj_ctx = {
-    "nome": project.get("name", ""),
-    "especialidade": project.get("especialidade", ""),
-    "historico": project.get("historico", ""),
-    "problemas": project.get("problemas", ""),
-    "briefing": project.get("briefing_text", ""),
-}
-
-tables_lines = []
-if not vad_df.empty and "duration" in vad_df.columns:
-    total_s = vad_df["duration"].sum()
-    tables_lines.append(f"VAD: {len(vad_df)} segmentos, {total_s:.1f}s de fala total.")
-if not tr_df.empty and "SpeakerName" in tr_df.columns:
-    by_spk = (
-        tr_df.groupby("SpeakerName")
-        .agg(msgs=("Text", "count"), words=("word_count", "sum"))
-        .reset_index()
-    )
-    tables_lines.append("Participação por locutor:\n" + by_spk.to_string(index=False))
-tables_text = "\n\n".join(tables_lines)
-
-if high_activations_list:
-    lines = [
-        "Momentos de Maior Ativação Prosódica na Entrevista:",
-        "| Tópico | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for m in high_activations_list:
-        lines.append(
-            f"| {m.get('topic') or extract_topic_from_text(m.get('Text',''))} | "
-            f"{m.get('SpeakerName','Desconhecido')} | {m.get('Timestamp','')} | "
-            f"\"{m.get('Text','').replace('|','/')}\" | {m.get('dim_arousal',0.0):.2f} | "
-            f"{m.get('f0_variacao',0.0):.2f} | {m.get('loudness_variacao',0.0):.2f} |"
-        )
-    tables_text += "\n\n" + "\n".join(lines)
-
-openai_client = get_openai_client()
-vs_id = get_prosodia_vector_store_id() if use_kb else None
 
 # Ordem visual da página: Qualidade primeiro, Análise depois
 quality_section = st.container()

@@ -18,7 +18,7 @@ Cobertura de perguntas:
 
 import re
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import pandas as pd
 
 

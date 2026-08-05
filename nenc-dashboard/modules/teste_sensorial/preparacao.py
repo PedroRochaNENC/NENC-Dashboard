@@ -10,7 +10,6 @@ from utils import auth
 
 auth.require_module("teste_sensorial")
 
-import pandas as pd
 from pathlib import Path
 
 from utils.data_loader import (

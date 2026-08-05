@@ -11,7 +11,6 @@ from utils import auth
 user = auth.require_module("jornada_compra")
 
 from utils import jornada_db
-from utils.organization_data import claim_external_resource
 
 jornada_db.init_db()
 

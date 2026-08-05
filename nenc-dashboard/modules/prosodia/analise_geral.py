@@ -28,17 +28,11 @@ from utils.prosodia_db import (
 from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
 from utils.prosodia_charts import (
     create_speaker_stats,
-    create_acoustic_timeline,
     create_project_acoustic_comparison,
     create_project_emotion_distribution,
     create_project_word_ranking,
 )
 from utils.prosodia_prompts import (
-    PROSODIA_SYSTEM_PROMPT,
-    PROSODIA_SYSTEM_PROMPT_STATISTICAL,
-    PROSODIA_SYSTEM_PROMPT_STRATEGIC,
-    build_prosodia_user_prompt,
-    PROSODIA_PROJECT_SYSTEM_PROMPT,
     PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
     PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC,
     get_prosodia_project_system_prompt,

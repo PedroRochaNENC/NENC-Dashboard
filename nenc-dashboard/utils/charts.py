@@ -12,8 +12,7 @@ Gera subplots com eixo X compartilhado (Tempo_global) para:
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 # ---------------------------------------------------------------------------
 # Paletas

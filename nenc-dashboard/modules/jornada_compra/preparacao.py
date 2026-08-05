@@ -16,7 +16,6 @@ from utils.jornada_loader import (
     load_jornada_from_upload,
     get_jornada_summary,
     get_jornada_participants,
-    get_jornada_aois,
     get_jornada_marcas,
 )
 from utils.organization_data import hydrate_session_state, save_session_state

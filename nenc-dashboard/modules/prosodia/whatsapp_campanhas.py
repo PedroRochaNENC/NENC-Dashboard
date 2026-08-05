@@ -10,7 +10,6 @@ from utils import auth
 auth.require_module("prosodia")
 
 import pandas as pd
-from datetime import datetime
 from utils.whatsapp_api_client import (
     get_campaigns,
     get_campaign,

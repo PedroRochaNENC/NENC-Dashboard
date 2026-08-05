@@ -2,8 +2,6 @@
 Neuro Prompts — Curated system prompt and prompt builder for neuromarketing analysis.
 """
 
-from utils.jornada_loader import KEY_METRICS
-
 NEURO_SYSTEM_PROMPT = """\
 Você é um especialista sênior em neuromarketing, com profundo conhecimento em \
 análise de dados de eye-tracking, atenção visual e comportamento do consumidor \

@@ -141,7 +141,6 @@ if wa_configured():
         from utils.whatsapp_api_client import (
             get_audio_result,
             map_api_result_to_all_formats,
-            get_existing_whatsapp_message_ids,
         )
 
         try:

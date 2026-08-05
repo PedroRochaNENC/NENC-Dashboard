@@ -15,7 +15,7 @@ from utils.resampler import (
     compute_participant_average,
     get_etapa_boundaries,
 )
-from utils.charts import create_synchronized_timeline, INDICATOR_COLORS
+from utils.charts import create_synchronized_timeline
 from utils.organization_data import hydrate_session_state
 
 AVAILABLE_INDICATORS = [

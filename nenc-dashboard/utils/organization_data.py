@@ -357,7 +357,7 @@ def migrate_legacy_external_resource(
 ) -> None:
     """Adopt a legacy resource only for the organization declared by the server."""
 
-    user = auth.require_admin(platform_only=True)
+    auth.require_admin(platform_only=True)
     _, _, organization_id = _external_resource_context(resource_type, resource_id)
     if _legacy_organization_id() != organization_id:
         raise auth.AuthorizationError(
@@ -425,7 +425,7 @@ def list_external_resources(resource_type: str) -> list[Dict[str, Any]]:
         except (TypeError, ValueError):
             metadata = {}
         resources.append({"id": row["resource_id"], "metadata": metadata})
-    auth.audit_business_access("whatsapp_resource.list", resource_type, None, organization_id)
+    auth.audit_business_access("whatsapp_resource.list", resource_type, None, active_org_id)
     return resources
 
 

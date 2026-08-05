@@ -35,7 +35,7 @@ from utils.organization_data import (
 
 
 _APPLICATION_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent / ".env"
+_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent.parent / ".env"
 _ENV_PATH = next(
     (path for path in (_APPLICATION_ENV_PATH, _WORKSPACE_ENV_PATH) if path.exists()),
     _APPLICATION_ENV_PATH,
@@ -1219,12 +1219,13 @@ def generate_qr_code_bytes(data_url: str) -> bytes:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
-    except Exception:
-        # Fallback usando API pública de QR Code se qrcode falhar
-        encoded = urllib.parse.quote(data_url)
-        chart_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={encoded}"
-        resp = httpx.get(chart_url, timeout=10.0)
-        resp.raise_for_status()
-        return resp.content
+    except Exception as error:
+        # Sem fallback externo de proposito: o deeplink carrega o telefone da
+        # organizacao e o codigo de verificacao do participante, e enviá-lo a um
+        # servico publico de terceiros vazaria esses dados.
+        raise RuntimeError(
+            "Nao foi possivel gerar o QR Code localmente. "
+            "Verifique se as dependencias 'qrcode' e 'pillow' estao instaladas."
+        ) from error
 
 

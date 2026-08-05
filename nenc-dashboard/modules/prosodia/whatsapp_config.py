@@ -19,7 +19,7 @@ from utils.organization_data import migrate_legacy_external_resource
 
 # Use the same dotenv lookup order as the application runtime.
 _APPLICATION_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
-_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent / ".env"
+_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent.parent / ".env"
 _ENV_PATH = next(
     (path for path in (_APPLICATION_ENV_PATH, _WORKSPACE_ENV_PATH) if path.exists()),
     _APPLICATION_ENV_PATH,
@@ -113,7 +113,10 @@ with col_form:
             
             os.environ["WHATSAPP_API_URL"] = url_stripped
             os.environ["WHATSAPP_API_KEY"] = key_stripped
-            
+
+            # Credenciais novas: descartar o diagnóstico de conexão em cache.
+            st.session_state.pop("wa_conn_check", None)
+
             st.success("✅ Configurações salvas e aplicadas com sucesso!")
             st.rerun()
         except Exception as e:
@@ -128,17 +131,21 @@ with col_status:
         # Card de status
         with st.container(border=True):
             st.markdown(f"**URL:** `{current_url}`")
-            
-            # Botão de teste
+
+            # Botão de teste. O resultado fica em cache na sessão para não
+            # disparar uma requisição HTTP a cada rerun do Streamlit.
             if st.button("🔌 Testar Conexão Agora", type="secondary", use_container_width=True):
-                success, msg = test_connection()
-                if success:
-                    st.success(f"✅ Conectado com sucesso!\n\n**Detalhe:** {msg}")
-                else:
-                    st.error(f"❌ Falha de conexão!\n\n**Detalhe:** {msg}")
-            
-            # Estado geral resumido
-            success, _ = test_connection()
+                st.session_state["wa_conn_check"] = test_connection()
+
+            if "wa_conn_check" not in st.session_state:
+                st.session_state["wa_conn_check"] = test_connection()
+
+            success, msg = st.session_state["wa_conn_check"]
+            if success:
+                st.success(f"✅ Conectado com sucesso!\n\n**Detalhe:** {msg}")
+            else:
+                st.error(f"❌ Falha de conexão!\n\n**Detalhe:** {msg}")
+
             if success:
                 st.markdown(
                     """

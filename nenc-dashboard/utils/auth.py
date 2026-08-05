@@ -37,6 +37,11 @@ PASSWORD_MIN_LENGTH = 12
 SESSION_HOURS = 12
 SESSION_STATE_KEY = "_nenc_auth_session_token"
 ACTIVE_ORGANIZATION_STATE_KEY = "_nenc_active_organization_id"
+
+# Bloqueio de forca bruta por conta. O audit_log ja registra cada tentativa;
+# estes limites transformam esse registro em barreira efetiva.
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_MINUTES = 15
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SECRET_METADATA_KEYS = {
     "password",
@@ -979,6 +984,29 @@ def revoke_session(
             )
 
 
+def _login_is_locked(database: sqlite3.Connection, user_id: int) -> bool:
+    """True quando a conta acumulou falhas demais na janela de bloqueio.
+
+    A contagem sai do proprio audit_log: um 'login.succeeded' encerra a janela,
+    entao um acerto zera o bloqueio sem precisar de estado extra.
+    """
+    window_start = _timestamp(_now() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES))
+    rows = database.execute(
+        """
+        SELECT action FROM audit_log
+        WHERE actor_user_id = ?
+          AND action IN ('login.failed', 'login.succeeded')
+          AND created_at >= ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (user_id, window_start, LOGIN_MAX_FAILURES),
+    ).fetchall()
+    if len(rows) < LOGIN_MAX_FAILURES:
+        return False
+    return all(row["action"] == "login.failed" for row in rows)
+
+
 def authenticate(
     email: str, password: str, database_path: Optional[os.PathLike] = None
 ) -> Tuple[User, str]:
@@ -989,6 +1017,12 @@ def authenticate(
         normalized_email = normalize_email(email)
     except ValueError as error:
         raise AuthenticationError("E-mail ou senha invalidos.") from error
+    # As falhas sao auditadas e so depois viram excecao: lancar de dentro do
+    # bloco 'with' dispara o rollback do context manager e apagaria o proprio
+    # registro de 'login.failed' — deixando o audit_log sem nenhuma tentativa
+    # malsucedida e o bloqueio por forca bruta sem o que contar.
+    user: Optional[User] = None
+    locked = False
     with connection(database_path) as database:
         row = database.execute(
             """
@@ -1000,13 +1034,24 @@ def authenticate(
             """,
             (normalized_email,),
         ).fetchone()
+        locked = row is not None and _login_is_locked(database, int(row["id"]))
         valid = (
-            row is not None
+            not locked
+            and row is not None
             and bool(row["is_active"])
             and bool(row["organization_is_active"])
             and verify_password(password, row["password_hash"])
         )
-        if not valid:
+        if locked:
+            _audit(
+                database,
+                row["organization_id"],
+                row["id"],
+                "login.blocked",
+                "user",
+                row["id"],
+            )
+        elif not valid:
             if row is not None:
                 _audit(
                     database,
@@ -1016,20 +1061,29 @@ def authenticate(
                     "user",
                     row["id"],
                 )
-            raise AuthenticationError("E-mail ou senha invalidos, ou conta inativa.")
-        user = _row_to_user(database, row)
-        database.execute(
-            "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
-            (_timestamp(), _timestamp(), user.id),
+        else:
+            user = _row_to_user(database, row)
+            database.execute(
+                "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+                (_timestamp(), _timestamp(), user.id),
+            )
+            _audit(
+                database,
+                user.organization_id,
+                user.id,
+                "login.succeeded",
+                "user",
+                user.id,
+            )
+
+    if locked:
+        raise AuthenticationError(
+            "Muitas tentativas de login. Tente novamente em {} minutos.".format(
+                LOGIN_LOCKOUT_MINUTES
+            )
         )
-        _audit(
-            database,
-            user.organization_id,
-            user.id,
-            "login.succeeded",
-            "user",
-            user.id,
-        )
+    if user is None:
+        raise AuthenticationError("E-mail ou senha invalidos, ou conta inativa.")
     return user, create_session(user.id, database_path=database_path)
 
 
