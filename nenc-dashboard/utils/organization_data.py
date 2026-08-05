@@ -31,7 +31,10 @@ def _timestamp() -> str:
 
 def _access_context(module_key: str) -> tuple[auth.User, int]:
     user = auth.require_module(module_key)
-    return user, auth.active_organization_id(user)
+    org_id = auth.active_organization_id(user)
+    if org_id == 0:
+        org_id = user.organization_id
+    return user, org_id
 
 
 def _initialize_schema() -> None:

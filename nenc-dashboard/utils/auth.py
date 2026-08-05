@@ -1147,11 +1147,12 @@ def audit_business_access(
     user = require_login(database_path)
     if not user.is_platform_admin or user.organization_id == organization_id:
         return
+    target_org_id = organization_id if organization_id and organization_id > 0 else user.organization_id
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         _audit(
             database,
-            organization_id,
+            target_org_id,
             user.id,
             "platform.{}".format(action),
             target_type,
