@@ -192,8 +192,6 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
         and previous_organization_id != active_organization_id
     ):
         for session_key in (
-            "modulo",
-            "_navigate_to",
             "pros_project_id",
             "pros_audio_id",
             "pros_timeline_focus",
