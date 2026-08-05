@@ -18,10 +18,10 @@ services:
       - WHATSAPP_API_URL=http://nenc-whatsapp-api:8000
       # Caminho do banco SQLite montado via volume persistente
       - NENC_DB_PATH=/app/data/prosodia.db
+    # Sem 'ports': o acesso entra apenas pelo Caddy, que termina o TLS.
+    # Publicar 8501 no host exporia o formulario de login em HTTP puro.
     expose:
       - "8501"
-    ports:
-      - "8501:8501"
     volumes:
       - ./data:/app/data
     networks:
@@ -41,10 +41,9 @@ services:
       - 1.1.1.1
     env_file:
       - ../../whatsapp-api/.env
+    # Sem 'ports': alcancavel so pela rede interna do compose e pelo Caddy.
     expose:
       - "8000"
-    ports:
-      - "8000:8000"
     volumes:
       - ../../whatsapp-api/data:/app/data
     networks:
