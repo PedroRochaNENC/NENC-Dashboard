@@ -123,8 +123,10 @@ else:
 
             with c1:
                 n = proj.get("n_audios", 0)
-                badge_html = f" <span style='background-color: #2ecc71; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;'>🔗 API #{api_proj_id}</span>" if api_proj_id else ""
-                st.markdown(f"**{proj['name']}**{badge_html}", unsafe_allow_html=True)
+                org_name = proj.get("organization_name")
+                org_badge = f" <span style='background-color: #3498db; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;'>🏢 {org_name}</span>" if org_name and user.is_platform_admin else ""
+                api_badge = f" <span style='background-color: #2ecc71; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;'>🔗 API #{api_proj_id}</span>" if api_proj_id else ""
+                st.markdown(f"**{proj['name']}**{org_badge}{api_badge}", unsafe_allow_html=True)
                 st.caption(
                     f"🗂️ {n} entrevista(s)  •  📅 {proj['created_at'][:10]}"
                     + (f"  •  _{proj['especialidade'][:60]}…_" if proj.get("especialidade") else "")

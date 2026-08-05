@@ -71,6 +71,8 @@ def _claim_external_project_resources(
 
 
 def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_id: int) -> bool:
+    if not organization_id:
+        return bool(conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone())
     return bool(
         conn.execute(
             "SELECT 1 FROM projects WHERE id = ? AND organization_id = ?",
@@ -80,6 +82,8 @@ def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_
 
 
 def _audio_is_visible(conn: sqlite3.Connection, audio_id: int, organization_id: int) -> bool:
+    if not organization_id:
+        return bool(conn.execute("SELECT 1 FROM audios WHERE id = ?", (audio_id,)).fetchone())
     return bool(
         conn.execute(
             "SELECT 1 FROM audios WHERE id = ? AND organization_id = ?",
@@ -384,21 +388,34 @@ def create_project(
 
 
 def get_projects() -> List[Dict]:
-    """Retorna todos os projetos com contagem de áudios."""
+    """Retorna todos os projetos com contagem de áudios e nome da organização."""
     organization_id = _active_organization_id()
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT p.*, COUNT(a.id) AS n_audios
-            FROM projects p
-            LEFT JOIN audios a ON a.project_id = p.id AND a.organization_id = p.organization_id
-            WHERE p.organization_id = ?
-            GROUP BY p.id
-            ORDER BY p.created_at DESC
-            """,
-            (organization_id,),
-        ).fetchall()
-    _audit("prosodia.project.list", "project", None, organization_id)
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT p.*, o.name AS organization_name, COUNT(a.id) AS n_audios
+                FROM projects p
+                LEFT JOIN organizations o ON o.id = p.organization_id
+                LEFT JOIN audios a ON a.project_id = p.id
+                GROUP BY p.id
+                ORDER BY p.created_at DESC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT p.*, o.name AS organization_name, COUNT(a.id) AS n_audios
+                FROM projects p
+                LEFT JOIN organizations o ON o.id = p.organization_id
+                LEFT JOIN audios a ON a.project_id = p.id AND a.organization_id = p.organization_id
+                WHERE p.organization_id = ?
+                GROUP BY p.id
+                ORDER BY p.created_at DESC
+                """,
+                (organization_id,),
+            ).fetchall()
+    _audit("prosodia.project.list", "project", None, organization_id or 0)
     return [dict(r) for r in rows]
 
 
@@ -406,11 +423,27 @@ def get_project(project_id: int) -> Optional[Dict]:
     """Retorna um projeto pelo ID, ou None se não encontrado."""
     organization_id = _active_organization_id()
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM projects WHERE id = ? AND organization_id = ?",
-            (project_id, organization_id),
-        ).fetchone()
-    _audit("prosodia.project.read", "project", project_id, organization_id)
+        if not organization_id:
+            row = conn.execute(
+                """
+                SELECT p.*, o.name AS organization_name
+                FROM projects p
+                LEFT JOIN organizations o ON o.id = p.organization_id
+                WHERE p.id = ?
+                """,
+                (project_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT p.*, o.name AS organization_name
+                FROM projects p
+                LEFT JOIN organizations o ON o.id = p.organization_id
+                WHERE p.id = ? AND p.organization_id = ?
+                """,
+                (project_id, organization_id),
+            ).fetchone()
+    _audit("prosodia.project.read", "project", project_id, organization_id or 0)
     return dict(row) if row else None
 
 
@@ -514,22 +547,39 @@ def get_audios(project_id: int) -> List[Dict]:
     """Retorna todos os áudios de um projeto com status de KB e análise."""
     organization_id = _active_organization_id()
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                a.*,
-                (SELECT overall_status FROM quality_checks q
-                 WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
-                 ORDER BY q.created_at DESC LIMIT 1) AS quality_status,
-                (SELECT COUNT(*) FROM analyses an
-                 WHERE an.audio_id = a.id AND an.organization_id = a.organization_id) AS n_analyses
-            FROM audios a
-            WHERE a.project_id = ? AND a.organization_id = ?
-            ORDER BY a.created_at DESC
-            """,
-            (project_id, organization_id),
-        ).fetchall()
-    _audit("prosodia.audio.list", "project", project_id, organization_id)
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT
+                    a.*,
+                    (SELECT overall_status FROM quality_checks q
+                     WHERE q.audio_id = a.id
+                     ORDER BY q.created_at DESC LIMIT 1) AS quality_status,
+                    (SELECT COUNT(*) FROM analyses an
+                     WHERE an.audio_id = a.id) AS n_analyses
+                FROM audios a
+                WHERE a.project_id = ?
+                ORDER BY a.created_at DESC
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT
+                    a.*,
+                    (SELECT overall_status FROM quality_checks q
+                     WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
+                     ORDER BY q.created_at DESC LIMIT 1) AS quality_status,
+                    (SELECT COUNT(*) FROM analyses an
+                     WHERE an.audio_id = a.id AND an.organization_id = a.organization_id) AS n_analyses
+                FROM audios a
+                WHERE a.project_id = ? AND a.organization_id = ?
+                ORDER BY a.created_at DESC
+                """,
+                (project_id, organization_id),
+            ).fetchall()
+    _audit("prosodia.audio.list", "project", project_id, organization_id or 0)
     return [dict(r) for r in rows]
 
 
@@ -632,52 +682,98 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
     """
     organization_id = _active_organization_id()
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                a.id,
-                a.project_id,
-                a.session_id,
-                a.created_at,
-                a.prosodia_json,
-                a.transcricao_csv,
-                a.sincronizado_csv,
-                a.openai_file_id_prosodia,
-                a.openai_file_id_transcricao,
-                (
-                    SELECT q.overall_status
-                    FROM quality_checks q
-                    WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
-                    ORDER BY q.created_at DESC
-                    LIMIT 1
-                ) AS quality_status,
-                (
-                    SELECT q.checks_json
-                    FROM quality_checks q
-                    WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
-                    ORDER BY q.created_at DESC
-                    LIMIT 1
-                ) AS checks_json,
-                (
-                    SELECT q.coverage_json
-                    FROM quality_checks q
-                    WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
-                    ORDER BY q.created_at DESC
-                    LIMIT 1
-                ) AS coverage_json,
-                (
-                    SELECT COUNT(*)
-                    FROM analyses an
-                    WHERE an.audio_id = a.id AND an.organization_id = a.organization_id
-                ) AS n_analyses
-            FROM audios a
-            WHERE a.project_id = ? AND a.organization_id = ?
-            ORDER BY a.created_at DESC
-            """,
-            (project_id, organization_id),
-        ).fetchall()
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT
+                    a.id,
+                    a.project_id,
+                    a.session_id,
+                    a.created_at,
+                    a.prosodia_json,
+                    a.transcricao_csv,
+                    a.sincronizado_csv,
+                    a.openai_file_id_prosodia,
+                    a.openai_file_id_transcricao,
+                    (
+                        SELECT q.overall_status
+                        FROM quality_checks q
+                        WHERE q.audio_id = a.id
+                        ORDER BY q.created_at DESC
+                        LIMIT 1
+                    ) AS quality_status,
+                    (
+                        SELECT q.checks_json
+                        FROM quality_checks q
+                        WHERE q.audio_id = a.id
+                        ORDER BY q.created_at DESC
+                        LIMIT 1
+                    ) AS checks_json,
+                    (
+                        SELECT q.coverage_json
+                        FROM quality_checks q
+                        WHERE q.audio_id = a.id
+                        ORDER BY q.created_at DESC
+                        LIMIT 1
+                    ) AS coverage_json,
+                    (
+                        SELECT COUNT(*)
+                        FROM analyses an
+                        WHERE an.audio_id = a.id
+                    ) AS n_analyses
+                FROM audios a
+                WHERE a.project_id = ?
+                ORDER BY a.created_at DESC
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT
+                    a.id,
+                    a.project_id,
+                    a.session_id,
+                    a.created_at,
+                    a.prosodia_json,
+                    a.transcricao_csv,
+                    a.sincronizado_csv,
+                    a.openai_file_id_prosodia,
+                    a.openai_file_id_transcricao,
+                    (
+                        SELECT q.overall_status
+                        FROM quality_checks q
+                        WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
+                        ORDER BY q.created_at DESC
+                        LIMIT 1
+                    ) AS quality_status,
+                    (
+                        SELECT q.checks_json
+                        FROM quality_checks q
+                        WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
+                        ORDER BY q.created_at DESC
+                        LIMIT 1
+                    ) AS checks_json,
+                    (
+                        SELECT q.coverage_json
+                        FROM quality_checks q
+                        WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
+                        ORDER BY q.created_at DESC
+                        LIMIT 1
+                    ) AS coverage_json,
+                    (
+                        SELECT COUNT(*)
+                        FROM analyses an
+                        WHERE an.audio_id = a.id AND an.organization_id = a.organization_id
+                    ) AS n_analyses
+                FROM audios a
+                WHERE a.project_id = ? AND a.organization_id = ?
+                ORDER BY a.created_at DESC
+                """,
+                (project_id, organization_id),
+            ).fetchall()
 
-    _audit("prosodia.audio.interviews", "project", project_id, organization_id)
+    _audit("prosodia.audio.interviews", "project", project_id, organization_id or 0)
 
     result: List[Dict] = []
     for row in rows:

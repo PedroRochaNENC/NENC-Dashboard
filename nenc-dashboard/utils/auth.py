@@ -1101,17 +1101,23 @@ def require_admin(
 def active_organization_id(
     user: Optional[User] = None, database_path: Optional[os.PathLike] = None
 ) -> int:
-    """Return a server-validated organization target for business-data operations."""
+    """Return a server-validated organization target for business-data operations.
+    Returns 0 when 'Todas as Organizações' is selected by a platform admin.
+    """
 
     st = _streamlit()
     user = user or require_login(database_path)
     selected_id = st.session_state.get(ACTIVE_ORGANIZATION_STATE_KEY)
     if not user.is_platform_admin:
         return user.organization_id
+    if selected_id == 0:
+        return 0
     try:
         organization_id = int(selected_id) if selected_id is not None else user.organization_id
     except (TypeError, ValueError):
         organization_id = user.organization_id
+    if organization_id == 0:
+        return 0
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         organization = _organization_row(database, organization_id)
@@ -1237,7 +1243,8 @@ def render_auth_sidebar(user: User, database_path: Optional[os.PathLike] = None)
         st.caption("{} | {}".format(user.organization_name, user.email))
         if user.is_platform_admin:
             organizations = list_organizations(user, database_path=database_path)
-            labels = {organization.id: organization.name for organization in organizations}
+            labels = {0: "🌐 Todas as Organizações"}
+            labels.update({organization.id: "🏢 {}".format(organization.name) for organization in organizations})
             available_ids = list(labels)
             selected_id = st.session_state.get(ACTIVE_ORGANIZATION_STATE_KEY, user.organization_id)
             if selected_id not in labels:
