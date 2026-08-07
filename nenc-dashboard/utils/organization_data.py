@@ -141,6 +141,7 @@ def save_module_state(module_key: str, state: Dict[str, Any]) -> None:
 
     if not isinstance(state, dict):
         raise ValueError("O estado do modulo precisa ser um dicionario.")
+    auth.assert_module_write(module_key)
     _, organization_id = _access_context(module_key)
     serialized_state = _encode_state(state)
     _initialize_schema()
@@ -249,6 +250,7 @@ def save_vector_store_id(module_key: str, vector_store_id: str) -> None:
     normalized_vector_store_id = (vector_store_id or "").strip()
     if not normalized_vector_store_id:
         raise ValueError("O identificador da base de conhecimento e obrigatorio.")
+    auth.assert_module_write(module_key)
     _, organization_id = _access_context(module_key)
     _initialize_schema()
     now = _timestamp()
@@ -432,6 +434,7 @@ def list_external_resources(resource_type: str) -> list[Dict[str, Any]]:
 def release_external_resource(resource_type: str, resource_id: Any) -> None:
     """Remove an owned resource mapping after the external resource is deleted."""
 
+    auth.assert_module_write("prosodia")
     resource_type, normalized_resource_id, organization_id = _external_resource_context(
         resource_type, resource_id
     )

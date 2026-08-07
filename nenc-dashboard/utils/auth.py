@@ -20,6 +20,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from dotenv import load_dotenv
+
+_APPLICATION_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+_WORKSPACE_ENV_PATH = _APPLICATION_ENV_PATH.parent.parent / ".env"
+_ENV_PATH = next(
+    (path for path in (_APPLICATION_ENV_PATH, _WORKSPACE_ENV_PATH) if path.exists()),
+    _APPLICATION_ENV_PATH,
+)
+load_dotenv(_ENV_PATH)
 
 
 MODULE_KEYS: Tuple[str, ...] = (
@@ -81,6 +90,9 @@ class User:
     is_platform_admin: bool
     is_active: bool
     modules: Tuple[str, ...]
+    # None em contas anteriores a esta coluna e nas contas de bootstrap: um
+    # registro sem autor e legado e nao restringe nenhum administrador.
+    created_by_user_id: Optional[int] = None
 
     @property
     def is_admin(self) -> bool:
@@ -158,6 +170,8 @@ def initialize_auth_schema(database_path: Optional[os.PathLike] = None) -> None:
                 is_platform_admin INTEGER NOT NULL DEFAULT 0
                     CHECK (is_platform_admin IN (0, 1)),
                 is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                created_by_user_id INTEGER
+                    REFERENCES users(id) ON DELETE SET NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 last_login_at TEXT
@@ -205,6 +219,17 @@ def initialize_auth_schema(database_path: Optional[os.PathLike] = None) -> None:
         org_cols = {row["name"] for row in database.execute("PRAGMA table_info(organizations)").fetchall()}
         if "whatsapp_numbers" not in org_cols:
             database.execute("ALTER TABLE organizations ADD COLUMN whatsapp_numbers TEXT DEFAULT ''")
+
+        # Autoria das contas. As linhas existentes ficam com NULL: nao ha de
+        # onde recuperar quem as criou, e o audit_log so registra acoes
+        # cross-organizacao de administrador global. NULL significa legado e
+        # permanece gerenciavel por qualquer administrador da organizacao.
+        user_cols = {row["name"] for row in database.execute("PRAGMA table_info(users)").fetchall()}
+        if "created_by_user_id" not in user_cols:
+            database.execute(
+                "ALTER TABLE users ADD COLUMN created_by_user_id INTEGER "
+                "REFERENCES users(id) ON DELETE SET NULL"
+            )
 
 
 def normalize_email(email: str) -> str:
@@ -277,6 +302,12 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
+def _row_value(row: sqlite3.Row, column: str) -> Any:
+    """Le uma coluna que pode nao existir em um banco ainda nao migrado."""
+
+    return row[column] if column in row.keys() else None
+
+
 def _row_to_user(database: sqlite3.Connection, row: sqlite3.Row) -> User:
     modules = tuple(
         module_row["module_key"]
@@ -300,6 +331,11 @@ def _row_to_user(database: sqlite3.Connection, row: sqlite3.Row) -> User:
         is_platform_admin=bool(row["is_platform_admin"]),
         is_active=bool(row["is_active"]),
         modules=modules,
+        created_by_user_id=(
+            int(creator_id)
+            if (creator_id := _row_value(row, "created_by_user_id")) is not None
+            else None
+        ),
     )
 
 
@@ -632,6 +668,78 @@ def _assert_user_management_scope(
         raise AuthorizationError("Somente administradores globais podem conceder esse papel.")
 
 
+def _assert_peer_admin_scope(actor: User, target: User) -> None:
+    """Um administrador de organizacao nao atua sobre a conta de outro administrador.
+
+    Sem esta barreira qualquer administrador da organizacao pode redefinir a
+    senha de um par e assumir a conta dele. A propria conta continua editavel,
+    e o administrador global segue sem restricao.
+    """
+
+    if actor.is_platform_admin or target.id == actor.id:
+        return
+    if target.is_admin:
+        raise AuthorizationError(
+            "Administradores da organizacao nao editam nem removem contas de "
+            "outros administradores."
+        )
+
+
+def _assert_creator_scope(
+    database: sqlite3.Connection, actor: User, target: User
+) -> None:
+    """Uma conta criada por outro administrador da organizacao nao e gerenciavel.
+
+    Tres situacoes liberam a conta: nao ha autor registrado (legado, anterior a
+    esta coluna), o autor ja foi removido, ou o autor e o administrador global —
+    contas provisionadas pela plataforma seguem sob gestao da organizacao, senao
+    todo provisionamento central deixaria a organizacao sem poder administrar
+    as proprias contas.
+    """
+
+    if actor.is_platform_admin or target.id == actor.id:
+        return
+    creator_id = target.created_by_user_id
+    if creator_id is None or creator_id == actor.id:
+        return
+    creator = database.execute(
+        "SELECT is_platform_admin FROM users WHERE id = ?", (creator_id,)
+    ).fetchone()
+    if creator is None or bool(creator["is_platform_admin"]):
+        return
+    raise AuthorizationError(
+        "Esta conta foi criada por outro administrador da organizacao."
+    )
+
+
+def _guard_user_management(
+    database: sqlite3.Connection,
+    actor: User,
+    target: User,
+    action: str,
+    database_path: Optional[os.PathLike] = None,
+) -> None:
+    """Aplica as tres guardas de gestao de contas e registra a recusa."""
+
+    try:
+        _assert_user_management_scope(
+            actor, target.organization_id, is_platform_admin=target.is_platform_admin
+        )
+        _assert_peer_admin_scope(actor, target)
+        _assert_creator_scope(database, actor, target)
+    except AuthorizationError as error:
+        audit_authorization_denied(
+            actor,
+            action,
+            "user",
+            target.id,
+            target.organization_id,
+            str(error),
+            database_path=database_path,
+        )
+        raise
+
+
 def create_user(
     name: str,
     email: str,
@@ -675,8 +783,8 @@ def create_user(
                 INSERT INTO users (
                     name, email, phone, organization_id, password_hash,
                     is_organization_admin, is_platform_admin, is_active,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    created_by_user_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 """,
                 (
                     normalized_name,
@@ -686,6 +794,7 @@ def create_user(
                     password_hash,
                     int(is_organization_admin),
                     int(is_platform_admin),
+                    actor_id,
                     _timestamp(),
                     _timestamp(),
                 ),
@@ -723,15 +832,28 @@ def list_users(
     include_inactive: bool = True,
     database_path: Optional[os.PathLike] = None,
 ) -> List[User]:
-    """Return only the organization-scoped users visible to the supplied actor."""
+    """Return the users visible to the supplied actor.
+
+    organization_id igual a 0 pede todas as organizacoes e so e atendido para o
+    administrador global — e o que sustenta 'gerenciar todos os usuarios
+    cadastrados no sistema'. Para os demais papeis o pedido recai sobre a
+    propria organizacao, como antes.
+    """
 
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         trusted_actor = _trusted_actor(database, actor)
-        target_organization_id = organization_id or trusted_actor.organization_id
-        _assert_user_management_scope(trusted_actor, target_organization_id)
-        clauses = ["users.organization_id = ?"]
-        values: List[Any] = [target_organization_id]
+        every_organization = organization_id == 0 and trusted_actor.is_platform_admin
+        clauses: List[str] = []
+        values: List[Any] = []
+        if every_organization:
+            ordering = "organizations.name COLLATE NOCASE, users.name COLLATE NOCASE"
+        else:
+            target_organization_id = organization_id or trusted_actor.organization_id
+            _assert_user_management_scope(trusted_actor, target_organization_id)
+            clauses.append("users.organization_id = ?")
+            values.append(target_organization_id)
+            ordering = "users.name COLLATE NOCASE"
         if not include_inactive:
             clauses.append("users.is_active = 1")
         if search.strip():
@@ -744,9 +866,10 @@ def list_users(
                    organizations.is_active AS organization_is_active
             FROM users
             JOIN organizations ON organizations.id = users.organization_id
-            WHERE """
-            + " AND ".join(clauses)
-            + " ORDER BY users.name COLLATE NOCASE",
+            """
+            + ("WHERE " + " AND ".join(clauses) if clauses else "")
+            + " ORDER BY "
+            + ordering,
             tuple(values),
         ).fetchall()
         return [_row_to_user(database, row) for row in rows]
@@ -775,8 +898,8 @@ def update_user(
         target = _user_by_clause(database, "users.id = ?", (user_id,))
         if target is None:
             raise ValueError("Usuario nao encontrado.")
-        _assert_user_management_scope(
-            trusted_actor, target.organization_id, is_platform_admin=target.is_platform_admin
+        _guard_user_management(
+            database, trusted_actor, target, "user.update", database_path
         )
         target_organization_id = organization_id or target.organization_id
         _assert_user_management_scope(
@@ -888,8 +1011,8 @@ def delete_user(
         target = _user_by_clause(database, "users.id = ?", (user_id,))
         if target is None:
             raise ValueError("Usuario nao encontrado.")
-        _assert_user_management_scope(
-            trusted_actor, target.organization_id, is_platform_admin=target.is_platform_admin
+        _guard_user_management(
+            database, trusted_actor, target, "user.delete", database_path
         )
         if target.is_organization_admin and _active_admin_count(
             database, target.organization_id, target.id
@@ -1091,6 +1214,41 @@ def can_access_module(user: User, module_key: str) -> bool:
     return module_key in MODULE_KEYS and (user.is_admin or module_key in user.modules)
 
 
+def can_write(user: User) -> bool:
+    """True somente para contas que podem alterar dados de negocio.
+
+    Acesso a um modulo e permissao de escrita sao dimensoes distintas: a conta
+    comum recebe o modulo para consultar, nunca para criar, editar ou remover.
+    """
+
+    return user.is_admin
+
+
+def can_write_module(user: User, module_key: str) -> bool:
+    return can_access_module(user, module_key) and can_write(user)
+
+
+def can_manage_user(
+    actor: User, target: User, database_path: Optional[os.PathLike] = None
+) -> bool:
+    """Predicado para a interface, derivado das mesmas guardas do servidor.
+
+    A negativa efetiva continua em update_user/delete_user; isto existe para a
+    tela nao oferecer um controle que o servidor vai recusar.
+    """
+
+    try:
+        _assert_user_management_scope(
+            actor, target.organization_id, is_platform_admin=target.is_platform_admin
+        )
+        _assert_peer_admin_scope(actor, target)
+        with connection(database_path) as database:
+            _assert_creator_scope(database, actor, target)
+    except AuthorizationError:
+        return False
+    return True
+
+
 def _streamlit() -> Any:
     import streamlit as st
 
@@ -1135,6 +1293,51 @@ def require_module(module_key: str, database_path: Optional[os.PathLike] = None)
     if not can_access_module(user, module_key):
         st = _streamlit()
         st.error("Voce nao tem acesso a este modulo.")
+        st.stop()
+    return user
+
+
+def assert_module_write(
+    module_key: str, database_path: Optional[os.PathLike] = None
+) -> User:
+    """Autoridade do servidor para qualquer chamada que altere estado.
+
+    Levanta em vez de parar o script: a camada de dados chama isto antes de
+    tocar em uma linha, entao a negativa precisa ser uma excecao que o chamador
+    nao consiga ignorar. Esconder um botao na interface nao e autorizacao.
+    """
+
+    user = current_user(database_path)
+    if user is None:
+        raise AuthorizationError("Faca login para executar esta acao.")
+    denial = ""
+    if not can_access_module(user, module_key):
+        denial = "Voce nao tem acesso a este modulo."
+    elif not can_write(user):
+        denial = "Somente administradores podem alterar dados deste modulo."
+    if denial:
+        audit_authorization_denied(
+            user,
+            "module.write",
+            "module",
+            organization_id=user.organization_id,
+            reason=denial,
+            metadata={"module_key": module_key},
+            database_path=database_path,
+        )
+        raise AuthorizationError(denial)
+    return user
+
+
+def require_module_write(
+    module_key: str, database_path: Optional[os.PathLike] = None
+) -> User:
+    """Guarda de pagina para telas cuja unica finalidade e alterar dados."""
+
+    user = require_module(module_key, database_path)
+    if not can_write(user):
+        st = _streamlit()
+        st.error("Somente administradores podem alterar dados deste modulo.")
         st.stop()
     return user
 
@@ -1195,23 +1398,80 @@ def audit_business_access(
     target_id: Optional[int],
     organization_id: int,
     database_path: Optional[os.PathLike] = None,
+    *,
+    write: bool = False,
 ) -> None:
-    """Audit every cross-organization operation executed by a platform admin."""
+    """Registra a operacao de negocio no audit_log.
 
-    user = require_login(database_path)
-    if not user.is_platform_admin or user.organization_id == organization_id:
+    Toda escrita gera registro, de qualquer papel: sem isso nao ha como
+    responder quem apagou um projeto dentro da organizacao. Leitura so e
+    registrada quando um administrador global alcanca outra organizacao —
+    auditar cada leitura encheria a tabela a cada rerun do Streamlit.
+    """
+
+    user = current_user(database_path)
+    if user is None:
         return
-    target_org_id = organization_id if organization_id and organization_id > 0 else user.organization_id
+    target_org_id = (
+        organization_id
+        if organization_id and organization_id > 0
+        else user.organization_id
+    )
+    crosses_organization = (
+        user.is_platform_admin and user.organization_id != target_org_id
+    )
+    if not write and not crosses_organization:
+        return
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         _audit(
             database,
             target_org_id,
             user.id,
-            "platform.{}".format(action),
+            "platform.{}".format(action) if crosses_organization else action,
             target_type,
             target_id,
         )
+
+
+def audit_authorization_denied(
+    actor: Optional[User],
+    action: str,
+    target_type: str,
+    target_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+    reason: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+    database_path: Optional[os.PathLike] = None,
+) -> None:
+    """Registra uma tentativa recusada, sempre em conexao propria.
+
+    A guarda que recusa costuma estar dentro de uma transacao que a excecao vai
+    reverter. Gravar por uma conexao separada e o que impede a negativa de
+    desaparecer junto com o rollback — o mesmo cuidado que authenticate() toma
+    para nao perder o registro de 'login.failed'.
+    """
+
+    denial_metadata = dict(metadata or {})
+    if reason:
+        denial_metadata["reason"] = reason
+    try:
+        initialize_auth_schema(database_path)
+        with connection(database_path) as database:
+            _audit(
+                database,
+                organization_id
+                or (actor.organization_id if actor is not None else None),
+                actor.id if actor is not None else None,
+                "denied.{}".format(action),
+                target_type,
+                target_id,
+                denial_metadata or None,
+            )
+    except sqlite3.Error:
+        # A negativa em si ja esta garantida pela excecao do chamador; falhar
+        # ao registra-la nao pode transformar a recusa em erro diferente.
+        pass
 
 
 def _empty_identity_store(database_path: Optional[os.PathLike]) -> bool:

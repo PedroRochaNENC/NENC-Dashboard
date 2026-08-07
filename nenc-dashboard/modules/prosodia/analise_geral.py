@@ -14,7 +14,8 @@ import pandas as pd
 import streamlit as st
 from utils import auth
 
-auth.require_module("prosodia")
+_user = auth.require_module("prosodia")
+pode_editar = auth.can_write(_user)
 from fpdf import FPDF
 
 from utils.prosodia_db import (
@@ -711,7 +712,7 @@ with h2:
         st.switch_page("modules/prosodia/entrevistas.py")
 with h3:
     st.write("")
-    if st.button("Uploads", width="stretch"):
+    if pode_editar and st.button("Uploads", width="stretch"):
         st.switch_page("modules/prosodia/audios.py")
 
 if not audios:

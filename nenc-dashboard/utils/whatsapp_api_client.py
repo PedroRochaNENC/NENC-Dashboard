@@ -67,6 +67,16 @@ def _require_owned_resource(resource_type: str, resource_id: Any) -> None:
     claim_external_resource(resource_type, resource_id)
 
 
+def _require_write() -> None:
+    """Guarda de escrita para as chamadas que alteram estado na API externa.
+
+    O registro de posse (claim) roda tambem em caminhos de leitura e por isso
+    fica de fora: aqui so entram as operacoes que criam, alteram ou removem.
+    """
+
+    auth.assert_module_write("prosodia")
+
+
 def _register_audio_from_parent(
     audio: Dict, parent_resource_type: str, parent_resource_id: Any
 ) -> Optional[Dict]:
@@ -160,6 +170,7 @@ def create_owned_campaign(
 ) -> Dict:
     """Create a campaign only for contacts owned by the active organization."""
 
+    _require_write()
     contact_id_list = list(contact_ids)
     contact_id_values = {
         str(contact_id).strip()
@@ -212,6 +223,7 @@ def list_owned_contacts(
 def create_owned_contact(phone: str, name: Optional[str] = None) -> Dict:
     """Create a contact and reject an API response that reuses an unowned record."""
 
+    _require_write()
     normalized_phone = _normalize_phone(phone)
     if not normalized_phone:
         raise ValueError("Informe um telefone valido.")
@@ -241,6 +253,7 @@ def create_owned_contact(phone: str, name: Optional[str] = None) -> Dict:
 def delete_owned_contact(contact_id: Any) -> None:
     """Delete a contact only after confirming its organization ownership."""
 
+    _require_write()
     _require_owned_resource("whatsapp_contact", contact_id)
     _delete_contact_from_api(contact_id)
     release_external_resource("whatsapp_contact", contact_id)
@@ -251,6 +264,7 @@ def import_owned_contacts_csv(
 ) -> tuple[Dict, int, int]:
     """Import contacts and register only IDs that appeared after this import."""
 
+    _require_write()
     normalized_phones = {
         _normalize_phone(phone)
         for phone in phones
@@ -523,6 +537,7 @@ def get_api_projects() -> List[Dict]:
 
 def create_api_project(name: str, organization: str) -> Dict:
     """Cria um novo projeto na API."""
+    _require_write()
     body = {"name": name, "organization": organization}
     with _client() as c:
         resp = c.post("/projects", json=body)
@@ -551,6 +566,7 @@ def get_api_project(project_id: int) -> Dict:
 
 def update_api_project(project_id: int, name: Optional[str] = None, organization: Optional[str] = None) -> Dict:
     """Atualiza um projeto na API."""
+    _require_write()
     _require_owned_resource("whatsapp_api_project", project_id)
     body = {}
     if name is not None:
@@ -565,6 +581,7 @@ def update_api_project(project_id: int, name: Optional[str] = None, organization
 
 def delete_api_project(project_id: int) -> None:
     """Exclui um projeto na API pelo ID."""
+    _require_write()
     _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.delete(f"/projects/{project_id}")
@@ -586,6 +603,7 @@ def get_project_audios(project_id: int) -> List[Dict]:
 
 def upload_audio_to_project(project_id: int, file: Any, label: Optional[str] = None) -> Dict:
     """Faz upload de um arquivo de áudio diretamente para o projeto na API."""
+    _require_write()
     _require_owned_resource("whatsapp_api_project", project_id)
     files = {"file": file}
     data = {}
@@ -632,6 +650,7 @@ def get_project_contacts(project_id: int) -> List[Dict]:
 
 def link_contact_to_project(project_id: int, phone: str, name: Optional[str] = None) -> Dict:
     """Vincula/cria um contato para o projeto na API."""
+    _require_write()
     _require_owned_resource("whatsapp_api_project", project_id)
     if _normalize_phone(phone) not in _owned_contact_ids_by_phone():
         raise auth.AuthorizationError("O contato nao pertence a organizacao ativa.")
@@ -1126,6 +1145,7 @@ def get_job(job_id: int) -> Dict:
 
 def reprocess_audio(audio_id: int) -> Dict:
     """Solicita o reprocessamento de um áudio na API (DevAIce + Whisper)."""
+    _require_write()
     _require_owned_resource("whatsapp_audio", audio_id)
     with _client() as c:
         resp = c.post(f"/audios/{audio_id}/reprocess")
@@ -1169,6 +1189,7 @@ def create_project_qr_code(
     verification_text: Optional[str] = None,
 ) -> Dict:
     """Cria um novo QR Code associado a um projeto na API."""
+    _require_write()
     _require_owned_resource("whatsapp_api_project", project_id)
     body = {
         "name": name,
@@ -1187,6 +1208,7 @@ def create_project_qr_code(
 
 def delete_project_qr_code(project_id: int, qr_id: Any) -> None:
     """Exclui um QR Code do projeto na API."""
+    _require_write()
     _require_owned_resource("whatsapp_api_project", project_id)
     with _client() as c:
         resp = c.delete(f"/projects/{project_id}/qr-codes/{qr_id}")

@@ -8,9 +8,15 @@ from utils import auth
 actor = auth.require_admin()
 active_organization_id = auth.active_organization_id(actor)
 
+# O administrador global pode selecionar "Todas as Organizacoes" (id 0); nesse
+# caso a listagem de contas cobre o sistema inteiro.
+todas_organizacoes = active_organization_id == 0
+
 st.title("Administracao de usuarios")
 st.caption("Organizacao ativa: {}".format(
-    next(
+    "Todas as Organizacoes"
+    if todas_organizacoes
+    else next(
         (
             organization.name
             for organization in auth.list_organizations(
@@ -30,7 +36,10 @@ def _organization_options(include_inactive: bool = False):
 
 def _user_label(user: auth.User) -> str:
     state = "ativo" if user.is_active else "inativo"
-    return "{} ({}, {})".format(user.name, user.email, state)
+    label = "{} ({}, {})".format(user.name, user.email, state)
+    if todas_organizacoes:
+        return "{} — {}".format(user.organization_name, label)
+    return label
 
 
 tabs = st.tabs(["Usuarios", "Organizacoes"])
@@ -45,15 +54,29 @@ with users_tab:
         search=search,
         include_inactive=True,
     )
+    creator_names = {user.id: user.name for user in visible_users}
+
+
+    def _creator_label(user: auth.User) -> str:
+        if user.created_by_user_id is None:
+            return "—"
+        # Um autor fora da listagem atual (por exemplo, de outra organizacao)
+        # aparece pelo id, para nao se confundir com uma conta sem autor.
+        return creator_names.get(
+            user.created_by_user_id, "#{}".format(user.created_by_user_id)
+        )
+
     st.dataframe(
         [
             {
                 "Nome": user.name,
+                **({"Organizacao": user.organization_name} if todas_organizacoes else {}),
                 "E-mail": user.email,
                 "Telefone": user.phone,
                 "Administrador": user.is_admin,
                 "Administrador global": user.is_platform_admin,
                 "Ativo": user.is_active,
+                "Criado por": _creator_label(user),
                 "Modulos": ", ".join(auth.MODULE_LABELS[key] for key in user.modules),
             }
             for user in visible_users
@@ -115,6 +138,14 @@ with users_tab:
             ),
         )
         selected_user = next(user for user in visible_users if user.id == selected_user_id)
+        # A negativa real esta em auth.update_user/auth.delete_user; aqui a tela
+        # apenas nao oferece um controle que o servidor vai recusar.
+        pode_gerenciar = auth.can_manage_user(actor, selected_user)
+        if not pode_gerenciar:
+            st.info(
+                "Esta conta pertence a outro administrador da organizacao e "
+                "nao pode ser editada ou removida por voce."
+            )
         with st.form("edit-user-{}".format(selected_user.id)):
             edited_name = st.text_input("Nome", value=selected_user.name)
             edited_email = st.text_input("E-mail", value=selected_user.email)
@@ -147,7 +178,9 @@ with users_tab:
                 if actor.is_platform_admin
                 else None
             )
-            saved = st.form_submit_button("Salvar alteracoes", type="primary")
+            saved = st.form_submit_button(
+                "Salvar alteracoes", type="primary", disabled=not pode_gerenciar
+            )
         if saved:
             try:
                 auth.update_user(
@@ -177,7 +210,7 @@ with users_tab:
             if st.button(
                 "Remover usuario",
                 key="remove-user-{}".format(selected_user.id),
-                disabled=not remove_confirmed,
+                disabled=not (remove_confirmed and pode_gerenciar),
             ):
                 try:
                     auth.delete_user(actor, selected_user.id)

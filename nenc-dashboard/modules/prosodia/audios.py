@@ -10,7 +10,9 @@ import json
 import streamlit as st
 from utils import auth
 
-auth.require_module("prosodia")
+# A pagina existe apenas para ingerir entrevistas: nao ha nada aqui que uma
+# conta somente leitura possa fazer.
+auth.require_module_write("prosodia")
 
 import pandas as pd
 

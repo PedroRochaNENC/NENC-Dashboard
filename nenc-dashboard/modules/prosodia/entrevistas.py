@@ -13,7 +13,8 @@ import pandas as pd
 import streamlit as st
 from utils import auth
 
-auth.require_module("prosodia")
+_user = auth.require_module("prosodia")
+pode_editar = auth.can_write(_user)
 
 from utils.prosodia_db import (
     init_db,
@@ -102,7 +103,7 @@ with h2:
         st.switch_page("modules/prosodia/analise_geral.py")
 with h3:
     st.write("")
-    if st.button("📤 Uploads", width="stretch"):
+    if pode_editar and st.button("📤 Uploads", width="stretch"):
         st.switch_page("modules/prosodia/audios.py")
 with h4:
     st.write("")
@@ -515,7 +516,7 @@ audios = get_audios_for_interviews(project_id)
 
 if not audios:
     st.info("Nenhuma entrevista carregada ainda. Faça upload dos arquivos para começar.")
-    if st.button("📤 Ir para Uploads", type="primary"):
+    if pode_editar and st.button("📤 Ir para Uploads", type="primary"):
         st.switch_page("modules/prosodia/audios.py")
     st.stop()
 
@@ -867,7 +868,7 @@ else:
                         st.error(f"Ocorreu um erro no reprocessamento: {e}")
                         
     with ac4:
-        if st.button("🗑️ Excluir Entrevista", width="stretch", key=f"en_del_{selected_id}"):
+        if pode_editar and st.button("🗑️ Excluir Entrevista", width="stretch", key=f"en_del_{selected_id}"):
             st.session_state[f"confirm_del_interview_{selected_id}"] = True
 
     if st.session_state.get(f"confirm_del_interview_{selected_id}"):

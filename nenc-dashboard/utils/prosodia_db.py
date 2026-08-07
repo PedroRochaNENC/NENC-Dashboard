@@ -55,8 +55,16 @@ def _active_organization_id() -> int:
     return auth.active_organization_id()
 
 
-def _audit(action: str, target_type: str, target_id: Optional[int], organization_id: int) -> None:
-    auth.audit_business_access(action, target_type, target_id, organization_id)
+def _audit(
+    action: str,
+    target_type: str,
+    target_id: Optional[int],
+    organization_id: int,
+    write: bool = False,
+) -> None:
+    auth.audit_business_access(
+        action, target_type, target_id, organization_id, write=write
+    )
 
 
 def _claim_external_project_resources(
@@ -70,8 +78,64 @@ def _claim_external_project_resources(
         claim_external_resource("whatsapp_api_project", api_project_id)
 
 
-def _is_platform_admin() -> bool:
-    return auth.is_current_user_platform_admin()
+def _require_write():
+    """Autoridade do servidor para toda funcao deste modulo que altera estado.
+
+    O escopo de organizacao ja decide o que cada conta enxerga; esta guarda
+    decide quem pode alterar. Contas comuns sao somente leitura. Retorna a
+    conta autorizada para que o chamador registre ou confira a autoria.
+    """
+
+    return auth.assert_module_write("prosodia")
+
+
+def _actor_user_id(actor) -> Optional[int]:
+    """Id a persistir como autor; None quando a sessao nao identifica a conta."""
+
+    user_id = getattr(actor, "id", None)
+    return int(user_id) if isinstance(user_id, int) else None
+
+
+def _assert_project_authorship(project_id: int, actor, action: str) -> None:
+    """Um administrador de organizacao nao altera projeto de outro administrador.
+
+    Mesma politica de auth._assert_creator_scope: liberam o projeto a ausencia
+    de autor registrado (legado, anterior a esta coluna), o autor ja removido,
+    e o autor ser o administrador global.
+
+    A consulta roda em conexao propria, fechada antes da decisao: assim a
+    recusa e registrada e a escrita seguinte comeca sem transacao pendente.
+    """
+
+    if getattr(actor, "is_platform_admin", False) is True:
+        return
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT created_by_user_id, organization_id FROM projects WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            return
+        creator_id = row["created_by_user_id"]
+        organization_id = row["organization_id"]
+        if creator_id is None or creator_id == _actor_user_id(actor):
+            return
+        creator = conn.execute(
+            "SELECT is_platform_admin FROM users WHERE id = ?", (creator_id,)
+        ).fetchone()
+        if creator is None or bool(creator["is_platform_admin"]):
+            return
+
+    reason = "Este projeto foi criado por outro administrador da organizacao."
+    auth.audit_authorization_denied(
+        actor if isinstance(actor, auth.User) else None,
+        action,
+        "project",
+        project_id,
+        organization_id,
+        reason,
+    )
+    raise auth.AuthorizationError(reason)
 
 
 def _project_is_visible(conn: sqlite3.Connection, project_id: int, organization_id: int) -> bool:
@@ -104,6 +168,23 @@ def _require_visible_project(conn: sqlite3.Connection, project_id: int, organiza
 def _require_visible_audio(conn: sqlite3.Connection, audio_id: int, organization_id: int) -> None:
     if not _audio_is_visible(conn, audio_id, organization_id):
         raise ValueError("Audio nao encontrado para a organizacao ativa.")
+
+
+def user_can_modify_project(project: Dict, user) -> bool:
+    """Predicado para a interface, com a mesma regra de _assert_project_authorship.
+
+    A negativa efetiva continua em update_project/delete_project.
+    """
+
+    if not auth.can_write(user):
+        return False
+    if user.is_platform_admin:
+        return True
+    if project.get("created_by_user_id") == user.id:
+        return True
+    # created_by_is_unrestricted ja resolve, no proprio SQL, os tres casos que
+    # liberam o projeto: sem autor, autor removido e autor administrador global.
+    return bool(project.get("created_by_is_unrestricted"))
 
 
 def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
@@ -183,6 +264,8 @@ def init_db() -> None:
                 whatsapp_campaign_id INTEGER,
                 api_project_id INTEGER,
                 quality_thresholds TEXT,
+                created_by_user_id INTEGER
+                             REFERENCES users(id) ON DELETE SET NULL,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
             );
 
@@ -260,6 +343,15 @@ def init_db() -> None:
             conn.execute("ALTER TABLE projects ADD COLUMN entities TEXT")
         if "qr_verification_text" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN qr_verification_text TEXT")
+        if "created_by_user_id" not in cols:
+            # Projetos existentes ficam com NULL: o audit_log nao registra a
+            # criacao feita por administrador de organizacao, entao nao ha de
+            # onde recuperar a autoria. NULL significa legado e continua
+            # editavel por qualquer administrador da organizacao.
+            conn.execute(
+                "ALTER TABLE projects ADD COLUMN created_by_user_id INTEGER "
+                "REFERENCES users(id) ON DELETE SET NULL"
+            )
 
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -312,6 +404,7 @@ def create_project(
     qr_verification_text: Optional[str] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
+    actor = _require_write()
     organization_id = _active_organization_id()
     if not organization_id:
         user = auth.current_user()
@@ -320,6 +413,7 @@ def create_project(
         cur = conn.execute(
             """INSERT INTO projects (
                     organization_id,
+                    created_by_user_id,
                     name,
                     especialidade,
                     historico,
@@ -332,9 +426,10 @@ def create_project(
                     quality_thresholds,
                     api_project_id,
                     qr_verification_text
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 organization_id,
+                _actor_user_id(actor),
                 name,
                 especialidade,
                 historico,
@@ -350,7 +445,7 @@ def create_project(
             ),
         )
         project_id = cur.lastrowid
-    _audit("prosodia.project.create", "project", project_id, organization_id)
+    _audit("prosodia.project.create", "project", project_id, organization_id, write=True)
     return project_id
 
 
@@ -361,9 +456,16 @@ def get_projects() -> List[Dict]:
         if not organization_id:
             rows = conn.execute(
                 """
-                SELECT p.*, o.name AS organization_name, COUNT(a.id) AS n_audios
+                SELECT p.*, o.name AS organization_name,
+                       CASE
+                           WHEN p.created_by_user_id IS NULL THEN 1
+                           WHEN creator.id IS NULL THEN 1
+                           ELSE creator.is_platform_admin
+                       END AS created_by_is_unrestricted,
+                       COUNT(a.id) AS n_audios
                 FROM projects p
                 LEFT JOIN organizations o ON o.id = p.organization_id
+                LEFT JOIN users creator ON creator.id = p.created_by_user_id
                 LEFT JOIN audios a ON a.project_id = p.id
                 GROUP BY p.id
                 ORDER BY p.created_at DESC
@@ -372,9 +474,16 @@ def get_projects() -> List[Dict]:
         else:
             rows = conn.execute(
                 """
-                SELECT p.*, o.name AS organization_name, COUNT(a.id) AS n_audios
+                SELECT p.*, o.name AS organization_name,
+                       CASE
+                           WHEN p.created_by_user_id IS NULL THEN 1
+                           WHEN creator.id IS NULL THEN 1
+                           ELSE creator.is_platform_admin
+                       END AS created_by_is_unrestricted,
+                       COUNT(a.id) AS n_audios
                 FROM projects p
                 LEFT JOIN organizations o ON o.id = p.organization_id
+                LEFT JOIN users creator ON creator.id = p.created_by_user_id
                 LEFT JOIN audios a ON a.project_id = p.id AND a.organization_id = p.organization_id
                 WHERE p.organization_id = ?
                 GROUP BY p.id
@@ -393,9 +502,15 @@ def get_project(project_id: int) -> Optional[Dict]:
         if not organization_id:
             row = conn.execute(
                 """
-                SELECT p.*, o.name AS organization_name
+                SELECT p.*, o.name AS organization_name,
+                       CASE
+                           WHEN p.created_by_user_id IS NULL THEN 1
+                           WHEN creator.id IS NULL THEN 1
+                           ELSE creator.is_platform_admin
+                       END AS created_by_is_unrestricted
                 FROM projects p
                 LEFT JOIN organizations o ON o.id = p.organization_id
+                LEFT JOIN users creator ON creator.id = p.created_by_user_id
                 WHERE p.id = ?
                 """,
                 (project_id,),
@@ -403,9 +518,15 @@ def get_project(project_id: int) -> Optional[Dict]:
         else:
             row = conn.execute(
                 """
-                SELECT p.*, o.name AS organization_name
+                SELECT p.*, o.name AS organization_name,
+                       CASE
+                           WHEN p.created_by_user_id IS NULL THEN 1
+                           WHEN creator.id IS NULL THEN 1
+                           ELSE creator.is_platform_admin
+                       END AS created_by_is_unrestricted
                 FROM projects p
                 LEFT JOIN organizations o ON o.id = p.organization_id
+                LEFT JOIN users creator ON creator.id = p.created_by_user_id
                 WHERE p.id = ? AND p.organization_id = ?
                 """,
                 (project_id, organization_id),
@@ -430,6 +551,10 @@ def update_project(
     qr_verification_text: Optional[str] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente."""
+    actor = _require_write()
+    # A autoria e conferida antes do claim: uma recusa nao pode deixar para
+    # tras a posse de um recurso externo que nunca chegou a ser vinculado.
+    _assert_project_authorship(project_id, actor, "project.update")
     _claim_external_project_resources(whatsapp_campaign_id, api_project_id)
     organization_id = _active_organization_id()
     with _connect() as conn:
@@ -499,11 +624,13 @@ def update_project(
                 ),
             )
     if result.rowcount:
-        _audit("prosodia.project.update", "project", project_id, organization_id or 0)
+        _audit("prosodia.project.update", "project", project_id, organization_id or 0, write=True)
 
 
 def delete_project(project_id: int) -> None:
     """Remove projeto (e em cascata: áudios, análises, quality_checks)."""
+    actor = _require_write()
+    _assert_project_authorship(project_id, actor, "project.delete")
     organization_id = _active_organization_id()
     with _connect() as conn:
         if not organization_id:
@@ -514,7 +641,7 @@ def delete_project(project_id: int) -> None:
                 (project_id, organization_id),
             )
     if result.rowcount:
-        _audit("prosodia.project.delete", "project", project_id, organization_id or 0)
+        _audit("prosodia.project.delete", "project", project_id, organization_id or 0, write=True)
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +657,7 @@ def create_audio(
     whatsapp_message_id: Optional[str] = None,
 ) -> int:
     """Salva um áudio com seus arquivos brutos. Retorna o ID gerado."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
@@ -544,7 +672,7 @@ def create_audio(
              whatsapp_message_id),
         )
         audio_id = cur.lastrowid
-    _audit("prosodia.audio.create", "audio", audio_id, actual_org_id)
+    _audit("prosodia.audio.create", "audio", audio_id, actual_org_id, write=True)
     return audio_id
 
 
@@ -857,6 +985,7 @@ def get_audio(audio_id: int) -> Optional[Dict]:
 
 def delete_audio(audio_id: int) -> None:
     """Remove um áudio (cascata: análises, quality_checks)."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         if not organization_id:
@@ -867,7 +996,7 @@ def delete_audio(audio_id: int) -> None:
                 (audio_id, organization_id),
             )
     if result.rowcount:
-        _audit("prosodia.audio.delete", "audio", audio_id, organization_id or 0)
+        _audit("prosodia.audio.delete", "audio", audio_id, organization_id or 0, write=True)
 
 
 def update_audio_openai_ids(
@@ -876,6 +1005,7 @@ def update_audio_openai_ids(
     file_id_transcricao: Optional[str],
 ) -> None:
     """Atualiza os IDs de arquivo OpenAI de um áudio."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         if not organization_id:
@@ -893,7 +1023,7 @@ def update_audio_openai_ids(
                 (file_id_prosodia, file_id_transcricao, audio_id, organization_id),
             )
     if result.rowcount:
-        _audit("prosodia.audio.update_openai_ids", "audio", audio_id, organization_id or 0)
+        _audit("prosodia.audio.update_openai_ids", "audio", audio_id, organization_id or 0, write=True)
 
 
 def update_audio_content(
@@ -903,6 +1033,7 @@ def update_audio_content(
     sincronizado_csv: bytes,
 ) -> None:
     """Atualiza os blobs de conteúdo (prosódia, transcrição, sincronizado) de um áudio."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         # duration_seconds volta a NULL: o conteudo mudou, a duracao materializada
@@ -924,7 +1055,7 @@ def update_audio_content(
                 (prosodia_json, transcricao_csv, sincronizado_csv, audio_id, organization_id),
             )
     if result.rowcount:
-        _audit("prosodia.audio.update_content", "audio", audio_id, organization_id or 0)
+        _audit("prosodia.audio.update_content", "audio", audio_id, organization_id or 0, write=True)
 
 
 # ---------------------------------------------------------------------------
@@ -938,6 +1069,7 @@ def save_analysis(
     citations: Optional[list] = None,
 ) -> int:
     """Salva uma análise de IA. Retorna o ID gerado."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
@@ -949,7 +1081,7 @@ def save_analysis(
             (actual_org_id, audio_id, model, analysis_text, json.dumps(citations or [])),
         )
         analysis_id = cur.lastrowid
-    _audit("prosodia.analysis.create", "analysis", analysis_id, actual_org_id)
+    _audit("prosodia.analysis.create", "analysis", analysis_id, actual_org_id, write=True)
     return analysis_id
 
 
@@ -1011,6 +1143,7 @@ def save_project_analysis(
     citations: Optional[list] = None,
 ) -> int:
     """Salva uma análise geral de projeto. Retorna o ID gerado."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
@@ -1023,7 +1156,7 @@ def save_project_analysis(
             (actual_org_id, project_id, model, analysis_text, json.dumps(citations or [])),
         )
         analysis_id = cur.lastrowid
-    _audit("prosodia.project_analysis.create", "project_analysis", analysis_id, actual_org_id)
+    _audit("prosodia.project_analysis.create", "project_analysis", analysis_id, actual_org_id, write=True)
     return analysis_id
 
 
@@ -1087,6 +1220,7 @@ def save_quality_check(
     coverage: list,
 ) -> int:
     """Salva resultado de verificação de qualidade. Retorna o ID gerado."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
@@ -1099,7 +1233,7 @@ def save_quality_check(
             (actual_org_id, audio_id, overall_status, json.dumps(checks), json.dumps(coverage)),
         )
         quality_check_id = cur.lastrowid
-    _audit("prosodia.quality_check.create", "quality_check", quality_check_id, actual_org_id)
+    _audit("prosodia.quality_check.create", "quality_check", quality_check_id, actual_org_id, write=True)
     return quality_check_id
 
 
@@ -1139,6 +1273,7 @@ def get_project_questions(project_id: int) -> List[str]:
 
 def save_high_activations(audio_id: int, moments: list) -> int:
     """Salva os momentos de maior ativação prosódica de um áudio/entrevista."""
+    _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_audio(conn, audio_id, organization_id)
@@ -1150,7 +1285,7 @@ def save_high_activations(audio_id: int, moments: list) -> int:
             (actual_org_id, audio_id, json.dumps(moments)),
         )
         activation_id = cur.lastrowid
-    _audit("prosodia.high_activation.create", "high_activation", activation_id, actual_org_id)
+    _audit("prosodia.high_activation.create", "high_activation", activation_id, actual_org_id, write=True)
     return activation_id
 
 

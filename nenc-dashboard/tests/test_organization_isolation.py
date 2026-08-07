@@ -185,6 +185,16 @@ class OrganizationIsolationTests(unittest.TestCase):
         )
         self.environment.start()
         prosodia_db.init_db()
+        # Estes casos exercitam o escopo de organizacao, nao o de papel: a
+        # guarda de escrita depende da sessao Streamlit e e coberta em
+        # WriteAuthorizationTests.
+        for target, attribute in (
+            (prosodia_db, "_require_write"),
+            (auth, "assert_module_write"),
+        ):
+            guard = patch.object(target, attribute)
+            guard.start()
+            self.addCleanup(guard.stop)
 
     def tearDown(self):
         self.environment.stop()
@@ -351,6 +361,13 @@ class OrganizationIsolationTests(unittest.TestCase):
 
 
 class WhatsAppClientAuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        # A guarda de escrita e verificada em WriteAuthorizationTests; aqui o
+        # alvo e a checagem de posse do recurso externo.
+        write_guard = patch.object(whatsapp_api_client, "_require_write")
+        write_guard.start()
+        self.addCleanup(write_guard.stop)
+
     def test_owned_contact_list_filters_remote_results(self):
         owned_contact = {"id": "contact-1", "phone": "5511999999999"}
         foreign_contact = {"id": "contact-2", "phone": "5511988888888"}

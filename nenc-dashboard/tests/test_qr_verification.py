@@ -1,7 +1,10 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
+from utils import auth
 from utils.prosodia_db import (
     DEFAULT_QR_VERIFICATION_TEXT,
     init_db,
@@ -18,7 +21,38 @@ from utils.whatsapp_api_client import (
 class TestQRVerificationText(unittest.TestCase):
 
     def setUp(self):
+        # NENC_DB_PATH precisa apontar para um banco descartavel: sem isto o
+        # teste cria projetos e reescreve os numeros de WhatsApp da
+        # organizacao no banco de producao.
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.database_path = Path(self.temporary_directory.name) / "nenc-insights.db"
+        self.environment = patch.dict(
+            os.environ,
+            {"NENC_DB_PATH": str(self.database_path)},
+        )
+        self.environment.start()
+        self.organization = auth.create_organization(
+            "Organization One",
+            database_path=self.database_path,
+            _bootstrap=True,
+        )
+        self.platform_admin = auth.create_user(
+            name="Platform Admin",
+            email="platform@example.com",
+            phone="5511999999999",
+            organization_id=self.organization.id,
+            password="platform-admin-password",
+            module_keys=auth.MODULE_KEYS,
+            is_organization_admin=True,
+            is_platform_admin=True,
+            database_path=self.database_path,
+            _bootstrap=True,
+        )
         init_db()
+
+    def tearDown(self):
+        self.environment.stop()
+        self.temporary_directory.cleanup()
 
     def test_default_qr_verification_text_content(self):
         expected_text = (
@@ -30,7 +64,11 @@ class TestQRVerificationText(unittest.TestCase):
     @patch("utils.prosodia_db._audit")
     @patch("utils.prosodia_db._active_organization_id", return_value=1)
     @patch("utils.prosodia_db._claim_external_project_resources")
-    def test_create_and_update_project_with_qr_verification_text(self, mock_claim, mock_org, mock_audit):
+    @patch("utils.prosodia_db._require_write")
+    def test_create_and_update_project_with_qr_verification_text(
+        self, mock_write, mock_claim, mock_org, mock_audit
+    ):
+        mock_write.return_value = self.platform_admin
         # Create project with custom qr_verification_text
         custom_text = "Texto personalizado de verificação de teste."
         pid = create_project(
@@ -68,22 +106,15 @@ class TestQRVerificationText(unittest.TestCase):
         self.assertGreater(len(img_bytes), 0)
         # Check PNG magic header \x89PNG
     def test_organization_whatsapp_numbers(self):
-        from utils.auth import get_organization_whatsapp_numbers, update_organization, User
-        mock_admin = User(
-            id=1,
-            name="Admin",
-            email="admin@example.com",
-            phone="5511999999999",
-            organization_id=1,
-            organization_name="Org",
-            is_organization_admin=True,
-            is_platform_admin=True,
-            is_active=True,
-            modules=("prosodia",),
+        auth.update_organization(
+            self.platform_admin,
+            self.organization.id,
+            whatsapp_numbers="5511975218007\n5516981360051",
+            database_path=self.database_path,
         )
-
-        update_organization(mock_admin, 1, whatsapp_numbers="5511975218007\n5516981360051")
-        numbers = get_organization_whatsapp_numbers(1)
+        numbers = auth.get_organization_whatsapp_numbers(
+            self.organization.id, database_path=self.database_path
+        )
         self.assertEqual(numbers, ["5511975218007", "5516981360051"])
 
 

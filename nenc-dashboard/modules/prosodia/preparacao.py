@@ -15,12 +15,14 @@ import streamlit as st
 from utils import auth
 
 user = auth.require_module("prosodia")
+pode_editar = auth.can_write(user)
 
 from utils.prosodia_db import (
     init_db,
     create_project,
     get_project,
     update_project,
+    user_can_modify_project,
     DEFAULT_QR_VERIFICATION_TEXT,
 )
 from utils.ai_provider import get_openai_client, get_prosodia_vector_store_id
@@ -125,6 +127,10 @@ if editing and project is None:
     st.session_state.pop("pros_project_id", None)
     editing = False
     project = {}
+
+# Ao editar, a autoria do projeto entra na conta; ao criar, basta o papel.
+if editing:
+    pode_editar = user_can_modify_project(project, user)
 
 st.title("✏️ Editar Projeto" if editing else "➕ Novo Projeto do NencLex")
 
@@ -524,10 +530,17 @@ with st.container():
                 help="Média de probabilidade da emoção 'neutral' acima da qual gera alerta de monotonia prosódica."
             ) / 100.0
 
+    if not pode_editar:
+        if editing and auth.can_write(user):
+            st.info("Este projeto foi criado por outro administrador da organização.")
+        else:
+            st.info("Sua conta tem acesso somente de leitura ao NencLex.")
+
     submitted = st.button(
         "💾 Salvar e ir para Entrevistas",
         type="primary",
         width='stretch',
+        disabled=not pode_editar,
     )
 
 if submitted:

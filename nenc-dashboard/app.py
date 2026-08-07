@@ -131,10 +131,16 @@ def _build_pages(user: auth.User):
                     title="Análise Geral",
                     icon="🧠",
                 ),
-                st.Page(
-                    "modules/prosodia/audios.py",
-                    title="Uploads",
-                    icon="📤",
+                *(
+                    [
+                        st.Page(
+                            "modules/prosodia/audios.py",
+                            title="Uploads",
+                            icon="📤",
+                        ),
+                    ]
+                    if auth.can_write(user)
+                    else []
                 ),
                 st.Page(
                     "modules/prosodia/audio_timeline.py",

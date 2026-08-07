@@ -10,7 +10,16 @@ from utils import auth
 
 user = auth.require_module("prosodia")
 
-from utils.prosodia_db import init_db, get_projects, delete_project
+# A negativa de verdade esta em prosodia_db/whatsapp_api_client; aqui so
+# evitamos oferecer ao leitor controles que o servidor vai recusar.
+pode_editar = auth.can_write(user)
+
+from utils.prosodia_db import (
+    init_db,
+    get_projects,
+    delete_project,
+    user_can_modify_project,
+)
 from utils.organization_data import claim_external_resource
 
 # Garantir que o banco está inicializado
@@ -28,9 +37,12 @@ st.markdown(
 # ------------------------------------------------------------------
 col_title, col_btn = st.columns([4, 1])
 with col_btn:
-    if st.button("➕ Novo Projeto", type="primary", width='stretch'):
+    if pode_editar and st.button("➕ Novo Projeto", type="primary", width='stretch'):
         st.session_state.pop("pros_project_id", None)
         st.switch_page("modules/prosodia/preparacao.py")
+
+if not pode_editar:
+    st.info("Sua conta tem acesso somente de leitura ao NencLex.")
 
 # ------------------------------------------------------------------
 # Configuração da Integração WhatsApp
@@ -120,6 +132,9 @@ else:
             c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 1])
 
             api_proj_id = proj.get("api_project_id")
+            # Editar e excluir dependem da autoria; abrir e enviar entrevistas
+            # continuam liberados para qualquer administrador da organizacao.
+            pode_alterar = user_can_modify_project(proj, user)
 
             with c1:
                 n = proj.get("n_audios", 0)
@@ -140,19 +155,19 @@ else:
 
             with c3:
                 st.write("")
-                if st.button("✏️ Editar", key=f"edit_{proj['id']}", width='stretch'):
+                if pode_alterar and st.button("✏️ Editar", key=f"edit_{proj['id']}", width='stretch'):
                     st.session_state["pros_project_id"] = proj["id"]
                     st.switch_page("modules/prosodia/preparacao.py")
 
             with c4:
                 st.write("")
-                if st.button("📤 Uploads", key=f"uploads_{proj['id']}", width='stretch'):
+                if pode_editar and st.button("📤 Uploads", key=f"uploads_{proj['id']}", width='stretch'):
                     st.session_state["pros_project_id"] = proj["id"]
                     st.switch_page("modules/prosodia/audios.py")
 
             with c5:
                 st.write("")
-                if st.button("🗑️ Excluir", key=f"del_{proj['id']}", width='stretch'):
+                if pode_alterar and st.button("🗑️ Excluir", key=f"del_{proj['id']}", width='stretch'):
                     st.session_state[f"confirm_del_{proj['id']}"] = True
 
             # ------------------------------------------------------------------
@@ -198,7 +213,7 @@ else:
 
                 if is_configured() and not api_proj_id:
                     st.info("🔗 Este projeto local ainda não está vinculado à API de WhatsApp.")
-                    if st.button("🚀 Vincular Projeto à API de WhatsApp agora", key=f"btn_link_api_{proj['id']}"):
+                    if pode_alterar and st.button("🚀 Vincular Projeto à API de WhatsApp agora", key=f"btn_link_api_{proj['id']}"):
                         try:
                             resp = create_api_project(proj["name"], user.organization_name)
                             new_api_id = resp.get("id")
@@ -253,7 +268,9 @@ else:
                                 help="Texto pré-preenchido no WhatsApp do participante.",
                                 key=f"global_verif_text_{proj['id']}"
                             )
-                            submit_global_verif = st.form_submit_button("💾 Salvar Texto de Verificação")
+                            submit_global_verif = st.form_submit_button(
+                                "💾 Salvar Texto de Verificação", disabled=not pode_alterar
+                            )
                         if submit_global_verif:
                             update_project(
                                 proj["id"],
@@ -318,7 +335,9 @@ else:
                             key=f"new_verification_text_{proj['id']}"
                         )
 
-                        submit_qr = st.form_submit_button("Gerar e Cadastrar QR Code")
+                        submit_qr = st.form_submit_button(
+                            "Gerar e Cadastrar QR Code", disabled=not pode_alterar
+                        )
 
                     if submit_qr:
                         if not new_qr_name.strip():
@@ -379,7 +398,7 @@ else:
                                     st.markdown(f"**Link WhatsApp**: [{wa_link}]({wa_link})")
                                     st.caption(f"Status: `{qr['status']}` | Criado em: {qr.get('created_at', '')[:10]}")
 
-                                    if st.button("🗑️ Excluir QR Code", key=f"del_qr_{proj['id']}_{qr['id']}"):
+                                    if pode_alterar and st.button("🗑️ Excluir QR Code", key=f"del_qr_{proj['id']}_{qr['id']}"):
                                         try:
                                             delete_project_qr_code(api_proj_id, qr["id"])
                                             st.success("QR Code excluído.")
@@ -428,7 +447,7 @@ else:
 
                     if btn_gen_local or st.session_state.get(f"show_local_qr_{proj['id']}"):
                         st.session_state[f"show_local_qr_{proj['id']}"] = True
-                        if local_verif_text.strip() and local_verif_text.strip() != current_verification_text:
+                        if pode_alterar and local_verif_text.strip() and local_verif_text.strip() != current_verification_text:
                             update_project(
                                 proj["id"],
                                 name=proj["name"],
