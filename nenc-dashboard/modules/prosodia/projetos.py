@@ -184,6 +184,7 @@ else:
                     get_project_qr_codes,
                     get_project_participations,
                     create_project_qr_code,
+                    update_project_qr_code,
                     delete_project_qr_code,
                     generate_qr_code_bytes,
                     build_whatsapp_deeplink,
@@ -206,8 +207,11 @@ else:
                             if clean_p and clean_p not in org_phones:
                                 org_phones.append(clean_p)
 
+                # Ultimo recurso: o numero de producao da Cloud API. Sem ele o
+                # deeplink do QR Code apontaria para lugar nenhum quando a
+                # organizacao ainda nao cadastrou seus numeros.
                 if not org_phones:
-                    org_phones = ["5511975218007", "5516981360051"]
+                    org_phones = ["551151233587"]
 
                 current_verification_text = proj.get("qr_verification_text") or DEFAULT_QR_VERIFICATION_TEXT
 
@@ -397,6 +401,37 @@ else:
                                         st.caption(f"💬 **Resposta Automática**: *\"{qr['welcome_message']}\"*")
                                     st.markdown(f"**Link WhatsApp**: [{wa_link}]({wa_link})")
                                     st.caption(f"Status: `{qr['status']}` | Criado em: {qr.get('created_at', '')[:10]}")
+
+                                    if pode_alterar:
+                                        col_dest, col_btn = st.columns([3, 2])
+                                        with col_dest:
+                                            novo_destino = st.selectbox(
+                                                "Alterar WhatsApp Destino",
+                                                options=org_phones,
+                                                index=org_phones.index(target_ph) if target_ph in org_phones else 0,
+                                                help=(
+                                                    "Ao trocar o numero, o link muda e a imagem precisa ser "
+                                                    "baixada e reimpressa: o numero fica gravado no QR Code."
+                                                ),
+                                                key=f"upd_qr_phone_{proj['id']}_{qr['id']}",
+                                            )
+                                        with col_btn:
+                                            if st.button(
+                                                "🔄 Atualizar destino",
+                                                key=f"btn_upd_qr_{proj['id']}_{qr['id']}",
+                                                disabled=novo_destino == target_ph,
+                                            ):
+                                                try:
+                                                    update_project_qr_code(
+                                                        api_proj_id, qr["id"], target_phone=novo_destino
+                                                    )
+                                                    st.success(
+                                                        "Destino atualizado. Baixe a imagem novamente e "
+                                                        "reimprima o material com este QR Code."
+                                                    )
+                                                    st.rerun()
+                                                except Exception as upd_err:
+                                                    st.error(f"Erro ao atualizar destino: {upd_err}")
 
                                     if pode_alterar and st.button("🗑️ Excluir QR Code", key=f"del_qr_{proj['id']}_{qr['id']}"):
                                         try:

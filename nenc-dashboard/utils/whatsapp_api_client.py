@@ -1206,6 +1206,32 @@ def create_project_qr_code(
         return resp.json()
 
 
+def update_project_qr_code(
+    project_id: int,
+    qr_id: Any,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    target_phone: Optional[str] = None,
+    welcome_message: Optional[str] = None,
+    status: Optional[str] = None,
+) -> Dict:
+    """Atualiza um QR Code existente na API (ex.: repontar para outro número de WhatsApp)."""
+    _require_write()
+    _require_owned_resource("whatsapp_api_project", project_id)
+    body = {
+        "name": name,
+        "description": description,
+        "target_phone": target_phone,
+        "welcome_message": welcome_message,
+        "status": status,
+    }
+    body = {k: v for k, v in body.items() if v is not None}
+    with _client() as c:
+        resp = c.patch(f"/projects/{project_id}/qr-codes/{qr_id}", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
 def delete_project_qr_code(project_id: int, qr_id: Any) -> None:
     """Exclui um QR Code do projeto na API."""
     _require_write()
