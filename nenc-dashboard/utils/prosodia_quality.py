@@ -626,5 +626,7 @@ def compute_overall_status(checks: List[Dict]) -> str:
 
 
 def status_badge(status: str) -> str:
-    """Retorna emoji de badge para o status."""
-    return {"pass": "✅", "warn": "⚠️", "fail": "❌"}.get(status, "⏳")
+    """Rótulo curto do status, para tabelas e cabeçalhos."""
+    return {"pass": "OK", "warn": "Atenção", "fail": "Problema"}.get(
+        status, "Pendente"
+    )

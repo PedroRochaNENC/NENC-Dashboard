@@ -8,7 +8,8 @@ automática de análise e verificação de qualidade.
 import io
 import json
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 # A pagina existe apenas para ingerir entrevistas: nao ha nada aqui que uma
 # conta somente leitura possa fazer.
@@ -68,23 +69,15 @@ if not project:
 # ------------------------------------------------------------------
 # Header
 # ------------------------------------------------------------------
-h1, h2, h3 = st.columns([5, 1, 1])
-with h1:
-    st.title(f"📤 Uploads — {project['name']}")
-with h2:
-    st.write("")
-    if st.button("✏️ Editar", width='stretch'):
-        st.switch_page("modules/prosodia/preparacao.py")
-with h3:
-    st.write("")
-    if st.button("← Projetos", width='stretch'):
-        st.switch_page("modules/prosodia/projetos.py")
+ui.inject_theme()
+ui.breadcrumb("NencBoost", project["name"], "Uploads")
+page_title("upload-simple", "Uploads", project["name"])
 
 # ------------------------------------------------------------------
 # Upload em lote
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("📤 Adicionar Entrevistas")
+st.subheader("Adicionar Entrevistas")
 st.markdown(
     "O matching entre JSON e CSV é feito automaticamente pelo ID de sessão "
     "extraído do nome do arquivo "
@@ -93,7 +86,7 @@ st.markdown(
 
 uc1, uc2, uc3 = st.columns(3)
 with uc1:
-    st.markdown("**🎙️ NencLex (JSON)**")
+    st.markdown("**NencBoost (JSON)**")
     json_files = st.file_uploader(
         "JSON",
         type=["json"],
@@ -102,7 +95,7 @@ with uc1:
         label_visibility="collapsed",
     )
 with uc2:
-    st.markdown("**📝 Transcrição (CSV)**")
+    st.markdown("**Transcrição (CSV)**")
     csv_files = st.file_uploader(
         "CSV transcrição",
         type=["csv"],
@@ -111,7 +104,7 @@ with uc2:
         label_visibility="collapsed",
     )
 with uc3:
-    st.markdown("**🔗 Sincronizado (CSV)**")
+    st.markdown("**Sincronizado (CSV)**")
     sinc_files = st.file_uploader(
         "CSV sincronizado",
         type=["csv"],
@@ -121,7 +114,7 @@ with uc3:
     )
 
 # Configuração de modelo para análise automática
-with st.expander("⚙️ Configurações de análise automática", expanded=False):
+with st.expander("Configurações de análise automática", expanded=False):
     groq_key = st.text_input(
         "Chave API Groq (análise automática sem OpenAI)",
         type="password",
@@ -134,7 +127,7 @@ with st.expander("⚙️ Configurações de análise automática", expanded=Fals
     )
 
 if json_files or csv_files or sinc_files:
-    if st.button("💾 Processar e Salvar Uploads", type="primary"):
+    if st.button("Processar e Salvar Uploads", type="primary"):
         questions = get_project_questions(project_id)
         thresholds = None
         if project.get("quality_thresholds"):
@@ -323,7 +316,7 @@ if json_files or csv_files or sinc_files:
 
             progress.progress((i + 1) / total, text=f"{sid} concluído.")
 
-        st.success(f"✅ {total} entrevista(s) processada(s) com sucesso!")
+        st.success(f"{total} entrevista(s) processada(s) com sucesso!")
         st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
@@ -344,7 +337,7 @@ if api_project_id:
 
 if api_project_id:
     st.divider()
-    st.subheader("📡 Upload Direto de Áudio para a API")
+    st.subheader("Upload Direto de Áudio para a API")
     st.markdown(
         "Envie um arquivo de áudio diretamente para este projeto na API. "
         "O processamento será iniciado na API e o áudio poderá ser sincronizado posteriormente."
@@ -372,7 +365,7 @@ if api_project_id:
             )
             
         if audio_file:
-            if st.button("📤 Enviar Áudio para a API", type="primary", use_container_width=True):
+            if st.button("Enviar Áudio para a API", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Enviando arquivo para a API..."):
                         file_bytes = audio_file.getvalue()
@@ -394,20 +387,20 @@ if api_project_id:
                             label=audio_label.strip() if audio_label else None
                         )
                         audio_id = resp.get("audio_id") or resp.get("id")
-                        st.success(f"✅ Áudio '{filename}' enviado com sucesso! ID na API: {audio_id}")
+                        st.success(f"Áudio '{filename}' enviado com sucesso! ID na API: {audio_id}")
                         st.balloons()
                 except Exception as e:
                     st.error(f"Erro ao enviar áudio: {e}")
     else:
-        st.caption("⚠️ API de WhatsApp não configurada.")
+        st.caption("API de WhatsApp não configurada.")
 
 # ------------------------------------------------------------------
 # Acesso às entrevistas
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("🗂️ Entrevistas do Projeto")
+st.subheader("Entrevistas do Projeto")
 st.caption("A listagem completa, busca, filtros e ações de cada entrevista ficam na tela Entrevistas.")
-if st.button("🗂️ Ir para Entrevistas", type="primary"):
+if st.button("Ir para Entrevistas", type="primary"):
     st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
@@ -416,7 +409,7 @@ if st.button("🗂️ Ir para Entrevistas", type="primary"):
 st.divider()
 bc1, bc2 = st.columns([3, 1])
 with bc1:
-    st.markdown("**📚 Base de Conhecimento**")
+    st.markdown("**Base de Conhecimento**")
     vs_id = get_prosodia_vector_store_id()
     if vs_id:
         st.caption(f"Vector Store ativa: `{vs_id}`")

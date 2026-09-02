@@ -1,192 +1,263 @@
 """
 NENC Insights — Visualização de dados de Neuromarketing.
 
-Controlador de navegação: st.navigation() com páginas dinâmicas por módulo.
+Controlador de navegação. O menu lateral é permanente: os três módulos ficam
+sempre alcançáveis, e o módulo aberto expande suas páginas em seções
+nomeadas. Nenhuma página é registrada fora do menu — o bloco de CSS que
+escondia as sete páginas do NencBoost foi removido.
+
+O NencBoost tem três níveis. Sem projeto aberto, o menu mostra a lista de
+projetos, a base de conhecimento e a coleta via WhatsApp. Com um projeto
+aberto, a seção passa a levar o nome dele e reúne as páginas do projeto —
+é assim que o contexto ativo fica visível, já que o `st.navigation` desenha
+o menu sempre no topo da barra lateral e nada pode ficar acima dele. Com uma
+entrevista aberta, Timeline e Análise entram nessa mesma seção.
 """
 
 import streamlit as st
 
-from utils import auth
+from utils import auth, ui
+from utils.icons import material
 
 st.set_page_config(
     page_title="NENC Insights",
-    page_icon="🧠",
+    page_icon="🧠",  # favicon do navegador; a interface usa utils.icons
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# Antes do login: a tela de autenticação também usa o tema.
+ui.inject_theme()
 
-def _with_admin_pages(user: auth.User, pages):
-    if user.is_admin:
-        pages["Administracao"] = [
+# Rótulo e página de entrada de cada módulo, na ordem em que aparecem.
+MODULES = (
+    ("teste_sensorial", "Teste Sensorial", "waveform",
+     "modules/teste_sensorial/preparacao.py"),
+    ("jornada_compra", "Jornada de Compra", "eye",
+     "modules/jornada_compra/preparacao.py"),
+    ("prosodia", "NencBoost", "microphone-stage",
+     "modules/prosodia/projetos.py"),
+)
+
+
+def _url_path(path: str) -> str:
+    """Rota unica a partir do caminho do arquivo.
+
+    O Streamlit infere a rota do nome do arquivo, e tres modulos tem um
+    `preparacao.py`. Como o menu permanente registra o modulo aberto ao lado
+    dos outros, as rotas inferidas colidiriam.
+    """
+    stem = path.removesuffix(".py")
+    for prefix in ("modules/", "pages/"):
+        stem = stem.removeprefix(prefix)
+    return stem.replace("/", "-").replace("_", "-")
+
+
+def _page(path: str, title: str, icon_name: str, **kwargs) -> st.Page:
+    return st.Page(
+        path,
+        title=title,
+        icon=material(icon_name),
+        url_path=_url_path(path),
+        **kwargs,
+    )
+
+
+def _module_pages(module_key: str, user: auth.User) -> dict[str, list]:
+    """Páginas internas do módulo aberto, agrupadas por seção."""
+    if module_key == "teste_sensorial":
+        return {
+            "Teste Sensorial": [
+                _page("modules/teste_sensorial/preparacao.py",
+                      "Preparação de Dados", "folder-open"),
+                # Timeline e Média Geral unificadas em "Sinais".
+                _page("modules/teste_sensorial/sinais.py",
+                      "Sinais", "chart-line"),
+            ],
+        }
+
+    if module_key == "jornada_compra":
+        return {
+            "Jornada de Compra": [
+                _page("modules/jornada_compra/preparacao.py",
+                      "Preparação de Dados", "folder-open"),
+                _page("modules/jornada_compra/analise.py",
+                      "Análise", "chart-bar"),
+                _page("modules/jornada_compra/base_conhecimento.py",
+                      "Base de Conhecimento", "books"),
+            ],
+        }
+
+    if module_key == "prosodia":
+        return _prosodia_pages(user)
+
+    return {}
+
+
+def _active_project() -> dict | None:
+    """Projeto aberto, ou None. Limpa o estado se ele apontar para o vazio."""
+    project_id = st.session_state.get("pros_project_id")
+    if not project_id:
+        return None
+    try:
+        from utils.prosodia_db import get_project
+
+        project = get_project(project_id)
+    except Exception:
+        return None
+    if not project:
+        st.session_state.pop("pros_project_id", None)
+        st.session_state.pop("pros_audio_id", None)
+        return None
+    return project
+
+
+def _prosodia_pages(user: auth.User) -> dict[str, list]:
+    """Menu do NencBoost, em três níveis conforme o contexto aberto."""
+    sections: dict[str, list] = {}
+    project = _active_project()
+
+    if project:
+        # Nível 2: a seção leva o nome do projeto — é onde o contexto ativo
+        # cabe, acima das páginas dele.
+        project_pages = [
+            _page("modules/prosodia/entrevistas.py",
+                  "Entrevistas", "list-bullets"),
+            _page("modules/prosodia/analise_geral.py",
+                  "Análise Geral", "chart-bar"),
+            _page("modules/prosodia/audios.py",
+                  "Uploads", "upload-simple"),
+            _page("modules/prosodia/preparacao.py",
+                  "Dados do Projeto", "note-pencil"),
+        ]
+        # Nível 3: Timeline e Análise pertencem a uma entrevista, e são
+        # abertas pelas ações da linha na tabela de Entrevistas.
+        if st.session_state.get("pros_audio_id"):
+            project_pages.extend([
+                _page("modules/prosodia/audio_timeline.py",
+                      "Timeline", "chart-line"),
+                _page("modules/prosodia/audio_analise.py",
+                      "Análise", "sparkle"),
+            ])
+        sections[str(project["name"])] = project_pages
+
+    # Nível 1: continua visível com um projeto aberto, senão Campanhas e Base
+    # de Conhecimento só seriam alcançáveis passando por "Todos os projetos".
+    module_pages = [
+        _page("modules/prosodia/projetos.py",
+              "Todos os projetos" if project else "Projetos", "folders"),
+    ]
+    if not project:
+        # Sem projeto, `preparacao.py` é o formulário de novo projeto; com um
+        # projeto aberto ele é "Dados do Projeto", na seção acima.
+        module_pages.append(
+            _page("modules/prosodia/preparacao.py", "Novo projeto", "plus")
+        )
+    module_pages.append(
+        _page("modules/prosodia/base_conhecimento.py",
+              "Base de Conhecimento", "books")
+    )
+    sections["NencBoost"] = module_pages
+
+    # Antes escondida por CSS; agora uma seção própria do menu.
+    whatsapp = [
+        _page("modules/prosodia/whatsapp_contatos.py",
+              "Contatos", "address-book"),
+        _page("modules/prosodia/whatsapp_campanhas.py",
+              "Campanhas", "megaphone"),
+        _page("modules/prosodia/whatsapp_monitor.py",
+              "Monitor", "broadcast"),
+    ]
+    if user.is_platform_admin:
+        whatsapp.append(
+            _page("modules/prosodia/whatsapp_config.py",
+                  "Config API", "gear-six")
+        )
+    sections["Coleta via WhatsApp"] = whatsapp
+
+    return sections
+
+
+def _build_pages(user: auth.User) -> dict[str, list]:
+    active_module = st.session_state.get("modulo")
+    if active_module and not auth.can_access_module(user, active_module):
+        st.session_state.pop("modulo", None)
+        active_module = None
+
+    accessible = [
+        entry for entry in MODULES if auth.can_access_module(user, entry[0])
+    ]
+
+    pages: dict[str, list] = {
+        "": [
             st.Page(
-                "pages/admin_users.py",
-                title="Administracao de usuarios",
-                icon="👤",
+                "home.py",
+                title="Visão geral",
+                icon=material("squares-four"),
+                default=True,
             )
         ]
+    }
+
+    # Os módulos aos quais a conta tem acesso ficam sempre no menu, tanto
+    # para abrir o primeiro quanto para trocar sem voltar à Visão geral.
+    others = [entry for entry in accessible if entry[0] != active_module]
+    if others:
+        pages["Módulos"] = [
+            _page(entry[3], entry[1], entry[2]) for entry in others
+        ]
+
+    if active_module:
+        pages.update(_module_pages(active_module, user))
+
+    if user.is_admin:
+        pages["Administração"] = [
+            _page("pages/admin_users.py", "Usuários", "users-three")
+        ]
+
     return pages
 
 
-def _build_pages(user: auth.User):
-    """Constrói lista de páginas com base no módulo selecionado."""
-    modulo = st.session_state.get("modulo")
-    if modulo and not auth.can_access_module(user, modulo):
-        st.session_state.pop("modulo", None)
-        modulo = None
+def _reset_audio_selection() -> None:
+    st.session_state.pop("pros_audio_id", None)
 
-    home = st.Page("home.py", title="Início", icon="🧠", default=True)
 
-    if modulo == "teste_sensorial":
-        return _with_admin_pages(user, {
-            "": [home],
-            "Teste Sensorial": [
-                st.Page(
-                    "modules/teste_sensorial/preparacao.py",
-                    title="Preparação de Dados",
-                    icon="📂",
-                ),
-                st.Page(
-                    "modules/teste_sensorial/timeline.py",
-                    title="Timeline",
-                    icon="📊",
-                ),
-                st.Page(
-                    "modules/teste_sensorial/media_geral.py",
-                    title="Média Geral",
-                    icon="👥",
-                ),
-            ],
-        })
+def _render_project_context(user: auth.User) -> None:
+    """Seletor do projeto aberto, no topo da barra lateral.
 
-    if modulo == "jornada_compra":
-        return _with_admin_pages(user, {
-            "": [home],
-            "Jornada de Compra": [
-                st.Page(
-                    "modules/jornada_compra/preparacao.py",
-                    title="Preparação de Dados",
-                    icon="📂",
-                ),
-                st.Page(
-                    "modules/jornada_compra/base_conhecimento.py",
-                    title="Base de Conhecimento",
-                    icon="📚",
-                ),
-                st.Page(
-                    "modules/jornada_compra/analise.py",
-                    title="Análise",
-                    icon="🔍",
-                ),
-            ],
-        })
+    Antes vivia só em `entrevistas.py`; com o menu permanente o contexto
+    precisa valer em todas as páginas do projeto. Só aparece quando já há um
+    projeto aberto — na lista de projetos não há contexto a trocar.
+    """
+    if st.session_state.get("modulo") != "prosodia":
+        return
+    if not st.session_state.get("pros_project_id"):
+        return
+    if not auth.can_access_module(user, "prosodia"):
+        return
+    try:
+        from utils.prosodia_db import get_projects
 
-    if modulo == "prosodia":
-        # Registra páginas internas para permitir switch_page,
-        # mas esconde esses itens do menu lateral.
-        st.markdown(
-            """
-            <style>
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/preparacao.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fpreparacao.py"],
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/audio_timeline.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_timeline.py"],
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/audio_analise.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Faudio_analise.py"],
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_config.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_config.py"],
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_contatos.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_contatos.py"],
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_campanhas.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_campanhas.py"],
-            [data-testid="stSidebarNav"] a[href*="modules/prosodia/whatsapp_monitor.py"],
-            [data-testid="stSidebarNav"] a[href*="modules%2Fprosodia%2Fwhatsapp_monitor.py"] {
-                display: none !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
+        projects = get_projects()
+    except Exception:
+        return
+    if not projects:
+        return
 
-        return _with_admin_pages(user, {
-            "": [home],
-            "NencLex": [
-                st.Page(
-                    "modules/prosodia/projetos.py",
-                    title="Projetos",
-                    icon="🎙️",
-                ),
-                st.Page(
-                    "modules/prosodia/preparacao.py",
-                    title="Dados do Projeto",
-                    icon="📋",
-                ),
-                st.Page(
-                    "modules/prosodia/entrevistas.py",
-                    title="Entrevistas",
-                    icon="🗂️",
-                ),
-                st.Page(
-                    "modules/prosodia/analise_geral.py",
-                    title="Análise Geral",
-                    icon="🧠",
-                ),
-                *(
-                    [
-                        st.Page(
-                            "modules/prosodia/audios.py",
-                            title="Uploads",
-                            icon="📤",
-                        ),
-                    ]
-                    if auth.can_write(user)
-                    else []
-                ),
-                st.Page(
-                    "modules/prosodia/audio_timeline.py",
-                    title="Timeline",
-                    icon="📊",
-                ),
-                st.Page(
-                    "modules/prosodia/audio_analise.py",
-                    title="Análise",
-                    icon="🤖",
-                ),
-                st.Page(
-                    "modules/prosodia/base_conhecimento.py",
-                    title="Base de Conhecimento",
-                    icon="📚",
-                ),
-                *(
-                    [
-                        st.Page(
-                            "modules/prosodia/whatsapp_config.py",
-                            title="Config API",
-                            icon="🔧",
-                        ),
-                    ]
-                    if user.is_platform_admin
-                    else []
-                ),
-                st.Page(
-                    "modules/prosodia/whatsapp_contatos.py",
-                    title="Contatos",
-                    icon="👤",
-                ),
-                st.Page(
-                    "modules/prosodia/whatsapp_campanhas.py",
-                    title="Campanhas",
-                    icon="📢",
-                ),
-                st.Page(
-                    "modules/prosodia/whatsapp_monitor.py",
-                    title="Monitor",
-                    icon="📡",
-                ),
-            ],
-        })
-
-    return _with_admin_pages(user, {"": [home]})
+    ui.context_selector(
+        kicker="Projeto ativo",
+        options=projects,
+        id_key="id",
+        label_key="name",
+        state_key="pros_project_id",
+        meta=lambda record: (
+            ("file-audio", str(record.get("n_audios", 0))),
+            ("plug", "API #{}".format(record["api_project_id"]))
+            if record.get("api_project_id")
+            else ("plug", "sem API"),
+        ),
+        on_change=_reset_audio_selection,
+    )
 
 
 def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
@@ -213,6 +284,10 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
             "jc_ai_model",
             "jc_ai_mode",
             "jc_use_kb",
+            "_ctx_pros_project_id",
+            "_ctx_pros_project_id_shadow",
+            "_ctx_pros_audio_id",
+            "_ctx_pros_audio_id_shadow",
         ):
             st.session_state.pop(session_key, None)
     st.session_state[state_key] = active_organization_id
@@ -220,11 +295,25 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
 
 authenticated_user = auth.render_login_page()
 if authenticated_user is None:
+    # Sem uma chamada a st.navigation, o Streamlit cai na descoberta
+    # automatica de `pages/` e lista "app" e "admin users" na barra lateral
+    # da tela de login. Uma navegacao oculta de uma pagina so desliga isso.
+    st.navigation(
+        [st.Page("home.py", title="NENC Insights")], position="hidden"
+    )
     st.stop()
 
-auth.render_auth_sidebar(authenticated_user)
 _clear_organization_ui_state_if_needed(authenticated_user)
-pg = st.navigation(_build_pages(authenticated_user))
+# O seletor roda antes de montar o menu: trocar de projeto precisa valer já
+# nesta execução, e não só no rerun seguinte.
+_render_project_context(authenticated_user)
+auth.render_auth_sidebar(authenticated_user)
+
+# `expanded=True` e obrigatorio aqui. No padrao (`False`) o Streamlit colapsa
+# o menu para caber na altura da barra lateral e esconde o excedente: com as
+# 14 paginas mais o seletor de projeto e o cartao de sessao, sobravam 10 itens
+# e a seccao "Administracao" sumia inteira.
+pg = st.navigation(_build_pages(authenticated_user), expanded=True)
 
 if st.session_state.get("_navigate_to"):
     _target = st.session_state.pop("_navigate_to")

@@ -13,7 +13,8 @@ import re
 import unicodedata
 from datetime import datetime
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("prosodia")
 
@@ -341,7 +342,7 @@ def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
     if not client:
         return False, "OpenAI não configurado para envio à base de conhecimento."
     if not prosodia_vs_id:
-        return False, "A base de conhecimento do NencLex nao esta configurada para a organizacao ativa."
+        return False, "A base de conhecimento do NencBoost nao esta configurada para a organizacao ativa."
 
     try:
         uploaded = client.files.create(
@@ -450,32 +451,29 @@ transcript_text = " ".join(tr_df["Text"].fillna("").astype(str).tolist()) if not
 # Header & Reprocessamento
 # ------------------------------------------------------------------
 is_wa = str(sid).startswith("wa_")
+ui.inject_theme()
+ui.breadcrumb(
+    "NencBoost",
+    project.get("name", "") if project else "",
+    "Entrevistas",
+    sid,
+)
+# Timeline e Entrevistas estao no menu do projeto aberto; so o
+# reprocessamento, que e uma acao e nao navegacao, continua aqui.
 if is_wa:
-    h1, h2, h3, h4 = st.columns([4.5, 1.5, 1, 1])
+    h1, h2 = st.columns([6, 1.5])
 else:
-    h1, h3, h4 = st.columns([5, 1, 1])
+    h1 = st.container()
     h2 = None
 
 with h1:
-    st.title(f"🤖 Análise — {sid}")
-    if project:
-        st.caption(f"Projeto: {project.get('name', '')}")
-
-with h3:
-    st.write("")
-    if st.button("📊 Timeline", width='stretch'):
-        st.switch_page("modules/prosodia/audio_timeline.py")
-
-with h4:
-    st.write("")
-    if st.button("← Entrevistas", width='stretch'):
-        st.switch_page("modules/prosodia/entrevistas.py")
+    page_title("sparkle", "Análise", sid)
 
 # ------------------------------------------------------------------
 # Sidebar
 # ------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Controles")
+    st.header("Controles")
     analysis_mode = st.radio("Modo de análise", ["Rápida (1 chamada)", "Aprofundada (2 etapas)"])
     use_kb = st.checkbox("Usar Base de Conhecimento", value=True)
     openai_model = st.selectbox(
@@ -539,7 +537,7 @@ vs_id = get_prosodia_vector_store_id() if use_kb else None
 # ------------------------------------------------------------------
 if is_wa and h2 is not None:
     h2.write("")
-    if h2.button("🔄 Reprocessar", type="secondary", width='stretch', help="Solicitar reprocessamento da transcrição e NencLex via WhatsApp API"):
+    if h2.button("Reprocessar", type="secondary", width='stretch', help="Solicitar reprocessamento da transcrição e NencBoost via WhatsApp API"):
         questions = get_project_questions(project_id) if project_id else []
         parts = sid.split("_")
         if len(parts) >= 3:
@@ -570,11 +568,11 @@ if is_wa and h2 is not None:
                         st.error(f"Erro no processamento da API: {status_info.get('error_msg') or 'Falha desconhecida'}")
                         break
                     
-                    status_container.info(f"⏳ Processando na API (status: {job_status.upper()}). Por favor, aguarde...")
+                    status_container.info(f"Processando na API (status: {job_status.upper()}). Por favor, aguarde...")
                     time.sleep(3)
                 
                 if success:
-                    status_container.success("✅ Processamento na API concluído! Atualizando dados locais...")
+                    status_container.success("Processamento na API concluído! Atualizando dados locais...")
                     
                     # 3. Baixar resultados
                     result_json = get_audio_result(audio_api_id)
@@ -624,7 +622,7 @@ if is_wa and h2 is not None:
                         ai_client = openai_client or groq_client
                         
                         # 7. Atualizar Qualidade
-                        status_container.info("🔄 Atualizando verificação de qualidade...")
+                        status_container.info("Atualizando verificação de qualidade...")
                         new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds)
                         cov_kw = check_question_coverage_keywords(new_tr_df, questions)
                         cov_ai = []
@@ -667,7 +665,7 @@ if is_wa and h2 is not None:
                         _append_result_to_kb(kb_doc_name_q, kb_doc_q)
                         
                         # 8. Atualizar Análise de IA
-                        status_container.info("🧠 Atualizando análise de IA...")
+                        status_container.info("Atualizando análise de IA...")
                         new_tables_lines = []
                         if not new_vad_df.empty and "duration" in new_vad_df.columns:
                             new_total_s = new_vad_df["duration"].sum()
@@ -731,7 +729,7 @@ if is_wa and h2 is not None:
                         )
                         _append_result_to_kb(kb_doc_name_a, kb_doc_a)
                         
-                        status_container.success("🎉 Áudio, transcrição, NencLex e análise reprocessados com sucesso!")
+                        status_container.success("Áudio, transcrição, NencBoost e análise reprocessados com sucesso!")
                         time.sleep(2)
                         st.rerun()
                     else:
@@ -747,7 +745,7 @@ analysis_section = st.container()
 # Seção 1: Análise de IA
 # ------------------------------------------------------------------
 with analysis_section:
-    st.subheader("🤖 Análise de IA")
+    st.subheader("Análise de IA")
 
     latest_analysis = get_latest_analysis(audio_id)
 
@@ -764,7 +762,7 @@ with analysis_section:
             citations=latest_analysis.get("citations", []),
         )
         st.download_button(
-            "⬇️ Download Análise IA (.md)",
+            "Download Análise IA (.md)",
             data=analysis_md,
             file_name=f"analise_ia_{_slugify(sid)}.md",
             mime="text/markdown",
@@ -773,18 +771,18 @@ with analysis_section:
 
         citations = latest_analysis.get("citations", [])
         if citations:
-            with st.expander("📎 Referências da Base de Conhecimento"):
+            with st.expander("Referências da Base de Conhecimento"):
                 for i, cit in enumerate(citations, 1):
                     st.markdown(f"**[{i}]** {cit.get('filename', 'Documento')} — _{cit.get('quote', '')}_")
 
-        with st.expander(f"📋 Histórico de análises ({len(get_analyses(audio_id))} registros)"):
+        with st.expander(f"Histórico de análises ({len(get_analyses(audio_id))} registros)"):
             for an in get_analyses(audio_id):
                 st.markdown(f"**{an['created_at']} — {an.get('model', '—')}**")
                 st.markdown(an["analysis_text"][:500] + ("…" if len(an["analysis_text"]) > 500 else ""))
                 st.divider()
 
         st.divider()
-        st.subheader("💬 Chat com a IA sobre esta Entrevista")
+        st.subheader("Chat com a IA sobre esta Entrevista")
         st.markdown(
             "Pergunte detalhes, peça sugestões de abordagem ou tire dúvidas sobre a análise desta entrevista."
         )
@@ -875,7 +873,7 @@ with analysis_section:
         st.info("Nenhuma análise disponível. Clique em **Gerar Análise** para criar a primeira.")
 
     # Botão de gerar/regenerar
-    btn_label = "🔄 Regenerar Análise" if latest_analysis else "🔍 Gerar Análise"
+    btn_label = "Regenerar Análise" if latest_analysis else "Gerar Análise"
     if st.button(btn_label, type="primary"):
         groq_client = None
         if not openai_client and groq_key:
@@ -1003,7 +1001,7 @@ with analysis_section:
 # ------------------------------------------------------------------
 with quality_section:
     st.divider()
-    st.subheader("🔍 Verificação de Qualidade da Entrevista")
+    st.subheader("Verificação de Qualidade da Entrevista")
 
     quality = get_latest_quality_check(audio_id)
     questions = get_project_questions(project_id) if project_id else []
@@ -1021,17 +1019,16 @@ with quality_section:
         n_kw_found = sum(1 for c in coverage if c.get("covered_keywords") is True)
         n_ai_found = sum(1 for c in coverage if c.get("covered_ai") is True)
 
-        badge = status_badge(overall)
-        overall_label = {"pass": "OK", "warn": "Atenção", "fail": "Problema"}.get(overall, overall)
-        st.markdown(f"### {badge} Status Geral: **{overall_label}**")
+        overall_label = status_badge(overall)
+        st.markdown(f"### Status Geral: **{overall_label}**")
         st.caption(f"Última verificação: {quality.get('created_at', '—')}")
 
         qc1, qc2, qc3, qc4, qc5 = st.columns(5)
-        qc1.metric("✅ Checks OK", n_pass)
-        qc2.metric("⚠️ Alertas", n_warn)
-        qc3.metric("❌ Problemas", n_fail)
-        qc4.metric("🧠 IA cobertas", f"{n_ai_found}/{n_cov_total}")
-        qc5.metric("🔎 Keywords cobertas", f"{n_kw_found}/{n_cov_total}")
+        qc1.metric("Checks OK", n_pass)
+        qc2.metric("Alertas", n_warn)
+        qc3.metric("Problemas", n_fail)
+        qc4.metric("IA cobertas", f"{n_ai_found}/{n_cov_total}")
+        qc5.metric("Keywords cobertas", f"{n_kw_found}/{n_cov_total}")
 
         quality_md = _build_quality_markdown(
             sid=sid,
@@ -1042,7 +1039,7 @@ with quality_section:
             coverage=coverage,
         )
         st.download_button(
-            "⬇️ Download Verificação de Qualidade (.md)",
+            "Download Verificação de Qualidade (.md)",
             data=quality_md,
             file_name=f"qualidade_entrevista_{_slugify(sid)}.md",
             mime="text/markdown",
@@ -1050,7 +1047,7 @@ with quality_section:
         )
 
         # Checks objetivos
-        with st.expander("📋 Checks Objetivos", expanded=(overall != "pass")):
+        with st.expander("Checks Objetivos", expanded=(overall != "pass")):
             rows = []
             for c in checks:
                 rows.append({
@@ -1063,7 +1060,7 @@ with quality_section:
 
         # Cobertura de perguntas
         if coverage:
-            with st.expander(f"❓ Cobertura das Perguntas ({len(coverage)} perguntas)", expanded=True):
+            with st.expander(f"Cobertura das Perguntas ({len(coverage)} perguntas)", expanded=True):
                 cov_rows = []
                 coverage_records = []
                 for c in coverage:
@@ -1086,8 +1083,8 @@ with quality_section:
 
                     cov_rows.append({
                         "Pergunta": c.get("question", ""),
-                        "Keywords": "✅" if kw else ("❌" if kw is False else "—"),
-                        "IA": "✅" if ai_cov else ("❌" if ai_cov is False else "—"),
+                        "Keywords": "Sim" if kw else ("Não" if kw is False else "—"),
+                        "IA": "Sim" if ai_cov else ("Não" if ai_cov is False else "—"),
                         "Confiança": f"{c.get('confidence', 0)*100:.0f}%",
                         "Evidência Keywords": evidence_kw or "",
                         "Evidência IA": evidence_ai or "",
@@ -1110,7 +1107,7 @@ with quality_section:
                     elif selection is not None:
                         selected_rows = getattr(selection, "rows", []) or []
 
-                if st.button("🎯 Ir para momento na Timeline", key=f"go_timeline_moment_{audio_id}"):
+                if st.button("Ir para momento na Timeline", key=f"go_timeline_moment_{audio_id}"):
                     if not selected_rows:
                         st.info("Selecione uma pergunta na tabela de cobertura para localizar o momento na entrevista.")
                     else:
@@ -1146,7 +1143,7 @@ with quality_section:
             
         if not sinc_df.empty:
             st.write("")
-            st.subheader("🔥 Momentos de Maior Ativação Prosódica")
+            st.subheader("Momentos de Maior Ativação Prosódica")
             st.markdown(
                 "Os momentos da entrevista com maior combinação de intensidade (volume), "
                 "expressividade (pitch) e ativação emocional (arousal). Selecione uma linha e clique no botão para navegar até a timeline."
@@ -1183,7 +1180,7 @@ with quality_section:
                     elif selection is not None:
                         selected_rows = getattr(selection, "rows", []) or []
                         
-                if st.button("🎯 Ir para momento na Timeline", key=f"go_top_moment_{audio_id}"):
+                if st.button("Ir para momento na Timeline", key=f"go_top_moment_{audio_id}"):
                     if not selected_rows:
                         st.info("Selecione um momento na tabela acima para localizar a timeline correspondente.")
                     else:
@@ -1207,7 +1204,7 @@ with quality_section:
         st.info("Verificação de qualidade ainda não realizada para este áudio.")
 
     # Botão Reverificar
-    if st.button("🔄 Reverificar Qualidade"):
+    if st.button("Reverificar Qualidade"):
         questions = get_project_questions(project_id) if project_id else []
         openai_client = get_openai_client()
         groq_client = None

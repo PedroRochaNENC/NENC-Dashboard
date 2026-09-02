@@ -12,7 +12,8 @@ import json
 from datetime import datetime
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 user = auth.require_module("prosodia")
 pode_editar = auth.can_write(user)
@@ -102,7 +103,7 @@ def _upload_briefing_to_kb(filename: str, content: bytes) -> tuple[bool, str]:
     if not client:
         return False, "OpenAI não configurado para envio à base de conhecimento."
     if not prosodia_vs_id:
-        return False, "A base de conhecimento do NencLex nao esta configurada para a organizacao ativa."
+        return False, "A base de conhecimento do NencBoost nao esta configurada para a organizacao ativa."
 
     try:
         uploaded = client.files.create(
@@ -132,21 +133,23 @@ if editing and project is None:
 if editing:
     pode_editar = user_can_modify_project(project, user)
 
-st.title("✏️ Editar Projeto" if editing else "➕ Novo Projeto do NencLex")
-
-# Navegação
-nav_col, _ = st.columns([2, 6])
-with nav_col:
-    if st.button("← Projetos", width='stretch'):
-        st.switch_page("modules/prosodia/projetos.py")
-
-st.divider()
+ui.inject_theme()
+ui.breadcrumb(
+    "NencBoost", "Projetos", "Editar" if editing else "Novo"
+)
+page_title(
+    "note-pencil" if editing else "plus",
+    "Editar Projeto" if editing else "Novo Projeto",
+    project.get("name")
+    if editing
+    else "Perguntas, entidades e briefing do projeto.",
+)
 
 # ==================================================================
 # Formulário
 # ==================================================================
 with st.container():
-    st.subheader("📋 Informações do Projeto")
+    st.subheader("Informações do Projeto")
 
     nome = st.text_input(
         "Nome do Projeto *",
@@ -188,7 +191,7 @@ with st.container():
 
     st.divider()
 
-    st.subheader("❓ Perguntas da Entrevista")
+    st.subheader("Perguntas da Entrevista")
     st.markdown(
         "Liste as perguntas que **devem ser abordadas** em cada entrevista. "
         "O sistema verificará automaticamente a cobertura ao carregar os uploads. "
@@ -211,7 +214,7 @@ with st.container():
     st.caption("_Deixe em branco para pular a verificação de cobertura de perguntas._")
 
     st.divider()
-    st.subheader("🎯 Entidades prioritárias da análise")
+    st.subheader("Entidades prioritárias da análise")
     st.markdown(
         "Liste candidatos, marcas, produtos ou pessoas que devem receber análise "
         "individual no relatório. Use **uma entidade por linha**, opcionalmente "
@@ -233,7 +236,7 @@ with st.container():
     )
 
     st.divider()
-    st.subheader("🧾 Briefing do Projeto (contexto para análises)")
+    st.subheader("Briefing do Projeto (contexto para análises)")
     st.markdown(
         "Adicione um documento de **briefing** para enriquecer o contexto das análises de IA "
         "(individual e geral)."
@@ -267,7 +270,7 @@ with st.container():
     # Vincular Campanha do WhatsApp (Opcional)
     # ------------------------------------------------------------------
     st.divider()
-    st.subheader("📱 Campanha do WhatsApp (Opcional)")
+    st.subheader("Campanha do WhatsApp (Opcional)")
     st.markdown(
         "Vincule este projeto a uma campanha da API de WhatsApp para "
         "sincronizar áudios automaticamente."
@@ -313,12 +316,12 @@ with st.container():
             }
         except Exception as e:
             if "403" in str(e):
-                st.warning("⚠️ Não foi possível buscar campanhas: Chave de API do WhatsApp (X-API-Key) recusada pelo servidor (HTTP 403 Forbidden). Verifique as credenciais nas Configurações da WhatsApp API.")
+                st.warning("Não foi possível buscar campanhas: Chave de API do WhatsApp (X-API-Key) recusada pelo servidor (HTTP 403 Forbidden). Verifique as credenciais nas Configurações da WhatsApp API.")
             else:
                 st.warning(f"Não foi possível buscar campanhas: {e}")
     else:
         st.caption(
-            "⚠️ API de WhatsApp não configurada. "
+            "API de WhatsApp não configurada. "
             "Configure URL e chave na tela de Projetos para habilitar."
         )
 
@@ -345,7 +348,7 @@ with st.container():
     # Sincronização do Projeto com a API (Opcional)
     # ------------------------------------------------------------------
     st.divider()
-    st.subheader("🔗 Sincronização de Projeto na API")
+    st.subheader("Sincronização de Projeto na API")
     st.markdown(
         "Vincule este projeto local a um projeto na API para agrupar áudios, contatos e campanhas."
     )
@@ -356,7 +359,7 @@ with st.container():
 
     if is_configured():
         if current_api_project_id:
-            st.success(f"🔗 Projeto vinculado à API: ID #{current_api_project_id}")
+            st.success(f"Projeto vinculado à API: ID #{current_api_project_id}")
             desvincular_api = st.checkbox("Desvincular este projeto da API", value=False)
         else:
             sincronizar_api = st.checkbox("Sincronizar este projeto com a API", value=False)
@@ -369,7 +372,7 @@ with st.container():
                 )
     else:
         st.caption(
-            "⚠️ API de WhatsApp não configurada. "
+            "API de WhatsApp não configurada. "
             "Configure URL e chave na tela de Projetos para habilitar a sincronização de projetos."
         )
 
@@ -377,7 +380,7 @@ with st.container():
     # Texto de Verificação do QR Code (WhatsApp)
     # ------------------------------------------------------------------
     st.divider()
-    st.subheader("💬 Texto de Verificação do QR Code (WhatsApp)")
+    st.subheader("Texto de Verificação do QR Code (WhatsApp)")
     st.markdown(
         "Personalize o texto que será pré-preenchido na mensagem de WhatsApp do participante "
         "ao escanear qualquer QR Code deste projeto."
@@ -394,7 +397,7 @@ with st.container():
     # Limiares de Qualidade Objetiva
     # ------------------------------------------------------------------
     st.divider()
-    st.subheader("⚙️ Parâmetros dos Checks Objetivos")
+    st.subheader("Parâmetros dos Checks Objetivos")
     st.markdown(
         "Ajuste os parâmetros que determinam os alertas e erros das verificações de qualidade "
         "deste projeto."
@@ -423,7 +426,7 @@ with st.container():
         t_col1, t_col2 = st.columns(2)
 
         with t_col1:
-            st.markdown("**🎙️ Fala & Transcrição**")
+            st.markdown("**Fala & Transcrição**")
             val_dur_fail = st.number_input(
                 "Duração de fala mínima (Erro - seg)",
                 min_value=0,
@@ -449,7 +452,7 @@ with st.container():
                 help="Mínimo recomendado de palavras. Abaixo disso, gera um alerta."
             )
 
-            st.markdown("**💬 Inteligibilidade & Diálogo**")
+            st.markdown("**Inteligibilidade & Diálogo**")
             init_unint_warn_pct = float(display_thresholds.get("unintelligible_warn_pct", DEFAULT_THRESHOLDS["unintelligible_warn_pct"]))
             val_unint_warn = st.slider(
                 "Alerta de ininteligibilidade (%)",
@@ -487,7 +490,7 @@ with st.container():
             ) / 100.0
 
         with t_col2:
-            st.markdown("**🔊 Ritmo & Acústica**")
+            st.markdown("**Ritmo & Acústica**")
             val_min_vad = st.number_input(
                 "Mínimo de segmentos VAD (Alerta)",
                 min_value=1,
@@ -534,10 +537,10 @@ with st.container():
         if editing and auth.can_write(user):
             st.info("Este projeto foi criado por outro administrador da organização.")
         else:
-            st.info("Sua conta tem acesso somente de leitura ao NencLex.")
+            st.info("Sua conta tem acesso somente de leitura ao NencBoost.")
 
     submitted = st.button(
-        "💾 Salvar e ir para Entrevistas",
+        "Salvar e ir para Entrevistas",
         type="primary",
         width='stretch',
         disabled=not pode_editar,
@@ -661,4 +664,7 @@ if submitted:
         if saved_project_id:
             st.session_state["pros_project_id"] = saved_project_id
 
-        st.switch_page("modules/prosodia/entrevistas.py")
+        # Num projeto recem-criado o menu desta execucao foi montado sem
+        # projeto, entao Entrevistas ainda nao esta registrada.
+        st.session_state["_navigate_to"] = "modules/prosodia/entrevistas.py"
+        st.rerun()

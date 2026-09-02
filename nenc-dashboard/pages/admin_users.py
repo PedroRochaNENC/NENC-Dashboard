@@ -1,53 +1,76 @@
-"""Administrator-only user and organization management page."""
+"""
+Administração — usuários e organizações.
+
+Duas correções em relação à versão anterior: a página passa a usar português
+acentuado, como o resto do produto, e as três colunas booleanas
+(Administrador, Administrador global, Ativo) viram um papel único mais uma
+situação. Editar e remover saem de um selectbox abaixo da tabela e passam a
+agir sobre a linha selecionada.
+"""
 
 import streamlit as st
 
-from utils import auth
-
+from utils import auth, ui
+from utils.icons import icon, page_title
 
 actor = auth.require_admin()
 active_organization_id = auth.active_organization_id(actor)
 
-# O administrador global pode selecionar "Todas as Organizacoes" (id 0); nesse
-# caso a listagem de contas cobre o sistema inteiro.
+# O administrador global pode selecionar "Todas as Organizações" (id 0); nesse
+# caso a listagem de contas cobre o sistema inteiro e a organização de cada
+# conta vira uma coluna própria.
 todas_organizacoes = active_organization_id == 0
 
-st.title("Administracao de usuarios")
-st.caption("Organizacao ativa: {}".format(
-    "Todas as Organizacoes"
+ui.inject_theme()
+ui.breadcrumb("Administração", "Usuários")
+
+active_organization_name = (
+    "Todas as Organizações"
     if todas_organizacoes
     else next(
         (
             organization.name
-            for organization in auth.list_organizations(
-                actor, include_inactive=True
-            )
+            for organization in auth.list_organizations(actor, include_inactive=True)
             if organization.id == active_organization_id
         ),
         actor.organization_name,
     )
-))
+)
 
 
 def _organization_options(include_inactive: bool = False):
     organizations = auth.list_organizations(actor, include_inactive=include_inactive)
-    return organizations, {organization.id: organization.name for organization in organizations}
+    return organizations, {
+        organization.id: organization.name for organization in organizations
+    }
 
 
-def _user_label(user: auth.User) -> str:
-    state = "ativo" if user.is_active else "inativo"
-    label = "{} ({}, {})".format(user.name, user.email, state)
-    if todas_organizacoes:
-        return "{} — {}".format(user.organization_name, label)
-    return label
+def _role_label(user: auth.User) -> str:
+    """Um papel único no lugar das três colunas booleanas."""
+    if user.is_platform_admin:
+        return "Admin global"
+    if user.is_organization_admin:
+        return "Admin da organização"
+    return "Pesquisador"
 
 
-tabs = st.tabs(["Usuarios", "Organizacoes"])
-users_tab = tabs[0]
-organizations_tab = tabs[1]
+users_tab, organizations_tab = st.tabs(["Usuários", "Organizações"])
 
+# ---------------------------------------------------------------------------
+# Usuários
+# ---------------------------------------------------------------------------
 with users_tab:
-    search = st.text_input("Buscar usuario", placeholder="Nome ou e-mail")
+    page_title(
+        "users-three",
+        "Usuários",
+        "Organização ativa: {}".format(active_organization_name),
+    )
+
+    search = st.text_input(
+        "Buscar usuário",
+        placeholder="Nome ou e-mail",
+        label_visibility="collapsed",
+    )
     visible_users = auth.list_users(
         actor,
         organization_id=active_organization_id,
@@ -56,36 +79,62 @@ with users_tab:
     )
     creator_names = {user.id: user.name for user in visible_users}
 
-
     def _creator_label(user: auth.User) -> str:
         if user.created_by_user_id is None:
             return "—"
-        # Um autor fora da listagem atual (por exemplo, de outra organizacao)
-        # aparece pelo id, para nao se confundir com uma conta sem autor.
+        # Um autor fora da listagem atual (por exemplo, de outra organização)
+        # aparece pelo id, para não se confundir com uma conta sem autor.
         return creator_names.get(
             user.created_by_user_id, "#{}".format(user.created_by_user_id)
         )
 
-    st.dataframe(
+    selection = st.dataframe(
         [
             {
                 "Nome": user.name,
-                **({"Organizacao": user.organization_name} if todas_organizacoes else {}),
+                **(
+                    {"Organização": user.organization_name}
+                    if todas_organizacoes
+                    else {}
+                ),
                 "E-mail": user.email,
                 "Telefone": user.phone,
-                "Administrador": user.is_admin,
-                "Administrador global": user.is_platform_admin,
-                "Ativo": user.is_active,
+                "Papel": _role_label(user),
+                "Situação": "Ativa" if user.is_active else "Inativa",
                 "Criado por": _creator_label(user),
-                "Modulos": ", ".join(auth.MODULE_LABELS[key] for key in user.modules),
+                "Módulos": ", ".join(
+                    auth.MODULE_LABELS[key] for key in user.modules
+                ),
             }
             for user in visible_users
         ],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
+        on_select="rerun",
+        selection_mode="single-row",
+        key="admin_users_table",
     )
 
-    with st.expander("Criar usuario", expanded=False):
+    selected_rows = (
+        selection.selection.rows if hasattr(selection, "selection") else []
+    )
+    selected_user = visible_users[selected_rows[0]] if selected_rows else None
+
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:.5rem;'
+        'padding:.55rem .75rem;border-radius:8px;border:1px solid '
+        "var(--nenc-border);background:var(--nenc-surface);font-size:.78rem;"
+        'color:var(--nenc-muted);margin:.2rem 0 .9rem">{i}{t}</div>'.format(
+            i=icon("info", 15),
+            t=(
+                "Administradores da organização recebem todos os módulos "
+                "automaticamente. Contas regulares recebem acesso módulo a módulo."
+            ),
+        ),
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Convidar usuário", expanded=False):
         organizations, organization_names = _organization_options()
         with st.form("create-user"):
             name = st.text_input("Nome")
@@ -93,58 +142,64 @@ with users_tab:
             phone = st.text_input("Telefone")
             if actor.is_platform_admin:
                 organization_id = st.selectbox(
-                    "Organizacao", list(organization_names),
+                    "Organização",
+                    list(organization_names),
                     format_func=lambda value: organization_names[value],
                 )
             else:
                 organization_id = actor.organization_id
-                st.text_input("Organizacao", value=actor.organization_name, disabled=True)
+                st.text_input(
+                    "Organização", value=actor.organization_name, disabled=True
+                )
             password = st.text_input("Senha inicial", type="password")
             module_keys = st.multiselect(
-                "Modulos permitidos",
+                "Módulos permitidos",
                 list(auth.MODULE_KEYS),
                 format_func=lambda key: auth.MODULE_LABELS[key],
             )
-            is_organization_admin = st.checkbox("Administrador da organizacao")
+            is_organization_admin = st.checkbox("Administrador da organização")
             is_platform_admin = (
-                st.checkbox("Administrador global") if actor.is_platform_admin else False
+                st.checkbox("Administrador global")
+                if actor.is_platform_admin
+                else False
             )
-            submitted = st.form_submit_button("Criar usuario", type="primary")
+            submitted = st.form_submit_button("Convidar usuário", type="primary")
         if submitted:
             try:
                 auth.create_user(
+                    actor=actor,
                     name=name,
                     email=email,
                     phone=phone,
-                    organization_id=organization_id,
                     password=password,
-                    module_keys=module_keys,
+                    organization_id=organization_id,
+                    modules=module_keys,
                     is_organization_admin=is_organization_admin,
                     is_platform_admin=is_platform_admin,
-                    actor=actor,
                 )
             except (auth.AuthorizationError, ValueError) as error:
                 st.error(str(error))
             else:
-                st.success("Usuario criado.")
+                st.success("Usuário criado.")
                 st.rerun()
 
-    if visible_users:
-        selected_user_id = st.selectbox(
-            "Editar usuario",
-            [user.id for user in visible_users],
-            format_func=lambda user_id: _user_label(
-                next(user for user in visible_users if user.id == user_id)
-            ),
-        )
-        selected_user = next(user for user in visible_users if user.id == selected_user_id)
-        # A negativa real esta em auth.update_user/auth.delete_user; aqui a tela
-        # apenas nao oferece um controle que o servidor vai recusar.
+    if selected_user is None:
+        st.caption("Selecione uma linha na tabela para editar ou remover a conta.")
+    else:
+        # A negativa real está em auth.update_user/auth.delete_user; aqui a tela
+        # apenas não oferece um controle que o servidor vai recusar.
         pode_gerenciar = auth.can_manage_user(actor, selected_user)
+
+        st.markdown(
+            '<div style="font-size:.68rem;font-weight:600;letter-spacing:.1em;'
+            'text-transform:uppercase;color:var(--nenc-faint);'
+            'padding:.4rem 0 .3rem">Editando {}</div>'.format(selected_user.name),
+            unsafe_allow_html=True,
+        )
         if not pode_gerenciar:
             st.info(
-                "Esta conta pertence a outro administrador da organizacao e "
-                "nao pode ser editada ou removida por voce."
+                "Esta conta pertence a outro administrador da organização e "
+                "não pode ser editada ou removida por você."
             )
         with st.form("edit-user-{}".format(selected_user.id)):
             edited_name = st.text_input("Nome", value=selected_user.name)
@@ -153,62 +208,71 @@ with users_tab:
             if actor.is_platform_admin:
                 all_organizations, all_organization_names = _organization_options(True)
                 edited_organization_id = st.selectbox(
-                    "Organizacao do usuario",
+                    "Organização do usuário",
                     list(all_organization_names),
-                    index=list(all_organization_names).index(selected_user.organization_id),
+                    index=list(all_organization_names).index(
+                        selected_user.organization_id
+                    ),
                     format_func=lambda value: all_organization_names[value],
                 )
             else:
                 edited_organization_id = None
             reset_password = st.text_input(
-                "Nova senha", type="password", placeholder="Deixe em branco para manter"
+                "Nova senha",
+                type="password",
+                placeholder="Deixe em branco para manter",
             )
             edited_modules = st.multiselect(
-                "Modulos permitidos",
+                "Módulos permitidos",
                 list(auth.MODULE_KEYS),
                 default=list(selected_user.modules),
                 format_func=lambda key: auth.MODULE_LABELS[key],
             )
             edited_active = st.checkbox("Conta ativa", value=selected_user.is_active)
             edited_organization_admin = st.checkbox(
-                "Administrador da organizacao", value=selected_user.is_organization_admin
+                "Administrador da organização",
+                value=selected_user.is_organization_admin,
             )
             edited_platform_admin = (
-                st.checkbox("Administrador global", value=selected_user.is_platform_admin)
+                st.checkbox(
+                    "Administrador global", value=selected_user.is_platform_admin
+                )
                 if actor.is_platform_admin
                 else None
             )
             saved = st.form_submit_button(
-                "Salvar alteracoes", type="primary", disabled=not pode_gerenciar
+                "Salvar alterações", type="primary", disabled=not pode_gerenciar
             )
         if saved:
             try:
                 auth.update_user(
-                    actor,
-                    selected_user.id,
+                    actor=actor,
+                    user_id=selected_user.id,
                     name=edited_name,
                     email=edited_email,
                     phone=edited_phone,
-                    organization_id=edited_organization_id,
                     password=reset_password or None,
+                    organization_id=edited_organization_id,
+                    modules=edited_modules,
                     is_active=edited_active,
                     is_organization_admin=edited_organization_admin,
                     is_platform_admin=edited_platform_admin,
-                    module_keys=edited_modules,
                 )
             except (auth.AuthorizationError, ValueError) as error:
                 st.error(str(error))
             else:
-                st.success("Usuario atualizado. As sessoes necessarias foram revogadas.")
+                st.success(
+                    "Usuário atualizado. As sessões necessárias foram revogadas."
+                )
                 st.rerun()
 
-        with st.expander("Remover usuario", expanded=False):
+        with st.expander("Remover usuário", expanded=False):
             remove_confirmed = st.checkbox(
-                "Confirmo a remocao permanente desta conta.",
+                "Confirmo a remoção permanente desta conta.",
                 key="remove-confirm-{}".format(selected_user.id),
             )
             if st.button(
-                "Remover usuario",
+                "Remover usuário",
                 key="remove-user-{}".format(selected_user.id),
                 disabled=not (remove_confirmed and pode_gerenciar),
             ):
@@ -217,45 +281,51 @@ with users_tab:
                 except (auth.AuthorizationError, ValueError) as error:
                     st.error(str(error))
                 else:
-                    st.success("Usuario removido.")
+                    st.success("Usuário removido.")
                     st.rerun()
 
+# ---------------------------------------------------------------------------
+# Organizações
+# ---------------------------------------------------------------------------
 with organizations_tab:
+    page_title("buildings", "Organizações")
     organization_list, organization_names = _organization_options(True)
 
     if actor.is_platform_admin:
-        st.subheader("📋 Organizações Cadastradas")
         st.dataframe(
             [
                 {
                     "ID": organization.id,
                     "Nome": organization.name,
-                    "Ativa": organization.is_active,
+                    "Situação": "Ativa" if organization.is_active else "Inativa",
                     "Números WhatsApp": organization.whatsapp_numbers,
                 }
                 for organization in organization_list
             ],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
-        with st.expander("Criar Nova Organização", expanded=False):
+        with st.expander("Criar nova organização", expanded=False):
             with st.form("create-organization"):
                 organization_name = st.text_input("Nome da organização")
                 initial_wa_numbers = st.text_area(
-                    "Números de WhatsApp Destino (um por linha ou separados por vírgula)",
+                    "Números de WhatsApp destino "
+                    "(um por linha ou separados por vírgula)",
                     placeholder="Ex:\n5511975218007\n5516981360051",
                     height=80,
                 )
-                created = st.form_submit_button("Criar organização", type="primary")
+                created = st.form_submit_button(
+                    "Criar organização", type="primary"
+                )
             if created:
                 try:
                     new_org = auth.create_organization(organization_name, actor=actor)
                     if initial_wa_numbers.strip():
                         auth.update_organization(
-                            actor,
-                            new_org.id,
-                            whatsapp_numbers=initial_wa_numbers.strip(),
+                            actor=actor,
+                            organization_id=new_org.id,
+                            whatsapp_numbers=initial_wa_numbers,
                         )
                 except (auth.AuthorizationError, ValueError) as error:
                     st.error(str(error))
@@ -263,59 +333,73 @@ with organizations_tab:
                     st.success("Organização criada com sucesso.")
                     st.rerun()
 
-    st.subheader("📱 Configuração da Organização e Números de WhatsApp")
     st.markdown(
-        "Cadastre os **números de WhatsApp oficiais da organização** que estarão disponíveis "
-        "no seletor de destino ao criar QR Codes para campanhas do NencLex."
+        '<div style="font-size:.68rem;font-weight:600;letter-spacing:.1em;'
+        'text-transform:uppercase;color:var(--nenc-faint);'
+        'padding:.9rem 0 .3rem">Números de WhatsApp</div>'
+        '<p style="font-size:.82rem;line-height:1.55;color:var(--nenc-muted);'
+        'margin:0 0 .7rem">Os números oficiais da organização alimentam o '
+        "seletor de destino na criação de QR Codes das campanhas do "
+        "NencBoost.</p>",
+        unsafe_allow_html=True,
     )
 
     if actor.is_platform_admin:
         managed_organization_id = st.selectbox(
-            "Selecionar Organização para Editar",
+            "Organização a editar",
             [organization.id for organization in organization_list],
             format_func=lambda value: organization_names[value],
         )
         managed_organization = next(
-            organization
-            for organization in organization_list
-            if organization.id == managed_organization_id
+            org for org in organization_list if org.id == managed_organization_id
         )
     else:
         managed_organization_id = active_organization_id
         managed_organization = next(
             (org for org in organization_list if org.id == managed_organization_id),
-            auth.Organization(active_organization_id, actor.organization_name, True, "")
+            auth.Organization(
+                active_organization_id, actor.organization_name, True, ""
+            ),
         )
 
     with st.form("edit-organization-settings"):
         if actor.is_platform_admin:
-            edited_org_name = st.text_input("Nome da Organização", value=managed_organization.name)
-            desired_active = st.checkbox("Organização ativa", value=managed_organization.is_active)
+            edited_org_name = st.text_input(
+                "Nome da organização", value=managed_organization.name
+            )
+            desired_active = st.checkbox(
+                "Organização ativa", value=managed_organization.is_active
+            )
         else:
             edited_org_name = None
             desired_active = None
 
         edited_wa_numbers = st.text_area(
-            "Números de WhatsApp Destino da Organização (um por linha ou separados por vírgula)",
+            "Números de WhatsApp destino (um por linha ou separados por vírgula)",
             value=managed_organization.whatsapp_numbers,
             height=110,
             placeholder="Ex:\n5511975218007\n5516981360051",
-            help="Estes números alimentam o seletor de WhatsApp Destino na criação de QR Codes do NencLex."
+            help=(
+                "Estes números alimentam o seletor de WhatsApp destino na "
+                "criação de QR Codes do NencBoost."
+            ),
         )
 
-        saved_org = st.form_submit_button("💾 Salvar Configurações da Organização", type="primary")
+        saved_org = st.form_submit_button(
+            "Salvar configurações da organização", type="primary"
+        )
 
     if saved_org:
         try:
             auth.update_organization(
-                actor,
-                managed_organization_id,
+                actor=actor,
+                organization_id=managed_organization_id,
                 name=edited_org_name,
-                whatsapp_numbers=edited_wa_numbers,
                 is_active=desired_active,
+                whatsapp_numbers=edited_wa_numbers,
             )
         except (auth.AuthorizationError, ValueError) as error:
             st.error(str(error))
         else:
-            st.success("Configurações da organização salvas com sucesso!")
+            st.success("Configurações da organização salvas.")
             st.rerun()

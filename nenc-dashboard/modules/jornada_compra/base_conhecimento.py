@@ -6,19 +6,26 @@ listagem, exclusão e teste de busca.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("jornada_compra")
 
 from utils.ai_provider import get_openai_client, get_vector_store_id, save_vector_store_id
 
-st.title("📚 Base de Conhecimento — Jornada de Compra")
+ui.inject_theme()
+ui.breadcrumb("Jornada de Compra", "Base de Conhecimento")
+page_title(
+    "books",
+    "Base de Conhecimento",
+    "Documentos usados como contexto pela IA.",
+)
 
 client = get_openai_client()
 
 if client is None:
     st.error(
-        "⚠️ API OpenAI não configurada. "
+        "API OpenAI não configurada. "
         "Defina **OPENAI_API_KEY** no arquivo `.env` e reinicie o app."
     )
     st.stop()
@@ -26,7 +33,7 @@ if client is None:
 # ==================================================================
 # Seção 1: Configuração do Vector Store
 # ==================================================================
-st.subheader("⚙️ Configuração")
+st.subheader("Configuração")
 
 vs_id = get_vector_store_id()
 
@@ -34,7 +41,7 @@ if vs_id:
     st.success(f"Vector Store ativo: `{vs_id}`")
 else:
     st.warning("Nenhum Vector Store configurado.")
-    if st.button("➕ Criar novo Vector Store", type="primary"):
+    if st.button("Criar novo Vector Store", type="primary"):
         with st.spinner("Criando vector store..."):
             try:
                 vs = client.vector_stores.create(name="NENC Neuromarketing KB")
@@ -50,7 +57,7 @@ else:
 # Seção 2: Upload de Documentos
 # ==================================================================
 st.divider()
-st.subheader("📤 Upload de Documentos")
+st.subheader("Upload de Documentos")
 
 uploaded_files = st.file_uploader(
     "Selecione arquivos para adicionar à base",
@@ -75,7 +82,7 @@ if uploaded_files:
 
         categoria = st.text_input("Categoria", key="kb_categoria")
 
-        submitted = st.form_submit_button("📤 Enviar para a base", type="primary")
+        submitted = st.form_submit_button("Enviar para a base", type="primary")
 
         if submitted:
             progress = st.progress(0)
@@ -90,9 +97,9 @@ if uploaded_files:
                             vector_store_id=vs_id,
                             file_id=uploaded.id,
                         )
-                        st.success(f"✅ {f.name}")
+                        st.success(f"{f.name}")
                     except Exception as e:
-                        st.error(f"❌ {f.name}: {e}")
+                        st.error(f"{f.name}: {e}")
                 progress.progress((i + 1) / len(uploaded_files))
             st.rerun()
 
@@ -101,7 +108,7 @@ if uploaded_files:
 # Seção 3: Documentos na Base
 # ==================================================================
 st.divider()
-st.subheader("📋 Documentos na Base")
+st.subheader("Documentos na Base")
 
 try:
     vs_files = client.vector_stores.files.list(vector_store_id=vs_id)
@@ -126,7 +133,7 @@ if file_list:
             size_kb = 0
 
         with col_name:
-            st.text(f"📄 {filename} ({size_kb:.1f} KB)")
+            st.text(f"{filename} ({size_kb:.1f} KB)")
 
         with col_status:
             status = vf.status
@@ -138,7 +145,7 @@ if file_list:
                 st.error(status)
 
         with col_action:
-            if st.button("🗑️", key=f"del_{vf.id}", help=f"Remover {filename}"):
+            if st.button("Remover", key=f"del_{vf.id}", help=f"Remover {filename}"):
                 try:
                     client.vector_stores.files.delete(
                         vector_store_id=vs_id,
@@ -156,7 +163,7 @@ else:
 # Seção 4: Testar Busca
 # ==================================================================
 st.divider()
-st.subheader("🔍 Testar Busca")
+st.subheader("Testar Busca")
 
 test_query = st.text_input(
     "Digite uma consulta para testar a busca na base",
@@ -187,7 +194,7 @@ if test_query:
                                 for ann in getattr(content_block, "annotations", []):
                                     if ann.type == "file_citation":
                                         st.caption(
-                                            f"📎 Fonte: {getattr(ann, 'filename', 'arquivo')}"
+                                            f"Fonte: {getattr(ann, 'filename', 'arquivo')}"
                                         )
             except Exception as e:
                 st.error(f"Erro na busca: {e}")
@@ -200,9 +207,9 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar para Preparação", width='stretch'):
+    if st.button("Voltar para Preparação", width='stretch'):
         st.switch_page("modules/jornada_compra/preparacao.py")
 
 with col_nav2:
-    if st.button("Avançar para Análise ➡️", width='stretch', type="primary"):
+    if st.button("Avançar para Análise", width='stretch', type="primary"):
         st.switch_page("modules/jornada_compra/analise.py")

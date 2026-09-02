@@ -12,13 +12,13 @@ from plotly.subplots import make_subplots
 import pandas as pd
 from typing import List, Optional
 
+# Importado pelo efeito de registrar o template "nenc" usado abaixo.
+from utils.charts import NENC_HEATMAP, NENC_SEQUENCE
+
 # ---------------------------------------------------------------------------
 # Paleta de locutores
 # ---------------------------------------------------------------------------
-SPEAKER_COLORS = [
-    "#636EFA", "#EF553B", "#00CC96", "#AB63FA",
-    "#FFA15A", "#19D3F3", "#FF6692", "#B6E880",
-]
+SPEAKER_COLORS = list(NENC_SEQUENCE)
 
 
 def _speaker_color_map(speakers: List[str]) -> dict:
@@ -52,7 +52,7 @@ def create_vad_timeline(
             text="Sem dados VAD disponíveis",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     work = vad_df.copy()
@@ -65,7 +65,7 @@ def create_vad_timeline(
             text=f"Sem dados VAD para sessão '{session_id}'",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     sessions = work["session_id"].unique().tolist()
@@ -112,7 +112,7 @@ def create_vad_timeline(
         xaxis_title="Tempo (segundos)",
         yaxis_title="Sessão",
         barmode="overlay",
-        template="plotly_dark",
+        template="nenc",
         height=max(300, len(sessions) * 80 + 120),
         legend=dict(title="Sessão"),
     )
@@ -137,7 +137,7 @@ def create_speaker_stats(
             text="Sem dados de transcrição disponíveis",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     work = transcricao_df.copy()
@@ -150,7 +150,7 @@ def create_speaker_stats(
             text="Sem dados para a sessão selecionada",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     agg = (
@@ -201,7 +201,7 @@ def create_speaker_stats(
 
     fig.update_layout(
         title=title or "Participação por Locutor",
-        template="plotly_dark",
+        template="nenc",
         height=max(350, len(agg) * 50 + 150),
         barmode="group",
         legend=dict(title="Locutor"),
@@ -229,7 +229,7 @@ def create_message_timeline(
             text="Sem dados de transcrição disponíveis",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     work = transcricao_df.copy()
@@ -244,7 +244,7 @@ def create_message_timeline(
             text="Sem dados para a seleção atual",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     all_speakers = sorted(work["SpeakerName"].dropna().unique().tolist())
@@ -290,7 +290,7 @@ def create_message_timeline(
         title=title or "Timeline de Mensagens por Locutor",
         xaxis_title="Tempo (segundos)",
         yaxis_title="Locutor",
-        template="plotly_dark",
+        template="nenc",
         height=max(350, len(all_speakers) * 80 + 150),
         legend=dict(title="Locutor"),
     )
@@ -320,10 +320,7 @@ _ACOUSTIC_LABELS = {
     "dim_valence": "Valência",
 }
 
-_ACOUSTIC_COLORS = [
-    "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
-    "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52",
-]
+_ACOUSTIC_COLORS = list(NENC_SEQUENCE)
 
 
 def create_acoustic_timeline(
@@ -348,7 +345,7 @@ def create_acoustic_timeline(
             text="Sem dados acústicos disponíveis",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     work = df.copy()
@@ -373,7 +370,7 @@ def create_acoustic_timeline(
             text="Nenhuma feature acústica disponível no DataFrame.",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     fig = go.Figure()
@@ -402,7 +399,7 @@ def create_acoustic_timeline(
         title=title or "Features Acústicas por Segmento",
         xaxis_title="Tempo (segundos)",
         yaxis_title="Valor",
-        template="plotly_dark",
+        template="nenc",
         height=420,
         hovermode="x unified",
         legend=dict(
@@ -444,7 +441,7 @@ def create_transcription_markers(
             text="Sem dados de transcrição disponíveis",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     work = transcricao_df.copy()
@@ -459,7 +456,7 @@ def create_transcription_markers(
             text="Sem turnos para os locutores selecionados",
             showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5,
         )
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
 
     all_spks = sorted(work["SpeakerName"].dropna().unique().tolist())
@@ -514,7 +511,7 @@ def create_transcription_markers(
         title=title or "Turnos por Locutor — Marcadores de Transcrição",
         xaxis_title="Tempo (segundos)",
         yaxis_title="Locutor",
-        template="plotly_dark",
+        template="nenc",
         height=max(350, len(all_spks) * 100 + 150),
         hovermode="closest",
         legend=dict(title="Locutor"),
@@ -536,13 +533,13 @@ def create_project_acoustic_comparison(
     if sinc_df.empty:
         fig = go.Figure()
         fig.add_annotation(text="Sem dados acústicos disponíveis", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
     
     if "session_id" not in sinc_df.columns:
         fig = go.Figure()
         fig.add_annotation(text="session_id não encontrado nos dados", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
         
     metrics = ["dim_arousal", "dim_valence", "loudness_media", "speaking_rate"]
@@ -551,7 +548,7 @@ def create_project_acoustic_comparison(
     if not available:
         fig = go.Figure()
         fig.add_annotation(text="Sem métricas compatíveis nos dados", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
         
     agg = sinc_df.groupby("session_id")[available].mean().reset_index()
@@ -565,7 +562,7 @@ def create_project_acoustic_comparison(
         "speaking_rate": "Taxa de Fala (Média)"
     }
     
-    colors = ["#EF553B", "#00CC96", "#AB63FA", "#FFA15A"]
+    colors = NENC_SEQUENCE
     
     for i, m in enumerate(available):
         fig.add_trace(
@@ -582,7 +579,7 @@ def create_project_acoustic_comparison(
         title=title or "Média Acústica por Entrevista",
         xaxis_title="Entrevista / Sessão",
         yaxis_title="Valor Médio",
-        template="plotly_dark",
+        template="nenc",
         barmode="group",
         height=400,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -600,7 +597,7 @@ def create_project_emotion_distribution(
     if sinc_df.empty:
         fig = go.Figure()
         fig.add_annotation(text="Sem dados de emoções disponíveis", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
         
     emotions = ["emocao_neutral", "emocao_happy", "emocao_sad", "emocao_angry"]
@@ -609,7 +606,7 @@ def create_project_emotion_distribution(
     if not available:
         fig = go.Figure()
         fig.add_annotation(text="Métricas de emoção não encontradas nos dados", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
         
     agg = sinc_df.groupby("session_id")[available].mean().reset_index()
@@ -627,11 +624,13 @@ def create_project_emotion_distribution(
         "emocao_angry": "Raiva"
     }
     
+    # Mesmas matizes da Timeline: a mesma grandeza com a mesma cor nas duas
+    # telas. Neutro fica cinza de proposito — e a ausencia de emocao.
     emotion_colors = {
-        "emocao_neutral": "#808495",
-        "emocao_happy": "#FFD166",
-        "emocao_sad": "#19D3F3",
-        "emocao_angry": "#FF6692"
+        "emocao_neutral": "#9397ab",
+        "emocao_happy": "#e9c46a",
+        "emocao_sad": "#6aa9d9",
+        "emocao_angry": "#e0748b",
     }
     
     for emo in available:
@@ -649,7 +648,7 @@ def create_project_emotion_distribution(
         title=title or "Distribuição de Emoções por Entrevista (%)",
         xaxis_title="Entrevista / Sessão",
         yaxis_title="Proporção (%)",
-        template="plotly_dark",
+        template="nenc",
         barmode="stack",
         height=400,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -668,7 +667,7 @@ def create_project_word_ranking(
     if tr_df.empty or "Text" not in tr_df.columns:
         fig = go.Figure()
         fig.add_annotation(text="Sem transcrições disponíveis", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
         
     import re
@@ -733,7 +732,7 @@ def create_project_word_ranking(
     if not counts:
         fig = go.Figure()
         fig.add_annotation(text="Nenhuma palavra relevante encontrada", showarrow=False)
-        fig.update_layout(template="plotly_dark")
+        fig.update_layout(template="nenc")
         return fig
         
     words_list, freqs_list = zip(*counts)
@@ -749,7 +748,7 @@ def create_project_word_ranking(
             orientation="h",
             marker=dict(
                 color=freqs_list,
-                colorscale="Viridis",
+                colorscale=NENC_HEATMAP,
                 line=dict(color="white", width=0.5)
             ),
             hovertemplate="<b>%{y}</b><br>Menções: %{x}<extra></extra>"
@@ -760,7 +759,7 @@ def create_project_word_ranking(
         title=title or f"Top {top_n} Palavras Mais Frequentes",
         xaxis_title="Número de Menções",
         yaxis_title="Palavra / Conceito",
-        template="plotly_dark",
+        template="nenc",
         height=max(350, top_n * 22 + 100),
         margin=dict(l=100)
     )

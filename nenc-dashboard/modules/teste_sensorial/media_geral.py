@@ -3,7 +3,8 @@ Teste Sensorial — Média Geral por Etapa.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("teste_sensorial")
 
@@ -38,13 +39,18 @@ PERIFERICOS_Z = ["BPM_zscore", "RMSSD_zscore", "GSR_CAL_zscore"]
 
 hydrate_session_state("teste_sensorial", ("ts_data",))
 
-st.title("👥 Média Geral por Etapa")
+ui.inject_theme()
+ui.breadcrumb("Teste Sensorial", "Sinais", "Média Geral")
+page_title(
+    "chart-bar",
+    "Média Geral por Etapa",
+)
 
 data = st.session_state.get("ts_data", {})
 
 if not data or "indicadores" not in data:
     st.warning(
-        "⚠️ Nenhum dado carregado. "
+        "Nenhum dado carregado. "
         "Volte à página de Preparação de Dados e carregue os dados."
     )
     st.stop()
@@ -56,12 +62,12 @@ perifericos: pd.DataFrame = data.get("perifericos", pd.DataFrame()).copy()
 # Sidebar
 # ------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Controles")
+    st.header("Controles")
 
     use_zscore = st.checkbox("Usar Z-Scores (periféricos)", value=False)
 
     st.divider()
-    st.subheader("🤖 Análise de IA")
+    st.subheader("Análise de IA")
     api_key = st.text_input(
         "Chave da API Groq",
         type="password",
@@ -142,7 +148,7 @@ else:
 # Tabelas resumo
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("📋 Tabelas Resumo")
+st.subheader("Tabelas Resumo")
 
 col1, col2 = st.columns(2)
 
@@ -183,7 +189,7 @@ with col2:
 # Análise de IA
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("🤖 Análise de IA")
+st.subheader("Análise de IA")
 
 tables_text = ""
 if available_metrics:
@@ -228,7 +234,7 @@ if not api_key:
 elif not tables_text.strip():
     st.warning("Nenhum dado disponível para análise.")
 else:
-    if st.button("🔍 Gerar Análise", key="btn_ai_ts"):
+    if st.button("Gerar Análise", key="btn_ai_ts"):
         system_prompt = (
             "Você é um especialista em neuromarketing e análise de dados "
             "de EEG e sinais periféricos (BPM, GSR, RMSSD). "

@@ -6,7 +6,8 @@ Pré-visualização e validação dos dados.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("teste_sensorial")
 
@@ -23,7 +24,13 @@ from utils.organization_data import hydrate_session_state, save_session_state
 
 hydrate_session_state("teste_sensorial", ("ts_data",))
 
-st.title("📂 Preparação de Dados — Teste Sensorial")
+ui.inject_theme()
+ui.breadcrumb("Teste Sensorial", "Preparação de Dados")
+page_title(
+    "folder-open",
+    "Preparação de Dados",
+    "Carregue os sinais e defina as etapas do teste.",
+)
 
 # ------------------------------------------------------------------
 # Upload / Carregamento
@@ -95,7 +102,7 @@ if "_errors" in data:
 datasets = {"indicadores", "perifericos", "psd_results"}
 if data and datasets.intersection(data):
     st.divider()
-    st.subheader("✅ Resumo dos Dados")
+    st.subheader("Resumo dos Dados")
 
     summary = get_data_summary(data)
     participants = get_participants(data)
@@ -112,7 +119,7 @@ if data and datasets.intersection(data):
 
     # Preview das tabelas
     st.divider()
-    st.subheader("📋 Pré-visualização")
+    st.subheader("Pré-visualização")
 
     for key, label in [
         ("indicadores", "Indicadores (EEG)"),
@@ -124,7 +131,7 @@ if data and datasets.intersection(data):
                 st.dataframe(data[key].head(50), width='stretch')
 
 else:
-    st.info("👆 Carregue os dados acima para começar.")
+    st.info("Carregue os dados acima para começar.")
 
     st.markdown("### Formato esperado dos arquivos")
 

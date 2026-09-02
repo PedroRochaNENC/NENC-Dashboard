@@ -12,7 +12,8 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
@@ -61,7 +62,7 @@ def _build_project_analysis_markdown(
     citations: list,
 ) -> str:
     lines = [
-        "# Analise Geral do Projeto - NencLex",
+        "# Analise Geral do Projeto - NencBoost",
         "",
         f"- Projeto: {project_name or '-'}",
         f"- Modelo: {model or '-'}",
@@ -218,7 +219,7 @@ def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
     if not client:
         return False, "OpenAI nao configurado para envio a base de conhecimento."
     if not prosodia_vs_id:
-        return False, "A base de conhecimento do NencLex nao esta configurada para a organizacao ativa."
+        return False, "A base de conhecimento do NencBoost nao esta configurada para a organizacao ativa."
 
     try:
         uploaded = client.files.create(
@@ -703,9 +704,13 @@ audios = get_audios_for_interviews(project_id)
 # ------------------------------------------------------------------
 # Header
 # ------------------------------------------------------------------
+ui.inject_theme()
+ui.breadcrumb("NencBoost", project.get("name", ""), "Análise Geral")
 h1, h2, h3 = st.columns([5, 1, 1])
 with h1:
-    st.title(f"Analise Geral - {project.get('name', '')}")
+    page_title(
+        "chart-bar", "Análise Geral", project.get("name", "")
+    )
 with h2:
     st.write("")
     if st.button("Entrevistas", width="stretch"):
@@ -790,7 +795,7 @@ if not all_tr.empty:
 
 if not all_sinc.empty:
     st.divider()
-    st.subheader("🔥 Momentos de Maior Ativação Prosódica (Projeto)")
+    st.subheader("Momentos de Maior Ativação Prosódica (Projeto)")
     st.markdown(
         "Esta seção exibe os momentos das entrevistas com a maior combinação de ativação emocional (Arousal) "
         "e variações de voz (Pitch e Volume). Selecione uma linha e clique no botão para navegar até a timeline detalhada."
@@ -833,7 +838,7 @@ if not all_sinc.empty:
             elif selection is not None:
                 selected_rows = getattr(selection, "rows", []) or []
                 
-        if st.button("🎯 Ir para momento na Timeline da Entrevista"):
+        if st.button("Ir para momento na Timeline da Entrevista"):
             if not selected_rows:
                 st.info("Selecione um momento na tabela acima para localizar a timeline correspondente.")
             else:
@@ -855,7 +860,11 @@ if not all_sinc.empty:
                         "text": str(moment_row.get("Text", "")),
                         "source": "Filtro de Ativação Consolidado",
                     }
-                    st.switch_page("modules/prosodia/audio_timeline.py")
+                    # Cruza para o nivel da entrevista; ver `app.py`.
+                    st.session_state["_navigate_to"] = (
+                        "modules/prosodia/audio_timeline.py"
+                    )
+                    st.rerun()
                 else:
                     st.error("Não foi possível localizar o ID do áudio para esta entrevista.")
                     
@@ -874,7 +883,7 @@ if not all_sinc.empty:
         grouped_topics = _group_similar_topics(moments_list)
         if grouped_topics:
             st.write("")
-            st.subheader("📊 Tópicos Consolidados de Maior Ativação")
+            st.subheader("Tópicos Consolidados de Maior Ativação")
             st.markdown(
                 "Agrupamento temático dos momentos de maior expressividade e arousal do projeto. "
                 "Agrupa tópicos equivalentes que compartilham termos centrais."
@@ -894,7 +903,7 @@ if not all_sinc.empty:
         q_activations = _calculate_questions_activation(audios, all_sinc)
         if q_activations:
             st.write("")
-            st.subheader("❓ Perguntas com Maior Ativação Prosódica")
+            st.subheader("Perguntas com Maior Ativação Prosódica")
             st.markdown(
                 "Análise de quais perguntas do roteiro geraram maior expressividade de voz e arousal emocional nas respostas dos entrevistados."
             )
@@ -1028,7 +1037,7 @@ if latest_analysis:
             st.divider()
 
     st.divider()
-    st.subheader("💬 Chat com a IA sobre o Projeto")
+    st.subheader("Chat com a IA sobre o Projeto")
     st.markdown(
         "Tire dúvidas ou peça detalhamentos específicos sobre o relatório geral gerado acima."
     )

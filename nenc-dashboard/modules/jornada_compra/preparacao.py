@@ -5,7 +5,8 @@ Upload de arquivos de eye-tracking + formulário de contexto do projeto.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("jornada_compra")
 
@@ -56,12 +57,18 @@ def _extract_pptx_text(file_bytes: bytes) -> str:
 
 hydrate_session_state("jornada_compra", _JORNADA_STATE_KEYS)
 
-st.title("📂 Preparação de Dados — Jornada de Compra")
+ui.inject_theme()
+ui.breadcrumb("Jornada de Compra", "Preparação de Dados")
+page_title(
+    "folder-open",
+    "Preparação de Dados",
+    "Eye tracking, entrevistas e contexto do projeto.",
+)
 
 # ==================================================================
 # Seção 1: Upload de Dados
 # ==================================================================
-st.subheader("📤 Upload de Dados")
+st.subheader("Upload de Dados")
 st.markdown(
     "Envie os arquivos de eye-tracking do estudo. "
     "**Todos os arquivos são opcionais** — carregue os que estiverem disponíveis."
@@ -112,14 +119,14 @@ with col3:
     )
 
 entrevistas_file = st.file_uploader(
-    "🎙️ Entrevistas (transcrições qualitativas)",
+    "Entrevistas (transcrições qualitativas)",
     type=["csv", "xlsx"],
     key="jc_entrevistas",
     help="Entrevistas.csv — colunas: arquivo, ep, identificacao, texto",
 )
 
 relatorio_file = st.file_uploader(
-    "📎 Relatório PPTX (contexto adicional para análise de IA)",
+    "Relatório PPTX (contexto adicional para análise de IA)",
     type=["pptx"],
     key="jc_relatorio_pptx",
     help="Relatório em PowerPoint — o texto será extraído e usado como contexto para a IA",
@@ -163,7 +170,7 @@ loaded_keys = [k for k in data if k != "_errors"]
 
 if loaded_keys:
     st.divider()
-    st.subheader("✅ Resumo dos Dados")
+    st.subheader("Resumo dos Dados")
 
     summary = get_jornada_summary(data)
 
@@ -194,12 +201,12 @@ if loaded_keys:
 
     pptx_text = st.session_state.get("jc_pptx_text", "")
     if pptx_text:
-        with st.expander("📄 Conteúdo extraído do PPTX"):
+        with st.expander("Conteúdo extraído do PPTX"):
             st.text(pptx_text[:3000] + ("\n..." if len(pptx_text) > 3000 else ""))
 
     # Preview de cada arquivo
     st.divider()
-    st.subheader("📋 Pré-visualização")
+    st.subheader("Pré-visualização")
 
     labels = {
         "tabelas": "Tabelas (per-participante)",
@@ -228,13 +235,13 @@ if loaded_keys:
                 st.dataframe(df.head(50), width='stretch')
 
 else:
-    st.info("👆 Carregue pelo menos um arquivo para começar.")
+    st.info("Carregue pelo menos um arquivo para começar.")
 
 # ==================================================================
 # Seção 2: Contexto do Projeto
 # ==================================================================
 st.divider()
-st.subheader("📝 Contexto do Projeto")
+st.subheader("Contexto do Projeto")
 st.markdown(
     "Preencha as informações abaixo para contextualizar a análise de IA. "
     "Essas informações serão usadas na página de **Análise** para gerar "
@@ -284,7 +291,7 @@ with st.form("projeto_form", clear_on_submit=False):
         height=120,
     )
 
-    submitted = st.form_submit_button("💾 Salvar Contexto", type="primary")
+    submitted = st.form_submit_button("Salvar Contexto", type="primary")
 
     if submitted:
         st.session_state["jc_projeto"] = {
@@ -303,10 +310,10 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar para o Início", width='stretch'):
+    if st.button("Voltar para o Início", width='stretch'):
         st.session_state.pop("modulo", None)
         st.switch_page("home.py")
 
 with col_nav2:
-    if st.button("Avançar para Análise ➡️", width='stretch', type="primary"):
+    if st.button("Avançar para Análise", width='stretch', type="primary"):
         st.switch_page("modules/jornada_compra/analise.py")

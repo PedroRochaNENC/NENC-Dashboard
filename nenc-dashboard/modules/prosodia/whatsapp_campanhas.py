@@ -19,6 +19,8 @@ from utils.whatsapp_api_client import (
     is_configured
 )
 from utils.organization_data import list_external_resources
+from utils import ui
+from utils.icons import page_title
 from utils.prosodia_db import get_projects, get_project, update_project
 
 
@@ -49,23 +51,18 @@ def _update_project_campaign(project: dict, campaign_id) -> None:
         api_project_id=project.get("api_project_id"),
     )
 
-st.title("📢 Campanhas do WhatsApp")
-st.markdown(
-    "Dispare templates de mensagens do WhatsApp para seus contatos cadastrados. "
-    "Vincule campanhas aos seus projetos para importar os áudios recebidos de forma automática."
+# A navegacao de volta vive no menu lateral, na seccao "Coleta via WhatsApp".
+ui.inject_theme()
+ui.breadcrumb("NencBoost", "Coleta via WhatsApp", "Campanhas")
+page_title(
+    "megaphone",
+    "Campanhas",
+    "Disparos de convite vinculados ao projeto.",
 )
 
-# Botão Voltar para Projetos
-nav_col, _ = st.columns([2, 8])
-with nav_col:
-    if st.button("← Projetos", width='stretch'):
-        st.switch_page("modules/prosodia/projetos.py")
-
-st.divider()
-
 if not is_configured():
-    st.warning("⚠️ API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
-    if st.button("⚙️ Ir para Configurações", type="primary"):
+    st.warning("API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
+    if st.button("Ir para Configurações", type="primary"):
         st.switch_page("modules/prosodia/whatsapp_config.py")
     st.stop()
 
@@ -84,13 +81,18 @@ if api_project_id is not None and str(api_project_id) not in owned_api_project_i
     api_project_id = None
 
 if api_project_id:
-    st.info(f"🔗 **Filtro Ativo**: Exibindo e associando campanhas ao Projeto API #{api_project_id} ({project['name']})")
+    # Um selo, nao um alerta: e o contexto da pagina, nao um aviso.
+    st.markdown(
+        ui.status_chip(
+            "funnel",
+            "Projeto API #{} · {}".format(api_project_id, project["name"]),
+            tone="accent",
+        ),
+        unsafe_allow_html=True,
+    )
 
 # Abas para Campanhas
-tab_lista, tab_nova = st.tabs([
-    "📋 Campanhas Ativas",
-    "➕ Criar Nova Campanha"
-])
+tab_lista, tab_nova = st.tabs(["Campanhas ativas", "Criar campanha"])
 
 # ---------------------------------------------------------------------------
 # TAB 1: Campanhas Ativas & Detalhes
@@ -129,10 +131,10 @@ with tab_lista:
                 
             # Mapear status para emojis
             status_emojis = {
-                "pending": "🟡 Pendente",
-                "running": "🔵 Executando",
-                "done": "🟢 Finalizado",
-                "failed": "🔴 Falha"
+                "pending": "Pendente",
+                "running": "Executando",
+                "done": "Finalizado",
+                "failed": "Falha"
             }
             if "Status" in df_c.columns:
                 df_c["Status"] = df_c["Status"].map(lambda x: status_emojis.get(x, x))
@@ -143,7 +145,7 @@ with tab_lista:
             
             # Selecionar uma campanha para ver detalhes individuais e vincular
             st.markdown("---")
-            st.subheader("🔍 Detalhes e Ações da Campanha")
+            st.subheader("Detalhes e Ações da Campanha")
             
             opcao_campanha = st.selectbox(
                 "Selecione uma campanha para gerenciar",
@@ -164,19 +166,50 @@ with tab_lista:
                         if str(_contact_id(contact)) in owned_contact_ids
                     ]
                 
-                # Exibir métricas da campanha selecionada
-                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-                with col_m1:
-                    st.metric("Status", camp_details["status"].upper())
-                with col_m2:
-                    st.metric("Contatos Totais", len(camp_contacts))
-                with col_m3:
-                    st.metric("Sucesso de Envio", camp_details["sent_count"])
-                with col_m4:
-                    st.metric("Falhas de Envio", camp_details["failed_count"])
+                # Os quatro numeros soltos viram um selo de estado mais uma
+                # barra de entrega: enviados em accent, falhas em cinza.
+                total_contacts = len(camp_contacts)
+                sent = int(camp_details.get("sent_count") or 0)
+                failed = int(camp_details.get("failed_count") or 0)
+                denominator = total_contacts or 1
+
+                st.markdown(
+                    ui.status_chip(
+                        "broadcast",
+                        str(camp_details["status"]).upper(),
+                        tone="accent",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    '<div style="border:1px solid var(--nenc-border);'
+                    "border-radius:8px;background:var(--nenc-surface);"
+                    'padding:.85rem 1rem;margin:.5rem 0 .9rem">'
+                    '<div style="display:flex;justify-content:space-between;'
+                    'align-items:baseline;margin-bottom:.5rem">'
+                    '<span style="font-size:.75rem;color:var(--nenc-muted)">'
+                    "Entregues</span>"
+                    '<span style="font-size:1.25rem;font-weight:500">{sent}'
+                    '<span style="font-size:.75rem;color:var(--nenc-faint)">'
+                    " / {total}</span></span></div>"
+                    '<div style="height:5px;border-radius:3px;'
+                    "background:var(--nenc-border);display:flex;"
+                    'overflow:hidden">'
+                    '<div style="width:{pct:.1f}%;'
+                    'background:var(--nenc-accent)"></div>'
+                    '<div style="width:{fail:.1f}%;'
+                    'background:var(--nenc-faint)"></div>'
+                    "</div></div>".format(
+                        sent=sent,
+                        total=total_contacts,
+                        pct=100 * sent / denominator,
+                        fail=100 * failed / denominator,
+                    ),
+                    unsafe_allow_html=True,
+                )
                 
                 # Área de vinculação ao projeto local do Dashboard
-                st.markdown("#### 🔗 Vinculação com Projeto Local")
+                st.markdown("#### Vinculação com Projeto Local")
                 projetos = projects
                 
                 # Encontrar qual projeto local já está vinculado a esta campanha
@@ -187,13 +220,13 @@ with tab_lista:
                         break
                 
                 if projeto_vinculado:
-                    st.success(f"🔗 Esta campanha está vinculada ao projeto: **{projeto_vinculado['name']}**")
-                    if st.button("🔗 Desvincular Campanha", key="btn_desvincular"):
+                    st.success(f"Esta campanha está vinculada ao projeto: **{projeto_vinculado['name']}**")
+                    if st.button("Desvincular Campanha", key="btn_desvincular"):
                         _update_project_campaign(projeto_vinculado, None)
                         st.info("Campanha desvinculada com sucesso!")
                         st.rerun()
                 else:
-                    st.warning("⚠️ Esta campanha não está vinculada a nenhum projeto local.")
+                    st.warning("Esta campanha não está vinculada a nenhum projeto local.")
                     
                     # Selecionar projeto local para vincular
                     col_proj, col_vin_btn = st.columns([3, 1])
@@ -207,14 +240,14 @@ with tab_lista:
                     with col_vin_btn:
                         st.write("")
                         st.write("")
-                        if st.button("🔗 Vincular ao Projeto", type="primary", use_container_width=True):
+                        if st.button("Vincular ao Projeto", type="primary", use_container_width=True):
                             if proj_opcao:
                                 _update_project_campaign(proj_opcao, camp_id)
                                 st.success(f"Campanha vinculada a **{proj_opcao['name']}**!")
                                 st.rerun()
                 
                 # Lista de contatos vinculados e status de entrega
-                st.markdown("#### 👤 Status de Entrega por Contato")
+                st.markdown("#### Status de Entrega por Contato")
                 if not camp_contacts:
                     st.info("Nenhum contato nesta campanha.")
                 else:
@@ -228,9 +261,9 @@ with tab_lista:
                     })
                     
                     status_c_emojis = {
-                        "pending": "🟡 Pendente",
-                        "sent": "🟢 Enviado",
-                        "failed": "🔴 Falhou"
+                        "pending": "Pendente",
+                        "sent": "Enviado",
+                        "failed": "Falhou"
                     }
                     if "Status de Envio" in df_contacts.columns:
                         df_contacts["Status de Envio"] = df_contacts["Status de Envio"].map(lambda x: status_c_emojis.get(x, x))
@@ -247,7 +280,7 @@ with tab_lista:
                     
     except Exception as e:
         if "403" in str(e):
-            st.error("❌ Erro ao buscar campanhas da API: A Chave de API (X-API-Key) foi recusada pelo servidor (HTTP 403 Forbidden). Verifique e atualize a chave na tela de Configurações da WhatsApp API.")
+            st.error("Erro ao buscar campanhas da API: A Chave de API (X-API-Key) foi recusada pelo servidor (HTTP 403 Forbidden). Verifique e atualize a chave na tela de Configurações da WhatsApp API.")
         else:
             st.error(f"Erro ao buscar campanhas da API: {e}")
 
@@ -261,8 +294,8 @@ with tab_nova:
         contatos_disponiveis = list_owned_contacts(limit=1000)
         
         if not contatos_disponiveis:
-            st.warning("⚠️ Nenhum contato cadastrado na API. Cadastre contatos primeiro antes de criar uma campanha.")
-            if st.button("👤 Ir para Contatos", type="primary"):
+            st.warning("Nenhum contato cadastrado na API. Cadastre contatos primeiro antes de criar uma campanha.")
+            if st.button("Ir para Contatos", type="primary"):
                 st.switch_page("modules/prosodia/whatsapp_contatos.py")
         else:
             with st.form("form_nova_campanha"):
@@ -292,7 +325,7 @@ with tab_nova:
                     if checked:
                         contatos_selecionados.append(c["id"])
                 
-                submitted_campanha = st.form_submit_button("📢 Disparar Campanha", type="primary")
+                submitted_campanha = st.form_submit_button("Disparar Campanha", type="primary")
                 
             if submitted_campanha:
                 if not nome_campanha.strip():
@@ -313,7 +346,7 @@ with tab_nova:
                             )
                             if not isinstance(created_campaign, dict) or created_campaign.get("id") is None:
                                 raise RuntimeError("A API nao retornou o identificador da campanha criada.")
-                        st.success(f"✅ Campanha '{nome_campanha}' criada e disparada em background com sucesso!")
+                        st.success(f"Campanha '{nome_campanha}' criada e disparada em background com sucesso!")
                         st.balloons()
                         st.rerun()
                     except Exception as e:

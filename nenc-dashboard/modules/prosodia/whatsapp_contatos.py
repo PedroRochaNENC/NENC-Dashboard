@@ -5,7 +5,8 @@ Permite listar, criar, importar em lote (via CSV) e excluir contatos na API.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("prosodia")
 
@@ -23,31 +24,29 @@ def _normalize_phone(value) -> str:
     return "".join(filter(str.isdigit, str(value or "")))
 
 
-st.title("👤 Gerenciamento de Contatos (WhatsApp API)")
+ui.inject_theme()
+ui.breadcrumb("NencBoost", "Coleta via WhatsApp", "Contatos")
+page_title(
+    "address-book",
+    "Contatos",
+    "Quem pode receber convites de entrevista.",
+)
 st.markdown(
     "Gerencie a lista de contatos autorizados a receber mensagens das suas campanhas. "
     "Os contatos importados aqui poderão ser selecionados no momento da criação de uma nova campanha."
 )
 
-# Botão Voltar para Projetos
-nav_col, _ = st.columns([2, 8])
-with nav_col:
-    if st.button("← Projetos", width='stretch'):
-        st.switch_page("modules/prosodia/projetos.py")
-
-st.divider()
-
 if not is_configured():
-    st.warning("⚠️ API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
-    if st.button("⚙️ Ir para Configurações", type="primary"):
+    st.warning("API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
+    if st.button("Ir para Configurações", type="primary"):
         st.switch_page("modules/prosodia/whatsapp_config.py")
     st.stop()
 
 # Abas para separar as funcionalidades
 tab_lista, tab_novo, tab_import = st.tabs([
-    "📋 Lista de Contatos",
-    "➕ Novo Contato",
-    "📥 Importar em Lote (CSV)"
+    "Lista de Contatos",
+    "Novo Contato",
+    "Importar em Lote (CSV)"
 ])
 
 # ---------------------------------------------------------------------------
@@ -57,7 +56,7 @@ with tab_lista:
     st.subheader("Contatos Cadastrados")
     
     # Campo de busca
-    busca = st.text_input("🔍 Buscar contato", placeholder="Digite o nome ou telefone...")
+    busca = st.text_input("Buscar contato", placeholder="Digite o nome ou telefone...")
     
     try:
         # Carrega contatos
@@ -92,7 +91,7 @@ with tab_lista:
             st.dataframe(df, use_container_width=True, hide_index=True)
             
             # Exclusão de contato
-            st.markdown("### 🗑️ Excluir Contato")
+            st.markdown("### Excluir Contato")
             col_del_id, col_del_btn = st.columns([3, 1])
             with col_del_id:
                 # Selecionar o contato para exclusão
@@ -105,7 +104,7 @@ with tab_lista:
             with col_del_btn:
                 st.write("")
                 st.write("")
-                if st.button("🗑️ Excluir", type="primary", use_container_width=True):
+                if st.button("Excluir", type="primary", use_container_width=True):
                     if opcao_del:
                         try:
                             delete_owned_contact(opcao_del["id"])
@@ -134,7 +133,7 @@ with tab_novo:
             placeholder="Ex: João da Silva"
         )
         
-        submitted_contato = st.form_submit_button("💾 Salvar Contato", type="primary")
+        submitted_contato = st.form_submit_button("Salvar Contato", type="primary")
         
     if submitted_contato:
         # Validação simples
@@ -147,7 +146,7 @@ with tab_novo:
                     phone=tel_clean,
                     name=nome.strip() if nome.strip() else None,
                 )
-                st.success(f"✅ Contato {tel_clean} cadastrado com sucesso!")
+                st.success(f"Contato {tel_clean} cadastrado com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao cadastrar contato: {e}")
@@ -188,7 +187,7 @@ with tab_import:
                 # Voltar o cursor para ler novamente
                 csv_file.seek(0)
                 
-                if st.button("📥 Confirmar Importação em Lote", type="primary"):
+                if st.button("Confirmar Importação em Lote", type="primary"):
                     with st.spinner("Enviando e processando lista na API..."):
                         try:
                             resultado, claimed_count, unavailable_count = (
@@ -199,7 +198,7 @@ with tab_import:
                             )
                             
                             st.success(
-                                f"✅ Importação finalizada!\n\n"
+                                f"Importação finalizada!\n\n"
                                 f"- **Contatos Criados:** {resultado.get('created', 0)}\n"
                                 f"- **Ignorados (já existiam):** {resultado.get('skipped', 0)}\n"
                                 f"- **Associados à organização:** {claimed_count}"

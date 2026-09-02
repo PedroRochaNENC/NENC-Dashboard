@@ -5,7 +5,8 @@ Gerenciamento e síntese das transcrições de entrevistas do ponto de venda.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 user = auth.require_module("jornada_compra")
 
@@ -14,13 +15,19 @@ from utils.ai_provider import get_openai_client
 
 jornada_db.init_db()
 
-st.title("🗂️ Entrevistas Qualitativas — Jornada de Compra")
+ui.inject_theme()
+ui.breadcrumb("Jornada de Compra", "Entrevistas")
+page_title(
+    "list-bullets",
+    "Entrevistas Qualitativas",
+    "Transcrições que entram na análise do projeto.",
+)
 
 project_id = st.session_state.get("jc_project_id")
 
 if not project_id:
-    st.warning("⚠️ Nenhum projeto selecionado.")
-    if st.button("🎙️ Selecionar Projeto", type="primary"):
+    st.warning("Nenhum projeto selecionado.")
+    if st.button("Selecionar Projeto", type="primary"):
         st.switch_page("modules/jornada_compra/projetos.py")
     st.stop()
 
@@ -34,7 +41,7 @@ st.caption(f"Projeto Ativo: **{project['name']}**")
 # ------------------------------------------------------------------
 # Adicionar Nova Entrevista
 # ------------------------------------------------------------------
-with st.expander("➕ Cadastrar Nova Entrevista Qualitativa", expanded=False):
+with st.expander("Cadastrar Nova Entrevista Qualitativa", expanded=False):
     with st.form("form_nova_entrevista", clear_on_submit=True):
         c1, c2 = st.columns([2, 1])
         with c1:
@@ -43,7 +50,7 @@ with st.expander("➕ Cadastrar Nova Entrevista Qualitativa", expanded=False):
             part_id = st.text_input("ID do Participante", placeholder="Ex: P_04")
         txt = st.text_area("Transcrição do Relato / Entrevista", height=150, placeholder="Cole a transcrição da fala do consumidor aqui...")
         
-        if st.form_submit_button("💾 Salvar Entrevista", type="primary"):
+        if st.form_submit_button("Salvar Entrevista", type="primary"):
             if tit.strip() and txt.strip():
                 jornada_db.save_interview(project_id, titulo=tit, texto=txt, participante_id=part_id)
                 st.success("Entrevista salva com sucesso!")
@@ -58,13 +65,13 @@ st.divider()
 # ------------------------------------------------------------------
 interviews = jornada_db.get_interviews(project_id)
 
-st.subheader(f"📋 Entrevistas Cadastradas ({len(interviews)})")
+st.subheader(f"Entrevistas Cadastradas ({len(interviews)})")
 
 if not interviews:
     st.info("Nenhuma entrevista cadastrada para este projeto. Adicione acima ou faça o upload de planilhas na tela de Dados do Projeto.")
 else:
     # Botão para Síntese por IA das Entrevistas
-    if st.button("🤖 Gerar Resumo Qualitativo de Todas as Entrevistas", type="primary"):
+    if st.button("Gerar Resumo Qualitativo de Todas as Entrevistas", type="primary"):
         with st.spinner("Analisando falas dos consumidores com IA..."):
             try:
                 client = get_openai_client()
@@ -98,15 +105,15 @@ else:
     summary = st.session_state.get(f"jc_interview_summary_{project_id}")
     if summary:
         with st.container(border=True):
-            st.markdown("### 💡 Síntese Qualitativa (IA)")
+            st.markdown("### Síntese Qualitativa (IA)")
             st.markdown(summary)
 
     st.divider()
 
     for item in interviews:
-        with st.expander(f"🗣️ {item['titulo']} — Participante `{item['participante_id'] or 'N/A'}` ({item['created_at']})"):
+        with st.expander(f"{item['titulo']} — Participante `{item['participante_id'] or 'N/A'}` ({item['created_at']})"):
             st.markdown(item["texto"])
-            if st.button("🗑️ Excluir Entrevista", key=f"del_ent_{item['id']}"):
+            if st.button("Excluir Entrevista", key=f"del_ent_{item['id']}"):
                 jornada_db.delete_interview(item["id"])
                 st.success("Entrevista excluída.")
                 st.rerun()

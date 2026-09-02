@@ -6,7 +6,8 @@ Exibe todos os projetos criados e permite criar, abrir ou excluir.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 user = auth.require_module("prosodia")
 
@@ -25,9 +26,15 @@ from utils.organization_data import claim_external_resource
 # Garantir que o banco está inicializado
 init_db()
 
-st.title("🎙️ NencLex — Projetos")
+ui.inject_theme()
+ui.breadcrumb("NencBoost", "Projetos")
+page_title(
+    "folders",
+    "Projetos",
+    "Cada projeto agrupa entrevistas, áudios e análises.",
+)
 st.markdown(
-    "Organize suas análises do NencLex em **projetos** (campanhas). "
+    "Organize suas análises do NencBoost em **projetos** (campanhas). "
     "Cada projeto agrupa entrevistas com contexto compartilhado e "
     "base de conhecimento unificada."
 )
@@ -37,84 +44,32 @@ st.markdown(
 # ------------------------------------------------------------------
 col_title, col_btn = st.columns([4, 1])
 with col_btn:
-    if pode_editar and st.button("➕ Novo Projeto", type="primary", width='stretch'):
+    if pode_editar and st.button("Novo Projeto", type="primary", width='stretch'):
         st.session_state.pop("pros_project_id", None)
         st.switch_page("modules/prosodia/preparacao.py")
 
 if not pode_editar:
-    st.info("Sua conta tem acesso somente de leitura ao NencLex.")
+    st.info("Sua conta tem acesso somente de leitura ao NencBoost.")
 
 # ------------------------------------------------------------------
-# Configuração da Integração WhatsApp
+# Estado da API de WhatsApp
+#
+# Os quatro botoes que viviam aqui duplicavam a seccao "Coleta via WhatsApp"
+# do menu lateral. Fica so o indicador de estado, que o design mantem sempre
+# visivel nas paginas do modulo.
 # ------------------------------------------------------------------
-# ------------------------------------------------------------------
-# Painel de Controle WhatsApp Integration
-# ------------------------------------------------------------------
-with st.container(border=True):
-    st.markdown("### 📱 Integração com WhatsApp API")
-    
-    from utils.whatsapp_api_client import is_configured, test_connection
-    
-    c_status, c_btn1, c_btn2, c_btn3, c_btn4 = st.columns([2, 1.5, 1.5, 1.5, 1.5])
-    
-    with c_status:
-        if is_configured():
-            success, _ = test_connection()
-            if success:
-                st.markdown(
-                    """
-                    <div style="display: flex; align-items: center; gap: 8px; height: 38px;">
-                        <span style="height: 10px; width: 10px; background-color: #2ecc71; border-radius: 50%; display: inline-block; animation: pulse 1.5s infinite;"></span>
-                        <strong style="color: #2ecc71; font-size: 14px;">API Conectada</strong>
-                    </div>
-                    <style>
-                    @keyframes pulse {
-                        0% { transform: scale(0.9); opacity: 0.7; }
-                        50% { transform: scale(1.1); opacity: 1; }
-                        100% { transform: scale(0.9); opacity: 0.7; }
-                    }
-                    </style>
-                    """,
-                    unsafe_allow_html=True
-                )
-            else:
-                st.markdown(
-                    """
-                    <div style="display: flex; align-items: center; gap: 8px; height: 38px;">
-                        <span style="height: 10px; width: 10px; background-color: #e74c3c; border-radius: 50%; display: inline-block;"></span>
-                        <strong style="color: #e74c3c; font-size: 14px;">API Offline</strong>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-        else:
-            st.markdown(
-                """
-                <div style="display: flex; align-items: center; gap: 8px; height: 38px;">
-                    <span style="height: 10px; width: 10px; background-color: #f1c40f; border-radius: 50%; display: inline-block;"></span>
-                    <strong style="color: #f1c40f; font-size: 14px;">Não Configurada</strong>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            
-    with c_btn1:
-        if st.button("👤 Contatos", use_container_width=True):
-            st.switch_page("modules/prosodia/whatsapp_contatos.py")
-            
-    with c_btn2:
-        if st.button("📢 Campanhas", use_container_width=True):
-            st.switch_page("modules/prosodia/whatsapp_campanhas.py")
-            
-    with c_btn3:
-        if st.button("📡 Monitor", use_container_width=True):
-            st.switch_page("modules/prosodia/whatsapp_monitor.py")
-            
-    with c_btn4:
-        if user.is_platform_admin and st.button("⚙️ Configurar", use_container_width=True):
-            st.switch_page("modules/prosodia/whatsapp_config.py")
+from utils.whatsapp_api_client import is_configured, test_connection
 
-st.divider()
+if is_configured():
+    api_online, _ = test_connection()
+    api_status = (
+        ui.status_chip("plug", "API conectada", tone="accent")
+        if api_online
+        else ui.status_chip("plug", "API offline")
+    )
+else:
+    api_status = ui.status_chip("plug", "API não configurada")
+st.markdown(api_status, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
 # Lista de projetos
@@ -124,12 +79,12 @@ projects = get_projects()
 if not projects:
     st.info(
         "Nenhum projeto criado ainda. "
-        "Clique em **➕ Novo Projeto** para começar."
+        "Clique em **Novo Projeto** para começar."
     )
 else:
     for proj in projects:
         with st.container(border=True):
-            c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 1])
+            c1, c2, c3 = st.columns([6, 1, 1])
 
             api_proj_id = proj.get("api_project_id")
             # Editar e excluir dependem da autoria; abrir e enviar entrevistas
@@ -139,44 +94,59 @@ else:
             with c1:
                 n = proj.get("n_audios", 0)
                 org_name = proj.get("organization_name")
-                org_badge = f" <span style='background-color: #3498db; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;'>🏢 {org_name}</span>" if org_name and user.is_platform_admin else ""
-                api_badge = f" <span style='background-color: #2ecc71; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;'>🔗 API #{api_proj_id}</span>" if api_proj_id else ""
-                st.markdown(f"**{proj['name']}**{org_badge}{api_badge}", unsafe_allow_html=True)
+                org_badge = (
+                    ui.status_chip("buildings", org_name)
+                    if org_name and user.is_platform_admin
+                    else ""
+                )
+                api_badge = (
+                    ui.status_chip(
+                        "plug", "API #{}".format(api_proj_id), tone="accent"
+                    )
+                    if api_proj_id
+                    else ""
+                )
+                st.markdown(
+                    "<span style=\"display:inline-flex;align-items:center;"
+                    "gap:.45rem;flex-wrap:wrap\"><strong>{name}</strong>"
+                    "{org}{api}</span>".format(
+                        name=proj["name"], org=org_badge, api=api_badge
+                    ),
+                    unsafe_allow_html=True,
+                )
                 st.caption(
-                    f"🗂️ {n} entrevista(s)  •  📅 {proj['created_at'][:10]}"
+                    f"{n} entrevista(s) • {proj['created_at'][:10]}"
                     + (f"  •  _{proj['especialidade'][:60]}…_" if proj.get("especialidade") else "")
                 )
 
             with c2:
                 st.write("")
-                if st.button("📂 Abrir", key=f"open_{proj['id']}", width='stretch'):
+                if st.button("Abrir", key=f"open_{proj['id']}", width='stretch'):
                     st.session_state["pros_project_id"] = proj["id"]
-                    st.switch_page("modules/prosodia/entrevistas.py")
+                    st.session_state.pop("pros_audio_id", None)
+                    # Abrir cruza para o nivel do projeto: as paginas dele so
+                    # entram no menu no rerun seguinte, entao o salto passa
+                    # por `_navigate_to`, que `app.py` resolve antes de rodar
+                    # a pagina.
+                    st.session_state["_navigate_to"] = (
+                        "modules/prosodia/entrevistas.py"
+                    )
+                    st.rerun()
 
+            # Editar e Uploads viraram "Dados do Projeto" e "Uploads" no menu
+            # do projeto aberto.
             with c3:
                 st.write("")
-                if pode_alterar and st.button("✏️ Editar", key=f"edit_{proj['id']}", width='stretch'):
-                    st.session_state["pros_project_id"] = proj["id"]
-                    st.switch_page("modules/prosodia/preparacao.py")
-
-            with c4:
-                st.write("")
-                if pode_editar and st.button("📤 Uploads", key=f"uploads_{proj['id']}", width='stretch'):
-                    st.session_state["pros_project_id"] = proj["id"]
-                    st.switch_page("modules/prosodia/audios.py")
-
-            with c5:
-                st.write("")
-                if pode_alterar and st.button("🗑️ Excluir", key=f"del_{proj['id']}", width='stretch'):
+                if pode_alterar and st.button("Excluir", key=f"del_{proj['id']}", width='stretch'):
                     st.session_state[f"confirm_del_{proj['id']}"] = True
 
             # ------------------------------------------------------------------
             # Gerenciar QR Codes do Projeto
             # ------------------------------------------------------------------
             expander_title = (
-                f"📱 Gerenciar QR Codes do Projeto (API #{api_proj_id})"
+                f"Gerenciar QR Codes do Projeto (API #{api_proj_id})"
                 if api_proj_id
-                else "📱 Gerenciar QR Codes do Projeto"
+                else "Gerenciar QR Codes do Projeto"
             )
             with st.expander(expander_title, expanded=False):
                 from utils.whatsapp_api_client import (
@@ -216,8 +186,8 @@ else:
                 current_verification_text = proj.get("qr_verification_text") or DEFAULT_QR_VERIFICATION_TEXT
 
                 if is_configured() and not api_proj_id:
-                    st.info("🔗 Este projeto local ainda não está vinculado à API de WhatsApp.")
-                    if pode_alterar and st.button("🚀 Vincular Projeto à API de WhatsApp agora", key=f"btn_link_api_{proj['id']}"):
+                    st.info("Este projeto local ainda não está vinculado à API de WhatsApp.")
+                    if pode_alterar and st.button("Vincular Projeto à API de WhatsApp agora", key=f"btn_link_api_{proj['id']}"):
                         try:
                             resp = create_api_project(proj["name"], user.organization_name)
                             new_api_id = resp.get("id")
@@ -262,7 +232,7 @@ else:
                     )
 
                     with st.container(border=True):
-                        st.markdown("#### 📝 Texto de Verificação do WhatsApp para o Projeto")
+                        st.markdown("#### Texto de Verificação do WhatsApp para o Projeto")
                         st.caption("Texto pré-preenchido no WhatsApp ao escanear o QR Code de verificação.")
                         with st.form(key=f"form_global_verif_{proj['id']}"):
                             global_verif_text = st.text_area(
@@ -273,7 +243,7 @@ else:
                                 key=f"global_verif_text_{proj['id']}"
                             )
                             submit_global_verif = st.form_submit_button(
-                                "💾 Salvar Texto de Verificação", disabled=not pode_alterar
+                                "Salvar Texto de Verificação", disabled=not pode_alterar
                             )
                         if submit_global_verif:
                             update_project(
@@ -294,7 +264,7 @@ else:
                             st.success("Texto de verificação atualizado!")
                             st.rerun()
 
-                    st.markdown("#### ➕ Criar Novo QR Code para Captação")
+                    st.markdown("#### Criar Novo QR Code para Captação")
                     with st.form(key=f"form_new_qr_{proj['id']}"):
                         col_q1, col_q2 = st.columns(2)
                         with col_q1:
@@ -379,7 +349,7 @@ else:
                                 st.error(f"Erro ao criar QR Code: {err}")
 
                     st.divider()
-                    st.markdown("#### 📋 QR Codes Ativos")
+                    st.markdown("#### QR Codes Ativos")
 
                     if not qr_codes:
                         st.info("Nenhum QR Code gerado para este projeto ainda.")
@@ -398,7 +368,7 @@ else:
                                     if qr.get("description"):
                                         st.caption(f"**Descrição**: {qr['description']}")
                                     if qr.get("welcome_message"):
-                                        st.caption(f"💬 **Resposta Automática**: *\"{qr['welcome_message']}\"*")
+                                        st.caption(f"**Resposta Automática**: *\"{qr['welcome_message']}\"*")
                                     st.markdown(f"**Link WhatsApp**: [{wa_link}]({wa_link})")
                                     st.caption(f"Status: `{qr['status']}` | Criado em: {qr.get('created_at', '')[:10]}")
 
@@ -417,7 +387,7 @@ else:
                                             )
                                         with col_btn:
                                             if st.button(
-                                                "🔄 Atualizar destino",
+                                                "Atualizar destino",
                                                 key=f"btn_upd_qr_{proj['id']}_{qr['id']}",
                                                 disabled=novo_destino == target_ph,
                                             ):
@@ -433,7 +403,7 @@ else:
                                                 except Exception as upd_err:
                                                     st.error(f"Erro ao atualizar destino: {upd_err}")
 
-                                    if pode_alterar and st.button("🗑️ Excluir QR Code", key=f"del_qr_{proj['id']}_{qr['id']}"):
+                                    if pode_alterar and st.button("Excluir QR Code", key=f"del_qr_{proj['id']}_{qr['id']}"):
                                         try:
                                             delete_project_qr_code(api_proj_id, qr["id"])
                                             st.success("QR Code excluído.")
@@ -446,7 +416,7 @@ else:
                                         img_bytes = generate_qr_code_bytes(wa_link)
                                         st.image(img_bytes, width=180, caption=f"Escaneie: {qr['name']}")
                                         st.download_button(
-                                            label="📥 Baixar Imagem (PNG)",
+                                            label="Baixar Imagem (PNG)",
                                             data=img_bytes,
                                             file_name=f"qrcode_{qr['code']}.png",
                                             mime="image/png",
@@ -456,7 +426,7 @@ else:
                                     except Exception as img_err:
                                         st.error(f"Erro ao renderizar imagem do QR Code: {img_err}")
                 else:
-                    st.markdown("#### 📱 Gerar / Baixar QR Code do Projeto")
+                    st.markdown("#### Gerar / Baixar QR Code do Projeto")
                     with st.form(key=f"form_local_qr_{proj['id']}"):
                         col_l1, col_l2 = st.columns(2)
                         with col_l1:
@@ -514,7 +484,7 @@ else:
                                 img_bytes_local = generate_qr_code_bytes(wa_link_local)
                                 st.image(img_bytes_local, width=180, caption=f"QR Code: {local_code}")
                                 st.download_button(
-                                    label="📥 Baixar Imagem (PNG)",
+                                    label="Baixar Imagem (PNG)",
                                     data=img_bytes_local,
                                     file_name=f"qrcode_{proj['id']}_{local_code}.png",
                                     mime="image/png",
@@ -541,7 +511,7 @@ else:
 
                 cc1, cc2 = st.columns(2)
                 with cc1:
-                    if st.button("✅ Confirmar exclusão", key=f"confirm_yes_{proj['id']}", width='stretch'):
+                    if st.button("Confirmar exclusão", key=f"confirm_yes_{proj['id']}", width='stretch'):
                         if api_proj_id and excluir_na_api:
                             try:
                                 from utils.whatsapp_api_client import delete_api_project
@@ -559,6 +529,6 @@ else:
                         st.session_state.pop(f"confirm_del_{proj['id']}", None)
                         st.rerun()
                 with cc2:
-                    if st.button("❌ Cancelar", key=f"confirm_no_{proj['id']}", width='stretch'):
+                    if st.button("Cancelar", key=f"confirm_no_{proj['id']}", width='stretch'):
                         st.session_state.pop(f"confirm_del_{proj['id']}", None)
                         st.rerun()

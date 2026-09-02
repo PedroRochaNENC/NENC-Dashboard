@@ -10,7 +10,8 @@ import pandas as pd
 from io import BytesIO
 from fpdf import FPDF
 
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 from utils.prosodia_loader import (
     get_prosodia_sessions,
     get_prosodia_speakers,
@@ -138,7 +139,7 @@ def _build_pdf(projeto: dict, tables_text: str, ai_text: str) -> bytes:
     pdf.set_auto_page_break(auto=True, margin=15)
 
     pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 12, "NENC Insights - NencLex", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 12, "NENC Insights - NencBoost", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     if projeto.get("nome"):
@@ -182,14 +183,20 @@ def _build_pdf(projeto: dict, tables_text: str, ai_text: str) -> bytes:
 # Página principal
 # ===========================================================================
 
-st.title("🔍 Análise — NencLex")
+ui.inject_theme()
+ui.breadcrumb("NencBoost", "Análise")
+page_title(
+    "chart-bar",
+    "Análise",
+    "Timeline VAD, participação por locutor e leitura de IA.",
+)
 
 data = st.session_state.get("pr_data", {})
 sessions = get_prosodia_sessions(data)
 
 if not sessions:
     st.warning(
-        "⚠️ Nenhum dado carregado. "
+        "Nenhum dado carregado. "
         "Volte à página de Preparação de Dados e carregue os arquivos."
     )
     st.stop()
@@ -201,7 +208,7 @@ tr_df: pd.DataFrame = data.get("transcricao", pd.DataFrame())
 # Sidebar — Filtros
 # ===========================================================================
 with st.sidebar:
-    st.header("⚙️ Controles")
+    st.header("Controles")
 
     session_options = ["Todas"] + sessions
     selected_session_label = st.selectbox(
@@ -227,11 +234,11 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("🤖 Análise de IA")
+    st.subheader("Análise de IA")
 
     _client = get_openai_client()
     if _client:
-        st.success("OpenAI configurado ✅")
+        st.success("OpenAI configurado")
     else:
         st.warning("OpenAI não configurado")
         st.caption("Defina OPENAI_API_KEY no .env")
@@ -254,16 +261,16 @@ with st.sidebar:
     use_kb = False
     if _vs_id:
         use_kb = st.toggle(
-            "📚 Consultar base de conhecimento",
+            "Consultar base de conhecimento",
             value=True,
             key="pr_use_kb",
         )
     else:
-        st.caption("📚 Base de conhecimento não configurada")
+        st.caption("Base de conhecimento não configurada")
 
     st.divider()
 
-    st.subheader("⚡ Análise Rápida (Groq)")
+    st.subheader("Análise Rápida (Groq)")
     groq_api_key = st.text_input(
         "Chave da API Groq",
         type="password",
@@ -303,9 +310,9 @@ col4.metric("Palavras", n_words)
 # ===========================================================================
 # Visualizações
 # ===========================================================================
-with st.expander("📊 Visualizar Dados", expanded=False):
+with st.expander("Visualizar Dados", expanded=False):
 
-    st.subheader("🟦 Timeline VAD — Segmentos de Fala")
+    st.subheader("Timeline VAD — Segmentos de Fala")
     if not vad_df.empty:
         fig_vad = create_vad_timeline(
             vad_df=vad_df,
@@ -313,14 +320,14 @@ with st.expander("📊 Visualizar Dados", expanded=False):
             title=f"Segmentos de Fala — {selected_session_label}",
         )
         st.plotly_chart(fig_vad, width='stretch')
-        with st.expander("📋 Tabela de segmentos VAD"):
+        with st.expander("Tabela de segmentos VAD"):
             st.dataframe(vad_filtered, width='stretch')
     else:
         st.info("Nenhum dado VAD carregado.")
 
     st.divider()
 
-    st.subheader("👥 Participação por Locutor")
+    st.subheader("Participação por Locutor")
     if not tr_df.empty and "SpeakerName" in tr_df.columns:
         fig_stats = create_speaker_stats(
             transcricao_df=tr_df,
@@ -334,7 +341,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
     acoustic_summary = _build_acoustic_summary(tr_df, selected_session, selected_speakers or None)
     if not acoustic_summary.empty:
         st.divider()
-        st.subheader("🎵 Perfil Acústico por Locutor")
+        st.subheader("Perfil Acústico por Locutor")
         st.dataframe(acoustic_summary, width='stretch')
 
 # ===========================================================================
@@ -343,7 +350,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
 projeto = st.session_state.get("pr_projeto", {})
 
 if projeto.get("nome"):
-    with st.expander("📝 Contexto do projeto", expanded=False):
+    with st.expander("Contexto do projeto", expanded=False):
         st.markdown(f"**Projeto:** {projeto['nome']}")
         if projeto.get("especialidade"):
             st.markdown(f"**Contexto:** {projeto['especialidade'][:300]}")
@@ -369,7 +376,7 @@ transcript_sample = _build_transcript_text(
 # Análise de IA — OpenAI
 # ===========================================================================
 st.divider()
-st.subheader("🤖 Análise de IA")
+st.subheader("Análise de IA")
 
 if not _client:
     st.info(
@@ -378,7 +385,7 @@ if not _client:
 elif not tables_text.strip():
     st.warning("Nenhum dado disponível para análise.")
 else:
-    if st.button("🔍 Gerar Análise (OpenAI)", key="btn_ai_pr_openai"):
+    if st.button("Gerar Análise (OpenAI)", key="btn_ai_pr_openai"):
         vs_id = get_prosodia_vector_store_id() if use_kb else None
         user_prompt = build_prosodia_user_prompt(
             tables_text=tables_text,
@@ -414,9 +421,9 @@ else:
                     )
 
                     tab_stat, tab_strat, tab_refs = st.tabs([
-                        "📊 Análise Estatística",
-                        "💡 Interpretação Estratégica",
-                        "📚 Referências",
+                        "Análise Estatística",
+                        "Interpretação Estratégica",
+                        "Referências",
                     ])
                     with tab_stat:
                         st.markdown(stat_result["text"])
@@ -447,7 +454,7 @@ else:
                         max_tokens=4000,
                     )
                     if result["citations"]:
-                        tab_analysis, tab_refs = st.tabs(["📊 Análise", "📚 Referências"])
+                        tab_analysis, tab_refs = st.tabs(["Análise", "Referências"])
                         with tab_analysis:
                             st.markdown(result["text"])
                         with tab_refs:
@@ -470,7 +477,7 @@ else:
 # Análise Rápida — Groq
 # ===========================================================================
 st.divider()
-st.subheader("⚡ Análise Rápida (Groq)")
+st.subheader("Análise Rápida (Groq)")
 
 if not groq_api_key:
     st.info(
@@ -480,7 +487,7 @@ if not groq_api_key:
 elif not transcript_sample.strip():
     st.warning("Nenhuma transcrição disponível para a sessão/locutores selecionados.")
 else:
-    if st.button("⚡ Gerar Análise Rápida (Groq)", key="btn_ai_pr_groq"):
+    if st.button("Gerar Análise Rápida (Groq)", key="btn_ai_pr_groq"):
         from groq import Groq
 
         project_ctx = ""
@@ -538,7 +545,7 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar para Preparação", width='stretch'):
+    if st.button("Voltar para Preparação", width='stretch'):
         st.switch_page("modules/prosodia/preparacao.py")
 
 with col_nav2:
@@ -548,9 +555,9 @@ with col_nav2:
     )
     pdf_bytes = _build_pdf(projeto, tables_text, ai_text_for_pdf)
     st.download_button(
-        "📄 Exportar PDF",
+        "Exportar PDF",
         data=pdf_bytes,
-        file_name=f"{projeto.get('nome', 'analise_nenclex')}.pdf",
+        file_name=f"{projeto.get('nome', 'analise_nencboost')}.pdf",
         mime="application/pdf",
         width='stretch',
         type="primary",

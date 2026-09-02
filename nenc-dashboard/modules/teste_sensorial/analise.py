@@ -6,7 +6,8 @@ e Periféricos (GSR, HR) com salvamento em banco e histórico de relatórios.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("teste_sensorial")
 
@@ -27,13 +28,19 @@ Ao responder:
 5. Escreva em português do Brasil de forma clara, executiva e altamente fundamentada.
 """
 
-st.title("🧠 Análise Inteligente — Teste Sensorial")
+ui.inject_theme()
+ui.breadcrumb("Teste Sensorial", "Análise")
+page_title(
+    "sparkle",
+    "Análise Inteligente",
+    "Leitura assistida dos sinais coletados.",
+)
 
 project_id = st.session_state.get("ts_project_id")
 
 if not project_id:
-    st.warning("⚠️ Nenhum projeto selecionado.")
-    if st.button("🧪 Ir para Projetos", type="primary"):
+    st.warning("Nenhum projeto selecionado.")
+    if st.button("Ir para Projetos", type="primary"):
         st.switch_page("modules/teste_sensorial/projetos.py")
     st.stop()
 
@@ -52,24 +59,24 @@ if not data or not any(k in data for k in ("indicadores", "perifericos", "psd_re
 
 # Sidebar de Controles
 with st.sidebar:
-    st.header("⚙️ Configurações da IA")
+    st.header("Configurações da IA")
     client = get_openai_client()
     if client:
-        st.success("OpenAI Conectado ✅")
+        st.success("OpenAI Conectado")
     else:
-        st.error("Configure OPENAI_API_KEY no .env ❌")
+        st.error("Configure OPENAI_API_KEY no .env")
 
     ai_model = st.selectbox("Modelo", ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1"], index=0, key="ts_ai_model")
 
     vs_id = project.get("vector_store_id")
     use_kb = False
     if vs_id:
-        use_kb = st.toggle("📚 Consultar Base do Produto", value=True, key="ts_use_kb")
+        use_kb = st.toggle("Consultar Base do Produto", value=True, key="ts_use_kb")
 
-tab_ai, tab_history = st.tabs(["🤖 Gerador de Análise Sensorial", "📜 Histórico Salvo no Banco"])
+tab_ai, tab_history = st.tabs(["Gerador de Análise Sensorial", "Histórico Salvo no Banco"])
 
 with tab_ai:
-    st.subheader("🤖 Diagnóstico Fisiológico Automatizado")
+    st.subheader("Diagnóstico Fisiológico Automatizado")
 
     # Montar texto das métricas
     metrics_summary_text = ""
@@ -93,7 +100,7 @@ with tab_ai:
     elif not client:
         st.info("Configure a chave OPENAI_API_KEY no arquivo .env para gerar diagnósticos.")
     else:
-        if st.button("🔍 Gerar e Salvar Diagnóstico Neurocientífico", type="primary", key="btn_run_ts_ai"):
+        if st.button("Gerar e Salvar Diagnóstico Neurocientífico", type="primary", key="btn_run_ts_ai"):
             with st.spinner("Analisando padrões neurofisiológicos e salvando relatório no banco..."):
                 try:
                     user_prompt = f"""
@@ -132,27 +139,27 @@ Por favor, elabore um diagnóstico neurocientífico completo sobre a experiênci
 
         if st.session_state.get("ts_last_ai_text"):
             st.divider()
-            st.markdown("### 📄 Diagnóstico Recente")
+            st.markdown("### Diagnóstico Recente")
             st.markdown(st.session_state["ts_last_ai_text"])
 
 with tab_history:
-    st.subheader("📜 Histórico de Análises Salvas no Banco")
+    st.subheader("Histórico de Análises Salvas no Banco")
     history = teste_sensorial_db.get_analyses(project_id)
     if not history:
         st.info("Nenhuma análise salva para este projeto ainda.")
     else:
         for item in history:
-            with st.expander(f"🧠 Análise Sensorial de {item['created_at']} (Modelo: {item['model']})"):
+            with st.expander(f"Análise Sensorial de {item['created_at']} (Modelo: {item['model']})"):
                 st.markdown(item["analysis_text"])
                 if item.get("citations"):
-                    st.caption(f"📎 Fontes: {', '.join(item['citations'])}")
+                    st.caption(f"Fontes: {', '.join(item['citations'])}")
 
 # Navegação
 st.divider()
 col_nav1, col_nav2 = st.columns(2)
 with col_nav1:
-    if st.button("⬅️ Voltar para Timeline", use_container_width=True):
+    if st.button("Voltar para Timeline", use_container_width=True):
         st.switch_page("modules/teste_sensorial/timeline.py")
 with col_nav2:
-    if st.button("⬅️ Voltar aos Projetos", use_container_width=True):
+    if st.button("Voltar aos Projetos", use_container_width=True):
         st.switch_page("modules/teste_sensorial/projetos.py")

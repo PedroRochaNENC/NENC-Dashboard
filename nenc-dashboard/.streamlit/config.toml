@@ -1,8 +1,13 @@
 [theme]
-primaryColor = "#4A90D9"
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#262730"
-textColor = "#FAFAFA"
+base = "dark"
+primaryColor = "#9184d9"
+backgroundColor = "#161826"
+secondaryBackgroundColor = "#1c1e2c"
+textColor = "#e9e9ed"
+linkColor = "#b5abfc"
+borderColor = "#3f424d"
+font = "Inter"
+baseRadius = "0.5rem"
 
 [server]
 maxUploadSize = 200

@@ -30,7 +30,6 @@ _ENV_PATH = next(
 )
 load_dotenv(_ENV_PATH)
 
-
 MODULE_KEYS: Tuple[str, ...] = (
     "teste_sensorial",
     "jornada_compra",
@@ -39,7 +38,7 @@ MODULE_KEYS: Tuple[str, ...] = (
 MODULE_LABELS = {
     "teste_sensorial": "Teste Sensorial",
     "jornada_compra": "Jornada de Compra",
-    "prosodia": "NencLex",
+    "prosodia": "NencBoost",
 }
 
 PASSWORD_MIN_LENGTH = 12
@@ -63,18 +62,14 @@ _SECRET_METADATA_KEYS = {
     "key",
 }
 
-
 class AuthenticationError(ValueError):
     """Credentials or the account state do not permit a login."""
-
 
 class AuthorizationError(PermissionError):
     """The signed-in identity cannot perform the requested server-side action."""
 
-
 class BootstrapConfigurationError(RuntimeError):
     """Initial administrator configuration is missing one or more required values."""
-
 
 @dataclass(frozen=True)
 class User:
@@ -98,14 +93,12 @@ class User:
     def is_admin(self) -> bool:
         return self.is_organization_admin or self.is_platform_admin
 
-
 @dataclass(frozen=True)
 class Organization:
     id: int
     name: str
     is_active: bool
     whatsapp_numbers: str = ""
-
 
 def _database_path(database_path: Optional[os.PathLike] = None) -> Path:
     configured_path = os.environ.get("NENC_DB_PATH")
@@ -115,14 +108,11 @@ def _database_path(database_path: Optional[os.PathLike] = None) -> Path:
         return Path(configured_path).expanduser()
     return Path(__file__).resolve().parent.parent / "prosodia.db"
 
-
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
-
 def _timestamp(value: Optional[datetime] = None) -> str:
     return (value or _now()).replace(microsecond=0).isoformat()
-
 
 @contextmanager
 def connection(database_path: Optional[os.PathLike] = None) -> Iterator[sqlite3.Connection]:
@@ -141,7 +131,6 @@ def connection(database_path: Optional[os.PathLike] = None) -> Iterator[sqlite3.
         raise
     finally:
         database.close()
-
 
 def initialize_auth_schema(database_path: Optional[os.PathLike] = None) -> None:
     """Create idempotent identity, access, session, and audit tables."""
@@ -231,20 +220,17 @@ def initialize_auth_schema(database_path: Optional[os.PathLike] = None) -> None:
                 "REFERENCES users(id) ON DELETE SET NULL"
             )
 
-
 def normalize_email(email: str) -> str:
     normalized = (email or "").strip().casefold()
     if not _EMAIL_PATTERN.fullmatch(normalized):
         raise ValueError("Informe um e-mail valido.")
     return normalized
 
-
 def _required_text(value: str, label: str) -> str:
     normalized = " ".join((value or "").strip().split())
     if not normalized:
         raise ValueError("{} e obrigatorio.".format(label))
     return normalized
-
 
 def validate_password(password: str) -> None:
     if len(password or "") < PASSWORD_MIN_LENGTH:
@@ -253,7 +239,6 @@ def validate_password(password: str) -> None:
         )
     if len(password) > 1024:
         raise ValueError("A senha excede o tamanho permitido.")
-
 
 def hash_password(password: str) -> str:
     """Create a salted, memory-hard scrypt password hash."""
@@ -278,7 +263,6 @@ def hash_password(password: str) -> str:
         base64.urlsafe_b64encode(digest).decode("ascii"),
     )
 
-
 def verify_password(password: str, stored_hash: str) -> bool:
     """Verify a hash while using a constant-time digest comparison."""
 
@@ -301,12 +285,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
     except (AttributeError, TypeError, ValueError, UnicodeError):
         return False
 
-
 def _row_value(row: sqlite3.Row, column: str) -> Any:
     """Le uma coluna que pode nao existir em um banco ainda nao migrado."""
 
     return row[column] if column in row.keys() else None
-
 
 def _row_to_user(database: sqlite3.Connection, row: sqlite3.Row) -> User:
     modules = tuple(
@@ -338,7 +320,6 @@ def _row_to_user(database: sqlite3.Connection, row: sqlite3.Row) -> User:
         ),
     )
 
-
 def _user_by_clause(
     database: sqlite3.Connection, where_clause: str, values: Sequence[Any]
 ) -> Optional[User]:
@@ -354,18 +335,15 @@ def _user_by_clause(
     ).fetchone()
     return _row_to_user(database, row) if row else None
 
-
 def get_user(user_id: int, database_path: Optional[os.PathLike] = None) -> Optional[User]:
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         return _user_by_clause(database, "users.id = ?", (user_id,))
 
-
 def get_user_by_email(email: str, database_path: Optional[os.PathLike] = None) -> Optional[User]:
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         return _user_by_clause(database, "users.email = ?", (normalize_email(email),))
-
 
 def _safe_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
     if not metadata:
@@ -376,7 +354,6 @@ def _safe_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
         if key.casefold() not in _SECRET_METADATA_KEYS
     }
     return json.dumps(safe, ensure_ascii=True, sort_keys=True) if safe else None
-
 
 def _audit(
     database: sqlite3.Connection,
@@ -405,7 +382,6 @@ def _audit(
         ),
     )
 
-
 def _organization_row(database: sqlite3.Connection, organization_id: int) -> sqlite3.Row:
     organization = database.execute(
         "SELECT * FROM organizations WHERE id = ?", (organization_id,)
@@ -414,13 +390,11 @@ def _organization_row(database: sqlite3.Connection, organization_id: int) -> sql
         raise ValueError("Organizacao nao encontrada.")
     return organization
 
-
 def _trusted_actor(database: sqlite3.Connection, actor: User) -> User:
     trusted_actor = _user_by_clause(database, "users.id = ?", (actor.id,))
     if trusted_actor is None or not trusted_actor.is_active:
         raise AuthorizationError("A conta administrativa nao esta ativa.")
     return trusted_actor
-
 
 def _validate_modules(module_keys: Sequence[str]) -> Tuple[str, ...]:
     normalized = tuple(sorted(set(module_keys)))
@@ -428,7 +402,6 @@ def _validate_modules(module_keys: Sequence[str]) -> Tuple[str, ...]:
     if invalid:
         raise ValueError("Modulo invalido: {}.".format(", ".join(sorted(invalid))))
     return normalized
-
 
 def _active_admin_count(
     database: sqlite3.Connection, organization_id: int, exclude_user_id: Optional[int] = None
@@ -443,7 +416,6 @@ def _active_admin_count(
         values.append(exclude_user_id)
     return int(database.execute(query, tuple(values)).fetchone()["total"])
 
-
 def _active_platform_admin_count(
     database: sqlite3.Connection, exclude_user_id: Optional[int] = None
 ) -> int:
@@ -457,7 +429,6 @@ def _active_platform_admin_count(
         values.append(exclude_user_id)
     return int(database.execute(query, tuple(values)).fetchone()["total"])
 
-
 def _revoke_user_sessions(database: sqlite3.Connection, user_id: int) -> None:
     database.execute(
         """
@@ -466,7 +437,6 @@ def _revoke_user_sessions(database: sqlite3.Connection, user_id: int) -> None:
         """,
         (_timestamp(), user_id),
     )
-
 
 def create_organization(
     name: str,
@@ -511,7 +481,6 @@ def create_organization(
         )
         return Organization(organization_id, organization_name, True)
 
-
 def list_organizations(
     actor: User,
     include_inactive: bool = False,
@@ -547,7 +516,6 @@ def list_organizations(
             Organization(int(row["id"]), row["name"], bool(row["is_active"]), row["whatsapp_numbers"] or "")
             for row in database.execute(query)
         ]
-
 
 def update_organization(
     actor: User,
@@ -597,7 +565,6 @@ def update_organization(
                 organization_id,
             )
 
-
 def get_organization_whatsapp_numbers(
     organization_id: int,
     database_path: Optional[os.PathLike] = None,
@@ -618,7 +585,6 @@ def get_organization_whatsapp_numbers(
             if digits and digits not in cleaned:
                 cleaned.append(digits)
         return cleaned
-
 
 def set_organization_active(
     actor: User,
@@ -654,7 +620,6 @@ def set_organization_active(
             organization_id,
         )
 
-
 def _assert_user_management_scope(
     actor: User,
     target_organization_id: int,
@@ -666,7 +631,6 @@ def _assert_user_management_scope(
         raise AuthorizationError("Administradores so gerenciam a propria organizacao.")
     if is_platform_admin and not actor.is_platform_admin:
         raise AuthorizationError("Somente administradores globais podem conceder esse papel.")
-
 
 def _assert_peer_admin_scope(actor: User, target: User) -> None:
     """Um administrador de organizacao nao atua sobre a conta de outro administrador.
@@ -683,7 +647,6 @@ def _assert_peer_admin_scope(actor: User, target: User) -> None:
             "Administradores da organizacao nao editam nem removem contas de "
             "outros administradores."
         )
-
 
 def _assert_creator_scope(
     database: sqlite3.Connection, actor: User, target: User
@@ -711,7 +674,6 @@ def _assert_creator_scope(
         "Esta conta foi criada por outro administrador da organizacao."
     )
 
-
 def _guard_user_management(
     database: sqlite3.Connection,
     actor: User,
@@ -738,7 +700,6 @@ def _guard_user_management(
             database_path=database_path,
         )
         raise
-
 
 def create_user(
     name: str,
@@ -824,7 +785,6 @@ def create_user(
             raise RuntimeError("Nao foi possivel carregar o usuario criado.")
         return created
 
-
 def list_users(
     actor: User,
     organization_id: Optional[int] = None,
@@ -873,7 +833,6 @@ def list_users(
             tuple(values),
         ).fetchall()
         return [_row_to_user(database, row) for row in rows]
-
 
 def update_user(
     actor: User,
@@ -999,7 +958,6 @@ def update_user(
             raise RuntimeError("Nao foi possivel carregar o usuario atualizado.")
         return updated
 
-
 def delete_user(
     actor: User, user_id: int, database_path: Optional[os.PathLike] = None
 ) -> None:
@@ -1030,7 +988,6 @@ def delete_user(
         )
         database.execute("DELETE FROM users WHERE id = ?", (target.id,))
 
-
 def create_session(
     user_id: int,
     database_path: Optional[os.PathLike] = None,
@@ -1048,7 +1005,6 @@ def create_session(
             (session_hash, user_id, _timestamp(_now() + duration), _timestamp()),
         )
     return session_token
-
 
 def user_for_session(
     session_token: Optional[str], database_path: Optional[os.PathLike] = None
@@ -1076,7 +1032,6 @@ def user_for_session(
             (session_hash, _timestamp()),
         ).fetchone()
         return _row_to_user(database, row) if row else None
-
 
 def revoke_session(
     session_token: Optional[str], database_path: Optional[os.PathLike] = None
@@ -1106,7 +1061,6 @@ def revoke_session(
                 "session",
             )
 
-
 def _login_is_locked(database: sqlite3.Connection, user_id: int) -> bool:
     """True quando a conta acumulou falhas demais na janela de bloqueio.
 
@@ -1128,7 +1082,6 @@ def _login_is_locked(database: sqlite3.Connection, user_id: int) -> bool:
     if len(rows) < LOGIN_MAX_FAILURES:
         return False
     return all(row["action"] == "login.failed" for row in rows)
-
 
 def authenticate(
     email: str, password: str, database_path: Optional[os.PathLike] = None
@@ -1209,10 +1162,8 @@ def authenticate(
         raise AuthenticationError("E-mail ou senha invalidos, ou conta inativa.")
     return user, create_session(user.id, database_path=database_path)
 
-
 def can_access_module(user: User, module_key: str) -> bool:
     return module_key in MODULE_KEYS and (user.is_admin or module_key in user.modules)
-
 
 def can_write(user: User) -> bool:
     """True somente para contas que podem alterar dados de negocio.
@@ -1223,10 +1174,8 @@ def can_write(user: User) -> bool:
 
     return user.is_admin
 
-
 def can_write_module(user: User, module_key: str) -> bool:
     return can_access_module(user, module_key) and can_write(user)
-
 
 def can_manage_user(
     actor: User, target: User, database_path: Optional[os.PathLike] = None
@@ -1248,12 +1197,10 @@ def can_manage_user(
         return False
     return True
 
-
 def _streamlit() -> Any:
     import streamlit as st
 
     return st
-
 
 def current_user(database_path: Optional[os.PathLike] = None) -> Optional[User]:
     """Read and validate the opaque session token on every Streamlit rerun."""
@@ -1265,19 +1212,16 @@ def current_user(database_path: Optional[os.PathLike] = None) -> Optional[User]:
         st.session_state.pop(ACTIVE_ORGANIZATION_STATE_KEY, None)
     return user
 
-
 def login(email: str, password: str, database_path: Optional[os.PathLike] = None) -> User:
     user, session_token = authenticate(email, password, database_path)
     _streamlit().session_state[SESSION_STATE_KEY] = session_token
     return user
-
 
 def logout(database_path: Optional[os.PathLike] = None) -> None:
     st = _streamlit()
     session_token = st.session_state.pop(SESSION_STATE_KEY, None)
     st.session_state.pop(ACTIVE_ORGANIZATION_STATE_KEY, None)
     revoke_session(session_token, database_path)
-
 
 def require_login(database_path: Optional[os.PathLike] = None) -> User:
     user = current_user(database_path)
@@ -1287,7 +1231,6 @@ def require_login(database_path: Optional[os.PathLike] = None) -> User:
         st.stop()
     return user
 
-
 def require_module(module_key: str, database_path: Optional[os.PathLike] = None) -> User:
     user = require_login(database_path)
     if not can_access_module(user, module_key):
@@ -1295,7 +1238,6 @@ def require_module(module_key: str, database_path: Optional[os.PathLike] = None)
         st.error("Voce nao tem acesso a este modulo.")
         st.stop()
     return user
-
 
 def assert_module_write(
     module_key: str, database_path: Optional[os.PathLike] = None
@@ -1328,7 +1270,6 @@ def assert_module_write(
         raise AuthorizationError(denial)
     return user
 
-
 def require_module_write(
     module_key: str, database_path: Optional[os.PathLike] = None
 ) -> User:
@@ -1341,7 +1282,6 @@ def require_module_write(
         st.stop()
     return user
 
-
 def require_admin(
     platform_only: bool = False, database_path: Optional[os.PathLike] = None
 ) -> User:
@@ -1353,7 +1293,6 @@ def require_admin(
         st.error("Esta pagina e restrita a administradores.")
         st.stop()
     return user
-
 
 def active_organization_id(
     user: Optional[User] = None, database_path: Optional[os.PathLike] = None
@@ -1382,7 +1321,6 @@ def active_organization_id(
             raise AuthorizationError("A organizacao selecionada esta inativa.")
     return organization_id
 
-
 def is_current_user_platform_admin(database_path: Optional[os.PathLike] = None) -> bool:
     """Return True if the active user is a platform administrator."""
     try:
@@ -1390,7 +1328,6 @@ def is_current_user_platform_admin(database_path: Optional[os.PathLike] = None) 
         return bool(user and user.is_platform_admin)
     except Exception:
         return False
-
 
 def audit_business_access(
     action: str,
@@ -1433,7 +1370,6 @@ def audit_business_access(
             target_id,
         )
 
-
 def audit_authorization_denied(
     actor: Optional[User],
     action: str,
@@ -1473,12 +1409,10 @@ def audit_authorization_denied(
         # ao registra-la nao pode transformar a recusa em erro diferente.
         pass
 
-
 def _empty_identity_store(database_path: Optional[os.PathLike]) -> bool:
     initialize_auth_schema(database_path)
     with connection(database_path) as database:
         return not bool(database.execute("SELECT COUNT(*) AS total FROM users").fetchone()["total"])
-
 
 def bootstrap_from_environment(database_path: Optional[os.PathLike] = None) -> bool:
     """Create the first organization and global administrator exactly once.
@@ -1525,7 +1459,6 @@ def bootstrap_from_environment(database_path: Optional[os.PathLike] = None) -> b
     )
     return True
 
-
 def render_login_page(database_path: Optional[os.PathLike] = None) -> Optional[User]:
     """Render the only unauthenticated interface and establish an opaque session."""
 
@@ -1538,49 +1471,193 @@ def render_login_page(database_path: Optional[os.PathLike] = None) -> Optional[U
     user = current_user(database_path)
     if user is not None:
         return user
-    st.title("NENC Insights")
-    if bootstrapped:
-        st.info("A conta administrativa inicial foi criada. Faca login para continuar.")
-    elif _empty_identity_store(database_path):
-        st.error("Nenhuma conta foi inicializada. Configure as variaveis NENC_BOOTSTRAP_*.")
-    with st.form("nenc-login", clear_on_submit=False):
-        email = st.text_input("E-mail", autocomplete="email")
-        password = st.text_input("Senha", type="password", autocomplete="current-password")
-        submitted = st.form_submit_button("Entrar", type="primary")
-    if submitted:
-        try:
-            login(email, password, database_path)
-        except AuthenticationError as error:
-            st.error(str(error))
-        else:
-            st.rerun()
+    from utils.icons import icon
+
+    marca, formulario = st.columns([1, 1], gap="large", vertical_alignment="center")
+
+    with marca:
+        st.markdown(
+            '<div style="display:flex;flex-direction:column;gap:2.4rem;'
+            'padding:1.5rem 0">'
+            '<div style="display:flex;align-items:center;gap:.65rem">'
+            '<span style="display:flex;align-items:center;'
+            "justify-content:center;width:38px;height:38px;border-radius:10px;"
+            "border:1px solid var(--nenc-accent-800);"
+            "background:rgba(145,132,217,.12);"
+            'color:var(--nenc-accent-300);flex:none">{brain}</span>'
+            '<span style="display:flex;flex-direction:column;'
+            'line-height:1.2;font-size:.95rem;font-weight:600">'
+            "<span>NENC</span><span>Insights</span></span></div>"
+            '<div><h1 style="margin:0;font-size:2.5rem;font-weight:600;'
+            'line-height:1.14;letter-spacing:-.022em">'
+            "Dados de neuromarketing,<br>lidos em um só lugar.</h1>"
+            '<p style="margin:1.1rem 0 0;font-size:.95rem;line-height:1.6;'
+            'color:var(--nenc-muted);max-width:36ch">'
+            "Teste Sensorial, Jornada de Compra e NencBoost. "
+            "O acesso é isolado por organização.</p></div></div>".format(
+                brain=icon("brain", 21)
+            ),
+            unsafe_allow_html=True,
+        )
+
+    with formulario:
+        # A coluna do meio aproxima a largura fixa de 340px do desenho.
+        _, campo, _ = st.columns([1, 7, 1])
+        with campo:
+            st.markdown(
+                '<h2 style="margin:0;font-size:1.55rem;font-weight:500;'
+                'letter-spacing:-.015em">Entrar</h2>'
+                '<p style="margin:.3rem 0 1.1rem;font-size:.85rem;'
+                'color:var(--nenc-muted)">'
+                "Use o e-mail cadastrado pela sua organização.</p>",
+                unsafe_allow_html=True,
+            )
+
+            if bootstrapped:
+                st.info(
+                    "A conta administrativa inicial foi criada. "
+                    "Faça login para continuar."
+                )
+            elif _empty_identity_store(database_path):
+                st.error(
+                    "Nenhuma conta foi inicializada. "
+                    "Configure as variáveis NENC_BOOTSTRAP_*."
+                )
+
+            with st.form("nenc-login", clear_on_submit=False):
+                email = st.text_input(
+                    "E-mail",
+                    autocomplete="email",
+                    placeholder="nome@organizacao.com",
+                )
+                password = st.text_input(
+                    "Senha",
+                    type="password",
+                    autocomplete="current-password",
+                )
+                submitted = st.form_submit_button(
+                    "Entrar", type="primary", width="stretch"
+                )
+
+            # O desenho traz "Esqueci a senha" como link. Nao existe fluxo de
+            # recuperacao no produto, e link morto e pior que nenhum — entao
+            # fica a orientacao real, ainda antes de o erro acontecer.
+            st.caption(
+                "Esqueceu a senha? Um administrador da sua organização "
+                "pode redefini-la."
+            )
+
+            if submitted:
+                try:
+                    login(email, password, database_path)
+                except AuthenticationError as error:
+                    st.error(str(error))
+                else:
+                    st.rerun()
+
+            st.markdown(
+                '<div style="display:flex;align-items:flex-start;gap:.55rem;'
+                "margin-top:.9rem;padding:.7rem .85rem;border-radius:8px;"
+                "border:1px solid var(--nenc-accent-800);"
+                "background:rgba(145,132,217,.07);font-size:.78rem;"
+                'line-height:1.5;color:var(--nenc-muted)">'
+                '<span style="color:var(--nenc-accent-300);display:flex;'
+                'flex:none;padding-top:.12rem">{shield}</span>'
+                "<span>Sessões expiram automaticamente e cada acesso é "
+                "registrado por organização.</span></div>".format(
+                    shield=icon("shield-check", 15)
+                ),
+                unsafe_allow_html=True,
+            )
+
     return None
 
+def _initials(name: str) -> str:
+    """Duas letras para o avatar do cartao de sessao."""
+    parts = [part for part in str(name or "").split() if part]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
 
 def render_auth_sidebar(user: User, database_path: Optional[os.PathLike] = None) -> None:
-    """Display the verified identity, global target organization, and logout control."""
+    """Organizacao ativa e identidade, no rodape da barra lateral.
+
+    O `st.navigation` desenha o menu sempre no topo da barra lateral, entao
+    tudo escrito aqui aparece abaixo dele — que e onde o design coloca o
+    contexto da sessao.
+    """
 
     st = _streamlit()
+    from html import escape
+
+    from utils import ui
+
     with st.sidebar:
-        st.caption("Sessao ativa")
-        st.write(user.name)
-        st.caption("{} | {}".format(user.organization_name, user.email))
+        st.markdown(
+            '<hr style="border:none;border-top:1px solid var(--nenc-border);'
+            'margin:.9rem 0 .2rem">',
+            unsafe_allow_html=True,
+        )
+
         if user.is_platform_admin:
             organizations = list_organizations(user, database_path=database_path)
-            labels = {0: "🌐 Todas as Organizações"}
-            labels.update({organization.id: "🏢 {}".format(organization.name) for organization in organizations})
+            labels = {0: "Todas as organizações"}
+            labels.update(
+                {organization.id: organization.name for organization in organizations}
+            )
             available_ids = list(labels)
-            selected_id = st.session_state.get(ACTIVE_ORGANIZATION_STATE_KEY, user.organization_id)
+            selected_id = st.session_state.get(
+                ACTIVE_ORGANIZATION_STATE_KEY, user.organization_id
+            )
             if selected_id not in labels:
-                selected_id = user.organization_id if user.organization_id in labels else available_ids[0]
-            selected_index = available_ids.index(selected_id)
+                selected_id = (
+                    user.organization_id
+                    if user.organization_id in labels
+                    else available_ids[0]
+                )
+            st.markdown(
+                '<div style="font-size:.6rem;letter-spacing:.12em;'
+                'text-transform:uppercase;color:var(--nenc-faint);'
+                'padding:.2rem 0 .25rem">Organização ativa</div>',
+                unsafe_allow_html=True,
+            )
             st.selectbox(
-                "Organizacao ativa",
+                "Organização ativa",
                 available_ids,
-                index=selected_index,
+                index=available_ids.index(selected_id),
                 format_func=lambda organization_id: labels[organization_id],
                 key=ACTIVE_ORGANIZATION_STATE_KEY,
+                label_visibility="collapsed",
             )
-        if st.button("Sair", key="nenc-logout"):
+        else:
+            st.markdown(
+                ui.status_chip("buildings", user.organization_name),
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:.55rem;'
+            'padding:.6rem 0 .5rem">'
+            '<span style="flex:none;width:28px;height:28px;border-radius:50%;'
+            "background:rgba(145,132,217,.16);border:1px solid "
+            "var(--nenc-accent-800);color:var(--nenc-accent-300);"
+            "display:flex;align-items:center;justify-content:center;"
+            'font-size:.68rem;font-weight:600">{initials}</span>'
+            '<span style="display:flex;flex-direction:column;min-width:0">'
+            '<span style="font-size:.78rem;overflow:hidden;'
+            'text-overflow:ellipsis;white-space:nowrap">{name}</span>'
+            '<span style="font-size:.68rem;color:var(--nenc-faint);'
+            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            '">{email}</span></span></div>'.format(
+                initials=escape(_initials(user.name)),
+                name=escape(str(user.name or "")),
+                email=escape(str(user.email or "")),
+            ),
+            unsafe_allow_html=True,
+        )
+
+        if st.button("Sair", key="nenc-logout", width="stretch"):
             logout(database_path)
             st.rerun()

@@ -80,7 +80,7 @@ class AssertModuleWriteTests(unittest.TestCase):
 
 
 class ProsodiaWriteGuardTests(unittest.TestCase):
-    """Toda funcao que altera estado no LEX passa pela guarda de escrita."""
+    """Toda funcao que altera estado no BOOST passa pela guarda de escrita."""
 
     WRITE_CALLS = (
         ("create_project", ("Projeto",)),

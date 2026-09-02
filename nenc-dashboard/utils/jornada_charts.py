@@ -11,17 +11,16 @@ import plotly.graph_objects as go
 import pandas as pd
 from typing import List, Optional
 
+# Importado pelo efeito de registrar o template "nenc" usado abaixo.
+from utils.charts import NENC_HEATMAP, NENC_SEQUENCE
+
 # ---------------------------------------------------------------------------
 # Paleta consistente com charts.py
 # ---------------------------------------------------------------------------
-BRAND_COLORS = {
-    "Always": "#636EFA",
-    "Carefree": "#EF553B",
-    "Intimus": "#00CC96",
-    "Libresse": "#AB63FA",
-    "Sempre Livre": "#FFA15A",
-    "Tampax": "#19D3F3",
-}
+BRAND_COLORS = dict(zip(
+    ("Always", "Carefree", "Intimus", "Libresse", "Sempre Livre", "Tampax"),
+    NENC_SEQUENCE,
+))
 
 
 def _get_brand_color(brand: str) -> str:
@@ -80,7 +79,7 @@ def create_metric_by_aoi(
             x=stats["mean"],
             orientation="h",
             error_x=dict(type="data", array=stats["std"], visible=True),
-            marker_color="#00CC96",
+            marker_color=NENC_SEQUENCE[0],
             hovertemplate=(
                 "<b>%{y}</b><br>"
                 f"{metric}: " + "%{x:.3f} ± %{error_x.array:.3f}"
@@ -93,7 +92,7 @@ def create_metric_by_aoi(
         title=title or f"{metric} por AOI",
         xaxis_title=metric,
         yaxis_title="",
-        template="plotly_dark",
+        template="nenc",
         height=max(400, len(stats) * 28),
         margin=dict(l=250),
     )
@@ -149,7 +148,7 @@ def create_attention_heatmap(
             z=pivot.values,
             x=pivot.columns.tolist(),
             y=pivot.index.tolist(),
-            colorscale="Viridis",
+            colorscale=NENC_HEATMAP,
             hovertemplate=(
                 "Participante: %{y}<br>"
                 "AOI: %{x}<br>"
@@ -162,7 +161,7 @@ def create_attention_heatmap(
         title=title or f"Heatmap — {metric}",
         xaxis_title="AOI",
         yaxis_title="Participante",
-        template="plotly_dark",
+        template="nenc",
         height=max(400, len(pivot) * 40 + 100),
         margin=dict(b=150),
         xaxis=dict(tickangle=-45),
@@ -221,7 +220,7 @@ def create_brand_share_chart(
         title=title,
         xaxis_title="Total Gaze Duration (s)",
         yaxis_title="",
-        template="plotly_dark",
+        template="nenc",
         height=max(300, len(work) * 50),
         margin=dict(l=150),
     )
@@ -250,7 +249,7 @@ def format_anova_for_display(df: pd.DataFrame) -> pd.DataFrame:
     # Marcar significância
     if "Sig." in result.columns:
         result["Significante?"] = result["Sig."].apply(
-            lambda x: "✅ Sim" if pd.notna(x) and x < 0.05 else "❌ Não"
+            lambda x: "Sim" if pd.notna(x) and x < 0.05 else "Não"
         )
 
     return result.reset_index(drop=True)

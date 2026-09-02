@@ -10,36 +10,76 @@ Gera subplots com eixo X compartilhado (Tempo_global) para:
 """
 
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
 import pandas as pd
 from typing import Dict, List
 
 # ---------------------------------------------------------------------------
+# Template Plotly
+# ---------------------------------------------------------------------------
+# Definido aqui uma vez e aplicado por `template="nenc"` nas figuras das tres
+# fabricas de grafico. Os valores sao os mesmos tokens de utils/ui.py e de
+# .streamlit/config.toml, para o grafico nao ler como outra aplicacao.
+
+# Uma matiz por serie, nao passos de luminosidade: numa linha com varias
+# series a rampa monocromatica e indistinguivel, e os tons escuros da familia
+# violeta somem sobre a superficie. O violeta da marca fica em primeiro, para
+# que grafico de serie unica continue com a cor do produto. A ordem alterna
+# matizes; lilas e ciano vao para o fim por serem os mais proximos dos dois
+# primeiros da lista.
+NENC_SEQUENCE = [
+    "#9184d9",  # violeta (marca)
+    "#e9c46a",  # ambar
+    "#6aa9d9",  # azul
+    "#e0748b",  # rosa
+    "#5fbf9f",  # verde-agua
+    "#d98d5f",  # laranja
+    "#8fca6a",  # verde
+    "#b5abfc",  # lilas
+    "#5fc6d9",  # ciano
+]
+
+
+def _translucido(hex_color: str, alpha: float) -> str:
+    """'#rrggbb' -> 'rgba(r, g, b, a)', para faixas de fundo."""
+    raw = hex_color.lstrip("#")
+    r, g, b = (int(raw[i:i + 2], 16) for i in (0, 2, 4))
+    return "rgba({}, {}, {}, {})".format(r, g, b, alpha)
+
+# Rampa para heatmaps: do fundo do canvas ao violeta mais claro.
+NENC_HEATMAP = [[0, "#161826"], [0.5, "#5d5294"], [1, "#d2cefd"]]
+
+pio.templates["nenc"] = go.layout.Template(
+    layout=dict(
+        paper_bgcolor="#161826",
+        plot_bgcolor="#1c1e2c",
+        font=dict(
+            family="Inter, system-ui, sans-serif", color="#e9e9ed", size=12
+        ),
+        colorway=NENC_SEQUENCE,
+        xaxis=dict(gridcolor="#3f424d", zerolinecolor="#3f424d"),
+        yaxis=dict(gridcolor="#3f424d", zerolinecolor="#3f424d"),
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=48, r=24, t=40, b=40),
+    )
+)
+pio.templates.default = "nenc"
+
+# ---------------------------------------------------------------------------
 # Paletas
 # ---------------------------------------------------------------------------
 
-ETAPA_COLORS = [
-    "rgba(99, 110, 250, 0.12)",
-    "rgba(239, 85, 59, 0.12)",
-    "rgba(0, 204, 150, 0.12)",
-    "rgba(171, 99, 250, 0.12)",
-    "rgba(255, 161, 90, 0.12)",
-    "rgba(25, 211, 243, 0.12)",
-    "rgba(255, 102, 146, 0.12)",
-    "rgba(182, 232, 128, 0.12)",
-]
+# Faixas de fundo das etapas: a mesma paleta, translucida.
+ETAPA_COLORS = [_translucido(color, 0.12) for color in NENC_SEQUENCE]
 
-INDICATOR_COLORS = {
-    "engagement_score": "#636EFA",
-    "atencao": "#EF553B",
-    "WTP": "#00CC96",
-    "Memoria_log": "#AB63FA",
-    "assimetria": "#FFA15A",
-    "Alpha/Beta": "#19D3F3",
-    "AWI_frontal": "#FF6692",
-    "sens_asym": "#B6E880",
-    "inst_sens": "#FF97FF",
-}
+INDICATOR_COLORS = dict(zip(
+    (
+        "engagement_score", "atencao", "WTP", "Memoria_log", "assimetria",
+        "Alpha/Beta", "AWI_frontal", "sens_asym", "inst_sens",
+    ),
+    NENC_SEQUENCE,
+))
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +252,7 @@ def create_synchronized_timeline(
                     y=merged[bpm_col],
                     mode="lines",
                     name=bpm_col,
-                    line=dict(color="#EF553B", width=2),
+                    line=dict(color=NENC_SEQUENCE[3], width=2),
                     hovertemplate="BPM: %{y:.1f}<extra></extra>",
                 ),
                 row=row_idx,
@@ -226,7 +266,7 @@ def create_synchronized_timeline(
                     y=merged[gsr_col],
                     mode="lines",
                     name=gsr_col,
-                    line=dict(color="#00CC96", width=2),
+                    line=dict(color=NENC_SEQUENCE[4], width=2),
                     hovertemplate="GSR: %{y:.4f}<extra></extra>",
                 ),
                 row=row_idx,
@@ -243,7 +283,7 @@ def create_synchronized_timeline(
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified",
-        template="plotly_dark",
+        template="nenc",
         margin=dict(t=80, b=40),
     )
     fig.update_xaxes(title_text="Tempo (s)", row=n_rows, col=1)
@@ -298,7 +338,7 @@ def create_average_by_etapa(
     for i, metric in enumerate(available, 1):
         means = stats[(metric, "mean")].values
         stds = stats[(metric, "std")].fillna(0).values
-        color = INDICATOR_COLORS.get(metric, "#636EFA")
+        color = INDICATOR_COLORS.get(metric, NENC_SEQUENCE[0])
 
         fig.add_trace(
             go.Bar(
@@ -319,7 +359,7 @@ def create_average_by_etapa(
     fig.update_layout(
         height=200 * len(available),
         showlegend=False,
-        template="plotly_dark",
+        template="nenc",
         title_text="Indicadores — Média por Etapa (entre participantes)",
     )
 
@@ -355,7 +395,7 @@ def create_perifericos_by_etapa(
 
     stats = perifericos.groupby("Etapa")[available].agg(["mean", "std"]).reset_index()
     etapas = stats["Etapa"].values
-    colors = ["#EF553B", "#AB63FA", "#00CC96"]
+    colors = NENC_SEQUENCE
 
     fig = make_subplots(
         rows=len(available),
@@ -384,7 +424,7 @@ def create_perifericos_by_etapa(
     fig.update_layout(
         height=200 * len(available),
         showlegend=False,
-        template="plotly_dark",
+        template="nenc",
         title_text="Periféricos — Média por Etapa",
     )
 

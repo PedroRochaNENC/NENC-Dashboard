@@ -6,7 +6,8 @@ heatmap de atenção, ANOVA e análise de IA com contexto do projeto.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("jornada_compra")
 
@@ -167,14 +168,20 @@ def _build_pdf(projeto: dict, tables_text: str, ai_text: str, entrevistas_summar
 
 hydrate_session_state("jornada_compra", _JORNADA_STATE_KEYS)
 
-st.title("🔍 Análise — Jornada de Compra")
+ui.inject_theme()
+ui.breadcrumb("Jornada de Compra", "Análise")
+page_title(
+    "chart-bar",
+    "Análise",
+    "Métricas por AOI, share visual e leitura de IA.",
+)
 
 data = st.session_state.get("jc_data", {})
 loaded_keys = [k for k in data if k != "_errors"]
 
 if not loaded_keys:
     st.warning(
-        "⚠️ Nenhum dado carregado. "
+        "Nenhum dado carregado. "
         "Volte à página de Preparação de Dados e carregue os arquivos."
     )
     st.stop()
@@ -195,7 +202,7 @@ for key in ("tabelas", "consolidado", "medias", "por_marca"):
 # Sidebar — Filtros
 # ------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Controles")
+    st.header("Controles")
 
     # Métrica selecionada
     available_metrics = [
@@ -249,12 +256,12 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("🤖 Análise de IA")
+    st.subheader("Análise de IA")
     _client = get_openai_client()
     if _client:
-        st.success("OpenAI configurado ✅")
+        st.success("OpenAI configurado")
     else:
-        st.error("Configure OPENAI_API_KEY no .env ❌")
+        st.error("Configure OPENAI_API_KEY no .env")
 
     ai_model = st.selectbox(
         "Modelo",
@@ -274,12 +281,12 @@ with st.sidebar:
     use_kb = False
     if _vs_id:
         use_kb = st.toggle(
-            "📚 Consultar base de conhecimento",
+            "Consultar base de conhecimento",
             value=True,
             key="jc_use_kb",
         )
     else:
-        st.caption("📚 Base de conhecimento não configurada")
+        st.caption("Base de conhecimento não configurada")
 
 # ------------------------------------------------------------------
 # Aplicar filtros ao DataFrame principal
@@ -298,11 +305,11 @@ if selected_marcas and "Marca" in filtered_df.columns:
 # ==================================================================
 # Seção 1: Visualizar Dados (fechada por padrão)
 # ==================================================================
-with st.expander("📊 Visualizar Dados", expanded=False):
+with st.expander("Visualizar Dados", expanded=False):
     # ------------------------------------------------------------------
     # Tabela resumo
     # ------------------------------------------------------------------
-    st.subheader("📋 Tabela Resumo")
+    st.subheader("Tabela Resumo")
 
     if not filtered_df.empty and selected_metric:
         metric_cols = [
@@ -329,7 +336,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
     # Gráfico de barras por AOI
     # ------------------------------------------------------------------
     st.divider()
-    st.subheader("📊 Métricas por AOI")
+    st.subheader("Métricas por AOI")
 
     if selected_metric and not filtered_df.empty:
         fig_bar = create_metric_by_aoi(
@@ -348,7 +355,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
         and "Participante" in filtered_df.columns
     ):
         st.divider()
-        st.subheader("🗺️ Heatmap de Atenção")
+        st.subheader("Heatmap de Atenção")
 
         fig_heat = create_attention_heatmap(
             filtered_df,
@@ -363,7 +370,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
     # ------------------------------------------------------------------
     if "visual_share" in data:
         st.divider()
-        st.subheader("👁️ Share Visual por Marca")
+        st.subheader("Share Visual por Marca")
 
         vs_df = data["visual_share"]
         if selected_marcas and "Marca" in vs_df.columns:
@@ -377,7 +384,7 @@ with st.expander("📊 Visualizar Dados", expanded=False):
     # ------------------------------------------------------------------
     if "anova" in data:
         st.divider()
-        st.subheader("📐 Resultados ANOVA")
+        st.subheader("Resultados ANOVA")
 
         anova_display = format_anova_for_display(data["anova"])
         if not anova_display.empty:
@@ -389,13 +396,13 @@ with st.expander("📊 Visualizar Dados", expanded=False):
 # Seção 2: Análise de IA
 # ==================================================================
 st.divider()
-st.subheader("🤖 Análise de IA")
+st.subheader("Análise de IA")
 
 projeto = st.session_state.get("jc_projeto", {})
 
 # Mostrar contexto do projeto se preenchido
 if projeto.get("nome"):
-    with st.expander("📝 Contexto do projeto", expanded=False):
+    with st.expander("Contexto do projeto", expanded=False):
         st.markdown(f"**Projeto:** {projeto['nome']}")
         if projeto.get("especialidade"):
             st.markdown(f"**Área:** {projeto['especialidade'][:200]}...")
@@ -404,19 +411,19 @@ if projeto.get("nome"):
 
 pptx_text = st.session_state.get("jc_pptx_text", "")
 if pptx_text:
-    with st.expander("📄 Relatório PPTX carregado", expanded=False):
+    with st.expander("Relatório PPTX carregado", expanded=False):
         st.text(pptx_text[:3000] + ("\n..." if len(pptx_text) > 3000 else ""))
 
 # Resumo das entrevistas
 entrevistas_summary = st.session_state.get("jc_entrevistas_summary", "")
 if "entrevistas" in data and not data["entrevistas"].empty:
-    with st.expander("🎙️ Entrevistas carregadas", expanded=False):
+    with st.expander("Entrevistas carregadas", expanded=False):
         st.info(f"{len(data['entrevistas'])} entrevistas disponíveis para análise qualitativa.")
         if entrevistas_summary:
             st.markdown("**Resumo gerado:**")
             st.markdown(entrevistas_summary)
         elif _client:
-            if st.button("📝 Gerar Resumo das Entrevistas", key="btn_summarize"):
+            if st.button("Gerar Resumo das Entrevistas", key="btn_summarize"):
                 with st.spinner("Resumindo entrevistas..."):
                     try:
                         summary = _summarize_interviews(_client, data["entrevistas"])
@@ -480,7 +487,7 @@ if not _client:
 elif not tables_text.strip():
     st.warning("Nenhum dado disponível para análise.")
 else:
-    if st.button("🔍 Gerar Análise", key="btn_ai_jc"):
+    if st.button("Gerar Análise", key="btn_ai_jc"):
         entrevistas_summary = st.session_state.get("jc_entrevistas_summary", "")
         vs_id = get_vector_store_id() if use_kb else None
 
@@ -524,9 +531,9 @@ else:
 
                     # Display in tabs
                     tab_stat, tab_strat, tab_refs = st.tabs([
-                        "📊 Análise Estatística",
-                        "💡 Interpretação Estratégica",
-                        "📚 Referências",
+                        "Análise Estatística",
+                        "Interpretação Estratégica",
+                        "Referências",
                     ])
 
                     with tab_stat:
@@ -563,8 +570,8 @@ else:
 
                     if result["citations"]:
                         tab_analysis, tab_refs = st.tabs([
-                            "📊 Análise",
-                            "📚 Referências",
+                            "Análise",
+                            "Referências",
                         ])
                         with tab_analysis:
                             st.markdown(result["text"])
@@ -588,7 +595,7 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar para Preparação", width="stretch"):
+    if st.button("Voltar para Preparação", width="stretch"):
         st.switch_page("modules/jornada_compra/preparacao.py")
 
 with col_nav2:
@@ -599,7 +606,7 @@ with col_nav2:
         st.session_state.get("jc_entrevistas_summary", ""),
     )
     st.download_button(
-        "📄 Exportar PDF",
+        "Exportar PDF",
         data=pdf_bytes,
         file_name=f"{projeto.get('nome', 'analise_jornada')}.pdf",
         mime="application/pdf",

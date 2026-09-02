@@ -16,13 +16,14 @@ from utils import auth
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
 
+from utils import ui
+from utils.icons import page_title
 from utils.prosodia_db import (
     init_db,
     get_project,
     get_audios_for_interviews,
     delete_audio,
 )
-from utils.prosodia_quality import status_badge
 from utils.organization_data import claim_external_resource, list_external_resources
 
 init_db()
@@ -39,10 +40,7 @@ _STATUS_LABEL = {
 
 
 def _status_text(status: str) -> str:
-    s = status or "pending"
-    if s == "failed":
-        return f"❌ {_STATUS_LABEL.get(s, s)}"
-    return f"{status_badge(s)} {_STATUS_LABEL.get(s, s)}"
+    return _STATUS_LABEL.get(status or "pending", status or "pending")
 
 
 def _to_date(value: str) -> date:
@@ -63,6 +61,10 @@ def _owned_contact_phones() -> set[str]:
         if _normalize_phone(resource["metadata"].get("phone"))
     }
 
+
+# O seletor de projeto ativo vive em `app.py`, na barra lateral: ele vale
+# para todas as paginas do projeto, nao so para esta.
+ui.inject_theme()
 
 # ------------------------------------------------------------------
 # Verificar projeto selecionado
@@ -92,29 +94,14 @@ if project and project.get("quality_thresholds"):
         pass
 
 # ------------------------------------------------------------------
-# Header
+# Cabecalho
 # ------------------------------------------------------------------
-h1, h2, h3, h4, h5 = st.columns([4, 1, 1, 1, 1])
-with h1:
-    st.title(f"🗂️ Entrevistas — {project['name']}")
-with h2:
-    st.write("")
-    if st.button("🧠 Análise Geral", width="stretch"):
-        st.switch_page("modules/prosodia/analise_geral.py")
-with h3:
-    st.write("")
-    if pode_editar and st.button("📤 Uploads", width="stretch"):
-        st.switch_page("modules/prosodia/audios.py")
-with h4:
-    st.write("")
-    if st.button("✏️ Editar", width="stretch"):
-        st.switch_page("modules/prosodia/preparacao.py")
-with h5:
-    st.write("")
-    if st.button("← Projetos", width="stretch"):
-        st.switch_page("modules/prosodia/projetos.py")
-
-st.divider()
+ui.breadcrumb("NencBoost", project["name"], "Entrevistas")
+page_title(
+    "list-bullets",
+    "Entrevistas",
+    "{} no projeto".format(len(get_audios_for_interviews(project_id))),
+)
 
 # ------------------------------------------------------------------
 # Sincronização com WhatsApp API
@@ -130,7 +117,7 @@ if wa_configured():
     campaign_id = project.get("whatsapp_campaign_id")
     api_project_id = project.get("api_project_id")
 
-    sync_label = "🔄 Sincronizar com WhatsApp"
+    sync_label = "Sincronizar com WhatsApp"
     if api_project_id:
         sync_label += f" (Projeto API #{api_project_id})"
     elif campaign_id:
@@ -270,10 +257,10 @@ if wa_configured():
 
             if not audios_to_process:
                 if processing_new_count > 0:
-                    st.success(f"✅ Sincronizado: {processing_new_count} novo(s) áudio(s) em processamento foram registrados na tabela!")
+                    st.success(f"Sincronizado: {processing_new_count} novo(s) áudio(s) em processamento foram registrados na tabela!")
                     st.rerun()
                 else:
-                    st.info("✅ Nenhum áudio novo ou concluído para sincronizar.")
+                    st.info("Nenhum áudio novo ou concluído para sincronizar.")
             else:
                 # Importações necessárias para análise automática
                 from utils.prosodia_db import (
@@ -503,7 +490,7 @@ if wa_configured():
                     progress.progress((idx + 1) / total, text=f"{session_id} concluído.")
 
                 progress.empty()
-                st.success(f"✅ {synced} áudio(s) sincronizado(s) com sucesso!")
+                st.success(f"{synced} áudio(s) sincronizado(s) com sucesso!")
                 st.rerun()
 
         except Exception as e:
@@ -516,48 +503,54 @@ audios = get_audios_for_interviews(project_id)
 
 if not audios:
     st.info("Nenhuma entrevista carregada ainda. Faça upload dos arquivos para começar.")
-    if pode_editar and st.button("📤 Ir para Uploads", type="primary"):
+    if pode_editar and st.button("Ir para Uploads", type="primary"):
         st.switch_page("modules/prosodia/audios.py")
     st.stop()
 
 # ------------------------------------------------------------------
 # Filtros
 # ------------------------------------------------------------------
-st.subheader("🔎 Busca e Filtros")
-
 all_dates = [_to_date(a.get("created_at", "")) for a in audios]
 min_date = min(all_dates) if all_dates else date.today()
 max_date = max(all_dates) if all_dates else date.today()
 
-f1, f2 = st.columns([2, 2])
+f1, f2, f3, f4, f5 = st.columns([3, 2, 2, 1.4, 1.4])
 with f1:
     search = st.text_input(
-        "Buscar por sessão/ID",
-        placeholder="Ex: entrevista_001, produtor_12...",
+        "Buscar",
+        placeholder="Buscar por sessão ou ID",
         key="en_search",
+        label_visibility="collapsed",
     ).strip().lower()
 with f2:
+    # Sem selecao = sem filtro (ver o `if status_filter and ...` abaixo).
+    # Marcar os seis por padrao nao mudava o resultado e empilhava seis selos
+    # em tres linhas, deixando o campo com o triplo da altura dos vizinhos.
     status_filter = st.multiselect(
-        "Status Geral",
+        "Status",
         options=["pass", "warn", "fail", "pending", "processing", "failed"],
-        default=["pass", "warn", "fail", "pending", "processing", "failed"],
-        format_func=lambda s: _status_text(s),
-        key="en_status_filter",
+        format_func=lambda s: _STATUS_LABEL.get(s, s),
+        key="en_status",
+        label_visibility="collapsed",
+        placeholder="Status",
     )
-
-f3, f4, f5 = st.columns([2, 1, 1])
 with f3:
     selected_period = st.date_input(
-        "Data de criação",
+        "Período",
         value=(min_date, max_date),
         min_value=min_date,
         max_value=max_date,
         key="en_date_filter",
+        label_visibility="collapsed",
     )
 with f4:
-    ai_range = st.slider("Cobertura IA (%)", 0, 100, (0, 100), key="en_ai_range")
+    ai_range = st.slider(
+        "Cobertura IA (%)", 0, 100, (0, 100), key="en_ai_range"
+    )
 with f5:
-    kw_range = st.slider("Cobertura Keywords (%)", 0, 100, (0, 100), key="en_kw_range")
+    kw_range = st.slider(
+        "Cobertura keywords (%)", 0, 100, (0, 100), key="en_kw_range"
+    )
 
 if isinstance(selected_period, tuple) and len(selected_period) == 2:
     dt_start, dt_end = selected_period
@@ -604,24 +597,44 @@ else:
         is_processing = status in ("pending", "processing", "running")
         is_failed = status == "failed"
 
-        cov_total = int(a.get("coverage_total", 0))
-        ai_found = int(a.get("coverage_ai_found", 0))
-        kw_found = int(a.get("coverage_kw_found", 0))
+        # Os pares "cobertas / %" viram uma coluna de progresso; os tres
+        # contadores de checks viram um selo unico de qualidade. O detalhe
+        # continua na aba Qualidade da entrevista.
+        quality = _STATUS_LABEL.get(status, status)
+        if not (is_processing or is_failed):
+            warn = int(a.get("checks_warn", 0))
+            fail = int(a.get("checks_fail", 0))
+            if fail:
+                quality = "{} problema(s)".format(fail)
+            elif warn:
+                quality = "{} alerta(s)".format(warn)
+            else:
+                quality = "Aprovado"
 
         rows.append({
             "Sessão": a.get("session_id", ""),
             "Data": str(a.get("created_at", ""))[:10],
-            "Duração": a.get("duration_str", "00:00") if not (is_processing or is_failed) else "—",
-            "Status Geral": _status_text(status),
-            "✅ Checks OK": int(a.get("checks_ok", 0)) if not (is_processing or is_failed) else "—",
-            "⚠️ Alertas": int(a.get("checks_warn", 0)) if not (is_processing or is_failed) else "—",
-            "❌ Problemas": int(a.get("checks_fail", 0)) if not (is_processing or is_failed) else "—",
-            "🧠 IA cobertas": f"{ai_found}/{cov_total}" if not (is_processing or is_failed) else "—",
-            "🔎 Keywords cobertas": f"{kw_found}/{cov_total}" if not (is_processing or is_failed) else "—",
-            "IA %": round(float(a.get("coverage_ai_pct", 0.0)), 1) if not (is_processing or is_failed) else "—",
-            "Keywords %": round(float(a.get("coverage_kw_pct", 0.0)), 1) if not (is_processing or is_failed) else "—",
-            "Análises": int(a.get("n_analyses", 0)) if not (is_processing or is_failed) else "—",
-            "KB": ("✅" if a.get("kb_ok") else "⚠️") if not (is_processing or is_failed) else "⏳",
+            "Duração": (
+                a.get("duration_str", "00:00")
+                if not (is_processing or is_failed)
+                else None
+            ),
+            "Qualidade": quality,
+            "Cobertura IA": (
+                float(a.get("coverage_ai_pct", 0.0)) / 100
+                if not (is_processing or is_failed)
+                else None
+            ),
+            "Keywords": (
+                float(a.get("coverage_kw_pct", 0.0)) / 100
+                if not (is_processing or is_failed)
+                else None
+            ),
+            "Análises": (
+                int(a.get("n_analyses", 0))
+                if not (is_processing or is_failed)
+                else None
+            ),
         })
 
     table_event = st.dataframe(
@@ -631,6 +644,14 @@ else:
         on_select="rerun",
         selection_mode="single-row",
         key="en_interviews_table",
+        column_config={
+            "Cobertura IA": st.column_config.ProgressColumn(
+                "Cobertura IA", format="percent", min_value=0, max_value=1
+            ),
+            "Keywords": st.column_config.ProgressColumn(
+                "Keywords", format="percent", min_value=0, max_value=1
+            ),
+        },
     )
 
     selected_rows = []
@@ -647,8 +668,7 @@ else:
 # ------------------------------------------------------------------
 # Ações da linha selecionada
 # ------------------------------------------------------------------
-st.divider()
-st.subheader("⚙️ Ações da Linha Selecionada")
+st.markdown("")
 
 if not selected_audio:
     st.info("Selecione uma linha na tabela para abrir ou excluir a entrevista.")
@@ -673,18 +693,26 @@ else:
 
     with ac1:
         help_msg_tl = "A timeline estará disponível assim que o processamento for concluído." if (is_processing or is_failed) else ""
-        if st.button("📊 Abrir Timeline", width="stretch", key=f"en_tl_{selected_id}", disabled=is_processing or is_failed, help=help_msg_tl):
+        if st.button("Timeline", width="stretch", key=f"en_tl_{selected_id}", disabled=is_processing or is_failed, help=help_msg_tl):
             st.session_state["pros_audio_id"] = selected_id
-            st.switch_page("modules/prosodia/audio_timeline.py")
+            # Cruza para o nivel da entrevista: a pagina so entra no menu no
+            # rerun seguinte, entao o salto passa por `_navigate_to`.
+            st.session_state["_navigate_to"] = (
+                "modules/prosodia/audio_timeline.py"
+            )
+            st.rerun()
     with ac2:
         help_msg_an = "A análise estará disponível assim que o processamento for concluído." if (is_processing or is_failed) else ""
-        if st.button("🤖 Abrir Análise", width="stretch", key=f"en_an_{selected_id}", disabled=is_processing or is_failed, help=help_msg_an):
+        if st.button("Análise", width="stretch", key=f"en_an_{selected_id}", disabled=is_processing or is_failed, help=help_msg_an):
             st.session_state["pros_audio_id"] = selected_id
-            st.switch_page("modules/prosodia/audio_analise.py")
+            st.session_state["_navigate_to"] = (
+                "modules/prosodia/audio_analise.py"
+            )
+            st.rerun()
             
     if is_wa and ac3 is not None:
         with ac3:
-            if st.button("🔄 Reprocessar", width="stretch", key=f"en_reproc_{selected_id}", help="Solicitar reprocessamento da transcrição e NencLex via WhatsApp API"):
+            if st.button("Reprocessar", width="stretch", key=f"en_reproc_{selected_id}", help="Solicitar reprocessamento da transcrição e NencBoost via WhatsApp API"):
                 parts = selected_audio.get("session_id", "").split("_")
                 if len(parts) >= 3:
                     try:
@@ -714,11 +742,11 @@ else:
                                 st.error(f"Erro no processamento da API: {status_info.get('error_msg') or 'Falha desconhecida'}")
                                 break
                             
-                            status_container.info(f"⏳ Processando na API (status: {job_status.upper()}). Por favor, aguarde...")
+                            status_container.info(f"Processando na API (status: {job_status.upper()}). Por favor, aguarde...")
                             time.sleep(3)
                         
                         if success:
-                            status_container.success("✅ Processamento na API concluído! Atualizando dados locais...")
+                            status_container.success("Processamento na API concluído! Atualizando dados locais...")
                             
                             # 3. Baixar resultados
                             result_json = get_audio_result(audio_api_id)
@@ -760,7 +788,7 @@ else:
                                 new_transcript_text = " ".join(new_tr_df["Text"].fillna("").astype(str).tolist()) if not new_tr_df.empty and "Text" in new_tr_df.columns else ""
                                 
                                 # 7. Atualizar Qualidade
-                                status_container.info("🔄 Atualizando verificação de qualidade...")
+                                status_container.info("Atualizando verificação de qualidade...")
                                 from utils.prosodia_db import get_project_questions, save_quality_check, save_analysis
                                 from utils.prosodia_quality import run_quality_checks, check_question_coverage_keywords, check_question_coverage_ai, merge_coverage, compute_overall_status
                                 from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
@@ -807,7 +835,7 @@ else:
                                         pass
                                 
                                 # 8. Atualizar Análise de IA
-                                status_container.info("🧠 Atualizando análise de IA...")
+                                status_container.info("Atualizando análise de IA...")
                                 new_tables_lines = []
                                 if not new_vad_df.empty and "duration" in new_vad_df.columns:
                                     new_total_s = new_vad_df["duration"].sum()
@@ -841,7 +869,7 @@ else:
                                 if openai_client and vs_id:
                                     try:
                                         analysis_md = (
-                                            f"# Análise de IA — NencLex\n\n"
+                                            f"# Análise de IA — NencBoost\n\n"
                                             f"- Sessão: {selected_audio['session_id']}\n"
                                             f"- Projeto: {project.get('name', '')}\n"
                                             f"- Modelo: gpt-4.1-mini\n\n"
@@ -859,7 +887,7 @@ else:
                                     except Exception:
                                         pass
                                 
-                                status_container.success("🎉 Áudio, transcrição, NencLex e análise reprocessados com sucesso!")
+                                status_container.success("Áudio, transcrição, NencBoost e análise reprocessados com sucesso!")
                                 time.sleep(2)
                                 st.rerun()
                             else:
@@ -868,7 +896,7 @@ else:
                         st.error(f"Ocorreu um erro no reprocessamento: {e}")
                         
     with ac4:
-        if pode_editar and st.button("🗑️ Excluir Entrevista", width="stretch", key=f"en_del_{selected_id}"):
+        if pode_editar and st.button("Excluir", width="stretch", key=f"en_del_{selected_id}"):
             st.session_state[f"confirm_del_interview_{selected_id}"] = True
 
     if st.session_state.get(f"confirm_del_interview_{selected_id}"):
@@ -877,12 +905,12 @@ else:
         )
         dc1, dc2 = st.columns(2)
         with dc1:
-            if st.button("✅ Confirmar exclusão", width="stretch", key=f"en_del_yes_{selected_id}"):
+            if st.button("Confirmar exclusão", width="stretch", key=f"en_del_yes_{selected_id}"):
                 delete_audio(selected_id)
                 st.session_state.pop(f"confirm_del_interview_{selected_id}", None)
                 st.rerun()
         with dc2:
-            if st.button("❌ Cancelar", width="stretch", key=f"en_del_no_{selected_id}"):
+            if st.button("Cancelar", width="stretch", key=f"en_del_no_{selected_id}"):
                 st.session_state.pop(f"confirm_del_interview_{selected_id}", None)
                 st.rerun()
 
@@ -891,7 +919,7 @@ else:
     with d1:
         if selected_audio.get("prosodia_json"):
             st.download_button(
-                "⬇️ Download NencLex JSON",
+                "Baixar NencBoost (JSON)",
                 data=selected_audio["prosodia_json"],
                 file_name=f"NencLex-{selected_audio.get('session_id', 'sessao')}.json",
                 mime="application/json",
@@ -901,7 +929,7 @@ else:
     with d2:
         if selected_audio.get("transcricao_csv"):
             st.download_button(
-                "⬇️ Download Transcrição CSV",
+                "Baixar transcrição (CSV)",
                 data=selected_audio["transcricao_csv"],
                 file_name=f"Transcricao-{selected_audio.get('session_id', 'sessao')}.csv",
                 mime="text/csv",

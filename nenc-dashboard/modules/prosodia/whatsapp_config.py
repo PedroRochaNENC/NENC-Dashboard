@@ -8,7 +8,8 @@ testar a conectividade e visualizar informações de diagnóstico.
 import os
 from pathlib import Path
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_admin(platform_only=True)
 
@@ -28,19 +29,17 @@ _ENV_PATH = next(
 # Garantir carregamento das variáveis
 load_dotenv(_ENV_PATH)
 
-st.title("⚙️ Configuração da WhatsApp API")
+ui.inject_theme()
+ui.breadcrumb("NencBoost", "Coleta via WhatsApp", "Config API")
+page_title(
+    "gear-six",
+    "Config API",
+    "Endereço e credenciais do serviço de coleta.",
+)
 st.markdown(
     "Configure os parâmetros de integração com o serviço **NencProsodiaWhatsapp-API** "
     "para habilitar o envio de campanhas, cadastro de contatos e importação automática de áudios."
 )
-
-# Botão Voltar para Projetos
-nav_col, _ = st.columns([2, 8])
-with nav_col:
-    if st.button("← Projetos", width='stretch'):
-        st.switch_page("modules/prosodia/projetos.py")
-
-st.divider()
 
 # Ler valores atuais
 current_url = os.getenv("WHATSAPP_API_URL", "")
@@ -84,7 +83,7 @@ st.divider()
 col_form, col_status = st.columns([6, 4])
 
 with col_form:
-    st.subheader("🔑 Credenciais da API")
+    st.subheader("Credenciais da API")
     with st.form("form_whatsapp_config"):
         api_url = st.text_input(
             "URL da API de WhatsApp",
@@ -100,7 +99,7 @@ with col_form:
             help="Token de segurança exigido pela API para validar as requisições.",
         )
         
-        submitted = st.form_submit_button("💾 Salvar Configurações", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Salvar Configurações", type="primary", use_container_width=True)
 
     if submitted:
         url_stripped = api_url.strip().strip("'\"").rstrip("/")
@@ -117,16 +116,16 @@ with col_form:
             # Credenciais novas: descartar o diagnóstico de conexão em cache.
             st.session_state.pop("wa_conn_check", None)
 
-            st.success("✅ Configurações salvas e aplicadas com sucesso!")
+            st.success("Configurações salvas e aplicadas com sucesso!")
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar configurações no arquivo .env: {e}")
 
 with col_status:
-    st.subheader("📡 Status da Conexão")
+    st.subheader("Status da Conexão")
     
     if not is_configured():
-        st.warning("⚠️ API não configurada. Preencha os campos ao lado e salve.")
+        st.warning("API não configurada. Preencha os campos ao lado e salve.")
     else:
         # Card de status
         with st.container(border=True):
@@ -134,7 +133,7 @@ with col_status:
 
             # Botão de teste. O resultado fica em cache na sessão para não
             # disparar uma requisição HTTP a cada rerun do Streamlit.
-            if st.button("🔌 Testar Conexão Agora", type="secondary", use_container_width=True):
+            if st.button("Testar Conexão Agora", type="secondary", use_container_width=True):
                 st.session_state["wa_conn_check"] = test_connection()
 
             if "wa_conn_check" not in st.session_state:
@@ -142,34 +141,14 @@ with col_status:
 
             success, msg = st.session_state["wa_conn_check"]
             if success:
-                st.success(f"✅ Conectado com sucesso!\n\n**Detalhe:** {msg}")
+                st.success(f"Conectado com sucesso!\n\n**Detalhe:** {msg}")
             else:
-                st.error(f"❌ Falha de conexão!\n\n**Detalhe:** {msg}")
+                st.error(f"Falha de conexão!\n\n**Detalhe:** {msg}")
 
             if success:
-                st.markdown(
-                    """
-                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 10px; background-color: rgba(46, 204, 113, 0.15); border-radius: 5px; border-left: 5px solid #2ecc71;">
-                        <span style="height: 12px; width: 12px; background-color: #2ecc71; border-radius: 50%; display: inline-block; animation: pulse 1.5s infinite;"></span>
-                        <strong style="color: #2ecc71;">API ONLINE & AUTENTICADA</strong>
-                    </div>
-                    <style>
-                    @keyframes pulse {
-                        0% { transform: scale(0.9); opacity: 0.7; }
-                        50% { transform: scale(1.1); opacity: 1; }
-                        100% { transform: scale(0.9); opacity: 0.7; }
-                    }
-                    </style>
-                    """,
-                    unsafe_allow_html=True
+                banner = ui.status_chip(
+                    "plug", "API online e autenticada", tone="accent"
                 )
             else:
-                st.markdown(
-                    """
-                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 10px; background-color: rgba(231, 76, 60, 0.15); border-radius: 5px; border-left: 5px solid #e74c3c;">
-                        <span style="height: 12px; width: 12px; background-color: #e74c3c; border-radius: 50%; display: inline-block;"></span>
-                        <strong style="color: #e74c3c;">API INDISPONÍVEL / ERRO</strong>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                banner = ui.status_chip("plug", "API indisponível ou com erro")
+            st.markdown(banner, unsafe_allow_html=True)

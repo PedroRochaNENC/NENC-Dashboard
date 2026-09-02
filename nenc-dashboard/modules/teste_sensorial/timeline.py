@@ -3,7 +3,8 @@ Teste Sensorial — Timeline sincronizada por participante ou média geral.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("teste_sensorial")
 
@@ -34,13 +35,18 @@ DEFAULT_ON = {"atencao", "WTP", "assimetria"}
 
 hydrate_session_state("teste_sensorial", ("ts_data",))
 
-st.title("📊 Timeline Sincronizada")
+ui.inject_theme()
+ui.breadcrumb("Teste Sensorial", "Sinais", "Timeline")
+page_title(
+    "chart-line",
+    "Timeline Sincronizada",
+)
 
 data = st.session_state.get("ts_data", {})
 
 if not data or "indicadores" not in data:
     st.warning(
-        "⚠️ Nenhum dado carregado. "
+        "Nenhum dado carregado. "
         "Volte à página de Preparação de Dados e carregue os dados."
     )
     st.stop()
@@ -54,7 +60,7 @@ participants = get_participants(data)
 # Sidebar
 # ------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Controles")
+    st.header("Controles")
 
     view_mode = st.radio("Visualização", ["Individual", "Média geral"])
 
@@ -147,7 +153,7 @@ st.plotly_chart(fig, width='stretch')
 # ------------------------------------------------------------------
 # Resumo estatístico
 # ------------------------------------------------------------------
-with st.expander("📋 Resumo estatístico por Etapa"):
+with st.expander("Resumo estatístico por Etapa"):
     skip = {
         "filename", "Etapa", "Codigo", "Tempo",
         "Tempo_global", "Etapa_inicio", "Etapa_fim",

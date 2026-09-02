@@ -6,7 +6,8 @@ listagem, exclusão e busca RAG de laudos e pesquisas sensoriais.
 """
 
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("teste_sensorial")
 
@@ -15,13 +16,19 @@ from utils.ai_provider import get_openai_client
 
 teste_sensorial_db.init_db()
 
-st.title("📚 Base de Conhecimento — Teste Sensorial")
+ui.inject_theme()
+ui.breadcrumb("Teste Sensorial", "Base de Conhecimento")
+page_title(
+    "books",
+    "Base de Conhecimento",
+    "Documentos usados como contexto pela IA.",
+)
 
 project_id = st.session_state.get("ts_project_id")
 
 if not project_id:
-    st.warning("⚠️ Nenhum projeto selecionado. Selecione ou crie um projeto primeiro.")
-    if st.button("🧪 Ir para Projetos", type="primary"):
+    st.warning("Nenhum projeto selecionado. Selecione ou crie um projeto primeiro.")
+    if st.button("Ir para Projetos", type="primary"):
         st.switch_page("modules/teste_sensorial/projetos.py")
     st.stop()
 
@@ -36,7 +43,7 @@ client = get_openai_client()
 
 if client is None:
     st.error(
-        "⚠️ API OpenAI não configurada. "
+        "API OpenAI não configurada. "
         "Defina **OPENAI_API_KEY** no arquivo `.env` e reinicie o app."
     )
     st.stop()
@@ -44,7 +51,7 @@ if client is None:
 # ==================================================================
 # Seção 1: Configuração do Vector Store
 # ==================================================================
-st.subheader("⚙️ Vector Store do Projeto")
+st.subheader("Vector Store do Projeto")
 
 vs_id = project.get("vector_store_id")
 
@@ -52,7 +59,7 @@ if vs_id:
     st.success(f"Vector Store ativo para o projeto: `{vs_id}`")
 else:
     st.warning("Este projeto ainda não possui um Vector Store para busca RAG.")
-    if st.button("➕ Criar Vector Store para este Projeto", type="primary"):
+    if st.button("Criar Vector Store para este Projeto", type="primary"):
         with st.spinner("Criando vector store..."):
             try:
                 vs = client.vector_stores.create(name=f"TS - {project['name']}")
@@ -67,7 +74,7 @@ else:
 # Seção 2: Upload de Documentos
 # ==================================================================
 st.divider()
-st.subheader("📤 Upload de Documentos de Produto / Laudos")
+st.subheader("Upload de Documentos de Produto / Laudos")
 
 uploaded_files = st.file_uploader(
     "Selecione laudos sensoriais, pesquisas ou fichas técnicas",
@@ -77,7 +84,7 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    if st.button("📤 Indexar Documentos na Base do Projeto", type="primary"):
+    if st.button("Indexar Documentos na Base do Projeto", type="primary"):
         progress = st.progress(0)
         for i, f in enumerate(uploaded_files):
             with st.spinner(f"Enviando {f.name}..."):
@@ -90,9 +97,9 @@ if uploaded_files:
                         vector_store_id=vs_id,
                         file_id=uploaded.id,
                     )
-                    st.success(f"✅ {f.name} indexado")
+                    st.success(f"{f.name} indexado")
                 except Exception as e:
-                    st.error(f"❌ Erro ao enviar {f.name}: {e}")
+                    st.error(f"Erro ao enviar {f.name}: {e}")
             progress.progress((i + 1) / len(uploaded_files))
         st.rerun()
 
@@ -100,7 +107,7 @@ if uploaded_files:
 # Seção 3: Documentos na Base
 # ==================================================================
 st.divider()
-st.subheader("📋 Documentos Indexados no Projeto")
+st.subheader("Documentos Indexados no Projeto")
 
 try:
     vs_files = client.vector_stores.files.list(vector_store_id=vs_id)
@@ -124,7 +131,7 @@ if file_list:
             size_kb = 0
 
         with col_name:
-            st.text(f"📄 {filename} ({size_kb:.1f} KB)")
+            st.text(f"{filename} ({size_kb:.1f} KB)")
 
         with col_status:
             status = vf.status
@@ -153,7 +160,7 @@ else:
 # Seção 4: Testar Busca RAG
 # ==================================================================
 st.divider()
-st.subheader("🔍 Testar Busca RAG")
+st.subheader("Testar Busca RAG")
 
 test_query = st.text_input(
     "Digite uma pergunta para consultar na base do projeto",
@@ -181,7 +188,7 @@ if test_query and st.button("Buscar", key="btn_ts_kb_search"):
                             st.markdown(content_block.text)
                             for ann in getattr(content_block, "annotations", []):
                                 if ann.type == "file_citation":
-                                    st.caption(f"📎 Fonte: {getattr(ann, 'filename', 'arquivo')}")
+                                    st.caption(f"Fonte: {getattr(ann, 'filename', 'arquivo')}")
         except Exception as e:
             st.error(f"Erro na busca: {e}")
 
@@ -192,9 +199,9 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("⬅️ Voltar aos Dados", use_container_width=True):
+    if st.button("Voltar aos Dados", use_container_width=True):
         st.switch_page("modules/teste_sensorial/preparacao.py")
 
 with col_nav2:
-    if st.button("Avançar para Análise ➡️", use_container_width=True, type="primary"):
+    if st.button("Avançar para Análise", use_container_width=True, type="primary"):
         st.switch_page("modules/teste_sensorial/analise.py")

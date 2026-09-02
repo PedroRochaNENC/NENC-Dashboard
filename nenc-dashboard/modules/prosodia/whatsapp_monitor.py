@@ -45,6 +45,8 @@ from utils.ai_provider import (
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils import ui
+from utils.icons import page_title
 from utils.organization_data import (
     claim_external_resource,
     list_external_resources,
@@ -53,11 +55,11 @@ from utils.organization_data import (
 
 
 _STATUS_EMOJIS = {
-    "pending": "🟡 Pendente",
-    "processing": "🔵 Processando",
-    "done": "🟢 Concluído",
-    "failed": "🔴 Falhou",
-    "not_processed": "⚪ Não Processado",
+    "pending": "Pendente",
+    "processing": "Processando",
+    "done": "Concluído",
+    "failed": "Falhou",
+    "not_processed": "Não Processado",
 }
 
 
@@ -144,23 +146,18 @@ def _owned_audios(
                 audios_by_id[str(audio.get("id"))] = audio
     return list(audios_by_id.values())[:limit]
 
-st.title("📡 Monitor de Áudios e Jobs")
-st.markdown(
-    "Monitore os áudios recebidos via WhatsApp, acompanhe o status de transcrição/análise (DevAIce e Whisper) "
-    "e importe novos áudios processados para seus projetos do dashboard."
+# A navegacao de volta vive no menu lateral, na seccao "Coleta via WhatsApp".
+ui.inject_theme()
+ui.breadcrumb("NencBoost", "Coleta via WhatsApp", "Monitor")
+page_title(
+    "broadcast",
+    "Monitor",
+    "Áudios recebidos e jobs de transcrição e análise.",
 )
 
-# Botão Voltar para Projetos
-nav_col, _ = st.columns([2, 8])
-with nav_col:
-    if st.button("← Projetos", width='stretch'):
-        st.switch_page("modules/prosodia/projetos.py")
-
-st.divider()
-
 if not is_configured():
-    st.warning("⚠️ API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
-    if st.button("⚙️ Ir para Configurações", type="primary"):
+    st.warning("API de WhatsApp não está configurada. Configure a URL e a Chave de API primeiro.")
+    if st.button("Ir para Configurações", type="primary"):
         st.switch_page("modules/prosodia/whatsapp_config.py")
     st.stop()
 
@@ -169,10 +166,7 @@ owned_api_project_ids = _owned_api_project_ids(projects)
 owned_contact_ids_by_phone = _owned_contact_ids_by_phone()
 
 # Abas do Monitor
-tab_audios, tab_jobs = st.tabs([
-    "🎙️ Áudios Recebidos",
-    "⚙️ Jobs de Processamento"
-])
+tab_audios, tab_jobs = st.tabs(["Áudios recebidos", "Jobs de processamento"])
 
 # ---------------------------------------------------------------------------
 # TAB 1: Áudios Recebidos & Importação
@@ -204,11 +198,16 @@ with tab_audios:
             dados_enriquecidos = []
             for a in audios_api:
                 status_info = get_audio_status(a["id"])
+                seconds = int(
+                    a.get("duration_sec") or status_info.get("duration_sec") or 0
+                )
                 dados_enriquecidos.append({
                     "ID": a["id"],
                     "Telefone": a.get("contact_phone", ""),
+                    # Dado de depuracao: fica no quadro porque a importacao le
+                    # esta coluna, mas sai da tabela via `column_order`.
                     "Mensagem ID": a.get("whatsapp_message_id", ""),
-                    "Duração (s)": a.get("duration_sec") or status_info.get("duration_sec") or 0.0,
+                    "Duração": "{:02d}:{:02d}".format(seconds // 60, seconds % 60),
                     "Status": status_info.get("status", "desconhecido"),
                     "Data": a.get("received_at", "")
                 })
@@ -223,6 +222,41 @@ with tab_audios:
                 lambda value: _STATUS_EMOJIS.get(value, value)
             )
             
+            # Contadores no topo: a pergunta que traz o usuario a esta pagina.
+            imported_ids = {
+                local_audio.get("whatsapp_message_id")
+                for local_project in projects
+                for local_audio in get_audios(local_project["id"])
+                if local_audio.get("whatsapp_message_id")
+            }
+            ready = sum(
+                1 for item in dados_enriquecidos if item["Status"] == "done"
+            )
+            processing = sum(
+                1
+                for item in dados_enriquecidos
+                if item["Status"] in ("pending", "processing")
+            )
+            imported = sum(
+                1
+                for item in dados_enriquecidos
+                if item["Mensagem ID"] and item["Mensagem ID"] in imported_ids
+            )
+            failed = sum(
+                1 for item in dados_enriquecidos if item["Status"] == "failed"
+            )
+
+            for column, (label, value) in zip(
+                st.columns(4),
+                (
+                    ("Prontos p/ importar", ready),
+                    ("Processando", processing),
+                    ("Já importados", imported),
+                    ("Com falha", failed),
+                ),
+            ):
+                column.metric(label, value)
+
             st.markdown("### Selecione os áudios prontos (Concluídos) para importar")
             
             # Tabela interativa com checkbox de seleção múltipla usando st.data_editor
@@ -235,7 +269,10 @@ with tab_audios:
                 df_selecionavel,
                 use_container_width=True,
                 hide_index=True,
-                disabled=["ID", "Telefone", "Mensagem ID", "Duração (s)", "Status", "Data"],
+                column_order=(
+                    "Importar", "ID", "Telefone", "Duração", "Status", "Data"
+                ),
+                disabled=["ID", "Telefone", "Mensagem ID", "Duração", "Status", "Data"],
                 key="editor_importacao"
             )
             
@@ -244,7 +281,7 @@ with tab_audios:
             
             if not selecionados.empty:
                 st.markdown("---")
-                st.subheader("📥 Ação: Importar Selecionados")
+                st.subheader("Ação: Importar Selecionados")
                 
                 # Selecionar o projeto destino
                 projetos = projects
@@ -261,7 +298,7 @@ with tab_audios:
                     with col_action_btn:
                         st.write("")
                         st.write("")
-                        if st.button("📥 Importar para Projeto", type="primary", use_container_width=True):
+                        if st.button("Importar para Projeto", type="primary", use_container_width=True):
                             project_id = projeto_destino["id"]
                             project = projeto_destino
                             
@@ -297,11 +334,11 @@ with tab_audios:
                                 prog_bar.progress((i + 1) / total_imp, text=f"Importando {session_id} ({i+1}/{total_imp})…")
                                 
                                 if "Concluído" not in status_txt:
-                                    st.warning(f"⚠️ Áudio {session_id} não está pronto. Pulando.")
+                                    st.warning(f"Áudio {session_id} não está pronto. Pulando.")
                                     continue
                                 
                                 if wa_msg_id in existing_wa_ids:
-                                    st.info(f"ℹ️ Áudio {session_id} já importado anteriormente. Pulando.")
+                                    st.info(f"Áudio {session_id} já importado anteriormente. Pulando.")
                                     pulados_count += 1
                                     continue
 
@@ -311,7 +348,7 @@ with tab_audios:
                                 }
                                 if str(audio_api_id) not in owned_audio_ids:
                                     st.warning(
-                                        f"⚠️ Áudio {session_id} não pertence mais à organização ativa. Pulando."
+                                        f"Áudio {session_id} não pertence mais à organização ativa. Pulando."
                                     )
                                     pulados_count += 1
                                     continue
@@ -455,7 +492,7 @@ with tab_audios:
                                     st.error(f"Erro ao processar importação do áudio {session_id}: {e}")
                                     
                             st.success(
-                                f"🎉 Importação concluída!\n\n"
+                                f"Importação concluída!\n\n"
                                 f"- **Sucessos:** {sucesso_count}\n"
                                 f"- **Pulados/Existentes:** {pulados_count}"
                             )

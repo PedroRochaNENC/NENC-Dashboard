@@ -13,7 +13,8 @@ import secrets
 import threading
 import time
 import streamlit as st
-from utils import auth
+from utils import auth, ui
+from utils.icons import page_title
 
 auth.require_module("prosodia")
 
@@ -23,6 +24,7 @@ import html
 from utils.prosodia_db import init_db, get_audio, get_project
 from utils.prosodia_loader import load_prosodia_from_uploads
 from utils.organization_data import list_external_resources
+from utils.charts import NENC_SEQUENCE
 from utils.prosodia_charts import (
     create_vad_timeline,
     create_speaker_stats,
@@ -122,16 +124,15 @@ focus_active = bool(
     and (focus.get("seconds") is not None or focus.get("timestamp"))
 )
 
-# Header
-h1, h2 = st.columns([6, 1])
-with h1:
-    st.title(f"📊 Timeline — {sid}")
-    if project:
-        st.caption(f"Projeto: {project.get('name', '')}")
-with h2:
-    st.write("")
-    if st.button("← Entrevistas", width='stretch'):
-        st.switch_page("modules/prosodia/entrevistas.py")
+# Cabecalho — a navegacao de volta vive no menu lateral e na trilha.
+ui.inject_theme()
+ui.breadcrumb("NencBoost", project.get("name", ""), "Entrevistas", sid)
+_duracao = audio.get("duration_str")
+page_title(
+    "chart-line",
+    "Timeline",
+    "{} · {}".format(sid, _duracao) if _duracao else sid,
+)
 
 if focus_active:
     focus_question = str(focus.get("question", ""))
@@ -142,7 +143,7 @@ if focus_active:
     where_txt = f"{focus_seconds:.1f}s" if isinstance(focus_seconds, (int, float)) else (focus_ts or "tempo não informado")
 
     st.info(
-        "🎯 Momento localizado na transcrição"
+        "Momento localizado na transcrição"
         f"\n\nPergunta: {focus_question}"
         f"\nFonte usada: {focus_source}"
         f"\nMomento: {where_txt}"
@@ -207,7 +208,7 @@ for err in data.get("_errors", []):
 # Sidebar
 # ------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Controles")
+    st.header("Controles")
 
     # Filtro de locutores
     all_speakers = []
@@ -252,7 +253,7 @@ if focus_active and isinstance(focus.get("seconds"), (int, float)):
 if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     # Obter speaker colors mapeadas para o widget
     all_speakers_list = sorted(tr_df["SpeakerName"].dropna().unique().tolist())
-    SPEAKER_COLORS = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3", "#FF6692", "#B6E880"]
+    SPEAKER_COLORS = list(NENC_SEQUENCE)
     spk_color_map = {spk: SPEAKER_COLORS[i % len(SPEAKER_COLORS)] for i, spk in enumerate(all_speakers_list)}
 
     # Formatar transcrição ordenada por tempo
@@ -342,8 +343,8 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 threading.Thread(target=download_bg, daemon=True).start()
 
         audio_html = f"""
-        <div id="audio-loading-placeholder" style="padding: 12px; background: #21262d; border-radius: 8px; margin-bottom: 15px; color: #8b949e; text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
-          <span class="spinner" style="width: 16px; height: 16px; border: 2px solid #8b949e; border-top-color: transparent; border-radius: 50%; display: inline-block; animation: spin 1s linear infinite;"></span>
+        <div id="audio-loading-placeholder" style="padding: 12px; background: var(--nenc-bg); border-radius: 8px; margin-bottom: 15px; color: var(--nenc-muted); text-align: center; display: flex; align-items: center; justify-content: center; gap: 10px;">
+          <span class="spinner" style="width: 16px; height: 16px; border: 2px solid var(--nenc-muted); border-top-color: transparent; border-radius: 50%; display: inline-block; animation: spin 1s linear infinite;"></span>
           <span>Carregando áudio da API...</span>
         </div>
         <audio id="audio-player" controls style="width: 100%; margin-bottom: 15px; border-radius: 8px; display: none;">
@@ -354,7 +355,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
         </style>
         """
     else:
-        audio_html = '<div style="padding: 10px; background: #262730; border-radius: 8px; margin-bottom: 15px; color: #808495; text-align: center;">Áudio disponível apenas para sincronização WhatsApp API (manual upload)</div>'
+        audio_html = '<div style="padding: 10px; background: var(--nenc-bg); border-radius: 8px; margin-bottom: 15px; color: var(--nenc-muted); text-align: center;">Áudio disponível apenas para sincronização WhatsApp API (manual upload)</div>'
 
     # Gerar os elementos HTML de cada turno
     html_turns = []
@@ -365,12 +366,12 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
         escaped_timestamp = html.escape(str(item["timestamp"]))
         escaped_color = html.escape(str(item["color"]), quote=True)
         html_turns.append(
-            f'<div class="transcript-turn" id="turn-{idx}" data-seconds="{item["seconds"]}" data-end="{item["end_seconds"]}" data-color="{escaped_color}" style="padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid transparent; background-color: #21262d; transition: all 0.25s ease;">'
+            f'<div class="transcript-turn" id="turn-{idx}" data-seconds="{item["seconds"]}" data-end="{item["end_seconds"]}" data-color="{escaped_color}" style="padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid transparent; background-color: var(--nenc-bg); transition: all 0.25s ease;">'
             f'  <div style="font-weight: bold; color: {escaped_color}; font-size: 0.9em; margin-bottom: 4px; display: flex; justify-content: space-between;">'
             f'    <span>{escaped_speaker}</span>'
-            f'    <span style="font-weight: normal; color: #8b949e; font-size: 0.85em;">{escaped_timestamp}</span>'
+            f'    <span style="font-weight: normal; color: var(--nenc-muted); font-size: 0.85em;">{escaped_timestamp}</span>'
             f'  </div>'
-            f'  <div style="color: #c9d1d9; font-size: 0.95em; line-height: 1.45;">{escaped_text}</div>'
+            f'  <div style="color: var(--nenc-text); font-size: 0.95em; line-height: 1.45;">{escaped_text}</div>'
             f'</div>'
         )
 
@@ -383,10 +384,11 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
         <meta charset="utf-8">
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
+            __THEME_VARS__
             body {
-                background-color: #0e1117;
-                color: #c9d1d9;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                background-color: var(--nenc-bg);
+                color: var(--nenc-text);
+                font-family: Inter, system-ui, -apple-system, sans-serif;
                 margin: 0;
                 padding: 0;
                 overflow: hidden;
@@ -420,13 +422,13 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 flex: 1;
                 overflow-y: auto;
                 padding: 15px;
-                border: 1px solid #30363d;
+                border: 1px solid var(--nenc-border);
                 border-radius: 8px;
-                background-color: #161b22;
+                background-color: var(--nenc-surface);
             }
             .chart-wrapper {
-                background-color: #161b22;
-                border: 1px solid #30363d;
+                background-color: var(--nenc-surface);
+                border: 1px solid var(--nenc-border);
                 border-radius: 8px;
                 padding: 15px;
                 position: relative;
@@ -436,7 +438,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 font-size: 0.9em;
                 font-weight: bold;
                 margin-bottom: 8px;
-                color: #8b949e;
+                color: var(--nenc-muted);
             }
             .transcript-turn {
                 cursor: pointer;
@@ -444,14 +446,14 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 margin-bottom: 8px;
                 border-radius: 6px;
                 border-left: 4px solid transparent;
-                background-color: #21262d;
+                background-color: var(--nenc-bg);
                 transition: all 0.25s ease;
             }
             .transcript-turn:hover {
-                background-color: #30363d !important;
+                background-color: var(--nenc-border) !important;
             }
             .transcript-turn.active {
-                background-color: #1f2937 !important;
+                background-color: var(--nenc-accent-800) !important;
                 box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
             }
             ::-webkit-scrollbar {
@@ -459,14 +461,14 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 height: 6px;
             }
             ::-webkit-scrollbar-track {
-                background: #161b22;
+                background: var(--nenc-surface);
             }
             ::-webkit-scrollbar-thumb {
-                background: #30363d;
+                background: var(--nenc-border);
                 border-radius: 3px;
             }
             ::-webkit-scrollbar-thumb:hover {
-                background: #8b949e;
+                background: var(--nenc-muted);
             }
         </style>
     </head>
@@ -537,7 +539,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                             ctx.moveTo(xPos, yScale.top);
                             ctx.lineTo(xPos, yScale.bottom);
                             ctx.lineWidth = 2;
-                            ctx.strokeStyle = '#FFD166';
+                            ctx.strokeStyle = 'var(--nenc-text)';
                             ctx.stroke();
                             ctx.restore();
                         }
@@ -576,7 +578,9 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                     }),
                     borderColor: color,
                     backgroundColor: color + '15',
-                    borderWidth: 2,
+                    // Series longas chegam a milhares de pontos em ~860px;
+                    // com 2px os tracos se fundem numa mancha.
+                    borderWidth: 1.5,
                     tension: 0.3,
                     pointRadius: 0,
                     pointHoverRadius: 5,
@@ -615,18 +619,18 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                                     display: false
                                 },
                                 grid: {
-                                    color: '#30363d'
+                                    color: 'var(--nenc-border)'
                                 },
                                 ticks: {
-                                    color: '#8b949e'
+                                    color: 'var(--nenc-muted)'
                                 }
                             },
                             y: {
                                 grid: {
-                                    color: '#30363d'
+                                    color: 'var(--nenc-border)'
                                 },
                                 ticks: {
-                                    color: '#8b949e'
+                                    color: 'var(--nenc-muted)'
                                 }
                             }
                         },
@@ -635,7 +639,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                                 position: 'top',
                                 align: 'end',
                                 labels: {
-                                    color: '#c9d1d9',
+                                    color: 'var(--nenc-text)',
                                     boxWidth: 12,
                                     font: {
                                         size: 11
@@ -675,32 +679,33 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
 
             // Instantiation
             const f0Datasets = [
-                getDataset('Média (Hz)', 'f0_media', '#00CC96'),
-                getDataset('Mín (Hz)', 'f0_min', '#636EFA'),
-                getDataset('Máx (Hz)', 'f0_max', '#EF553B')
+                // Cores de utils.charts.NENC_SEQUENCE: uma matiz por serie.
+                getDataset('Média (Hz)', 'f0_media', '#9184d9'),
+                getDataset('Mín (Hz)', 'f0_min', '#6aa9d9'),
+                getDataset('Máx (Hz)', 'f0_max', '#e9c46a')
             ].filter(d => d !== null);
 
             const loudnessDatasets = [
-                getDataset('Média', 'loudness_media', '#AB63FA'),
-                getDataset('Variação', 'loudness_variacao', '#FFA15A')
+                getDataset('Média', 'loudness_media', '#9184d9'),
+                getDataset('Variação', 'loudness_variacao', '#e9c46a')
             ].filter(d => d !== null);
 
             const emotionsDatasets = [
-                getDataset('Neutro', 'emocao_neutral', '#808495'),
-                getDataset('Feliz', 'emocao_happy', '#FFD166'),
-                getDataset('Triste', 'emocao_sad', '#19D3F3'),
-                getDataset('Raiva', 'emocao_angry', '#FF6692')
+                getDataset('Neutro', 'emocao_neutral', 'var(--nenc-muted)'),
+                getDataset('Feliz', 'emocao_happy', '#e9c46a'),
+                getDataset('Triste', 'emocao_sad', '#6aa9d9'),
+                getDataset('Raiva', 'emocao_angry', '#e0748b')
             ].filter(d => d !== null);
 
             const dimensionsDatasets = [
-                getDataset('Valência', 'dim_valence', '#00CC96'),
-                getDataset('Arousal', 'dim_arousal', '#EF553B'),
-                getDataset('Dominância', 'dim_dominance', '#AB63FA')
+                getDataset('Valência', 'dim_valence', '#5fbf9f'),
+                getDataset('Arousal', 'dim_arousal', '#e0748b'),
+                getDataset('Dominância', 'dim_dominance', '#d98d5f')
             ].filter(d => d !== null);
 
             const temporalDatasets = [
-                getDataset('Taxa de Fala', 'speaking_rate', '#FFA15A'),
-                getDataset('Entonação', 'intonation_score', '#19D3F3')
+                getDataset('Taxa de Fala', 'speaking_rate', '#9184d9'),
+                getDataset('Entonação', 'intonation_score', '#5fbf9f')
             ].filter(d => d !== null);
 
             const charts = [];
@@ -818,7 +823,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                             setTimeout(tryLoadAudio, 2000);
                         } else {
                             if (placeholder) {
-                                placeholder.innerHTML = '<span style="color: #ff8080;">Erro ao carregar o áudio (Timeout)</span>';
+                                placeholder.innerHTML = '<span style="color: var(--nenc-accent-400);">Erro ao carregar o áudio (Timeout)</span>';
                             }
                         }
                     });
@@ -867,6 +872,11 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     """
 
     # Realizar as substituições no template HTML
+    # O iframe não herda o estilo da página: carrega os tokens no próprio <style>.
+    widget_html = widget_html.replace("__THEME_VARS__", ui.css_variables())
+    # O <canvas> nao resolve var(); as cores que vao para o Chart.js precisam
+    # do hex literal, senao o contexto 2D as rejeita e desenha tudo em preto.
+    widget_html = ui.resolve_js_colors(widget_html)
     widget_html = widget_html.replace("__AUDIO_HTML__", audio_html)
     widget_html = widget_html.replace("__TURNS_JOINED__", turns_joined)
     widget_html = widget_html.replace("__ACOUSTIC_DATA__", sinc_json)
@@ -882,7 +892,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     # Outras Visualizações (Estáticas)
     # ------------------------------------------------------------------
     st.write("")
-    with st.expander("📊 Outras Visualizações (Estáticas)", expanded=False):
+    with st.expander("Outras visualizações", expanded=False):
         # Chart 1: VAD Timeline
         if not vad_df.empty:
             fig_vad = create_vad_timeline(vad_df, session_id=sid, title=f"VAD — {sid}")
