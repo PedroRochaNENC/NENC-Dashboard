@@ -40,6 +40,23 @@ MODULES = (
 )
 
 
+def _module_of_route(url_path: str) -> str | None:
+    """Módulo dono de uma rota, ou None para Visão geral e Administração."""
+    for entry in MODULES:
+        if url_path.startswith(entry[0].replace("_", "-") + "-"):
+            return entry[0]
+    return None
+
+
+def _other_modules(user: auth.User) -> list:
+    """Módulos que a conta alcança, tirando o que já está aberto."""
+    active = st.session_state.get("modulo")
+    return [
+        entry for entry in MODULES
+        if entry[0] != active and auth.can_access_module(user, entry[0])
+    ]
+
+
 def _url_path(path: str) -> str:
     """Rota unica a partir do caminho do arquivo.
 
@@ -184,10 +201,6 @@ def _build_pages(user: auth.User) -> dict[str, list]:
         st.session_state.pop("modulo", None)
         active_module = None
 
-    accessible = [
-        entry for entry in MODULES if auth.can_access_module(user, entry[0])
-    ]
-
     pages: dict[str, list] = {
         "": [
             st.Page(
@@ -195,17 +208,16 @@ def _build_pages(user: auth.User) -> dict[str, list]:
                 title="Visão geral",
                 icon=material("squares-four"),
                 default=True,
-            )
+            ),
+            # Entradas dos outros módulos: registradas para o `st.page_link`
+            # da barra lateral poder alcançá-las, e ocultas do menu. Uma
+            # seção própria renderizava só o cabeçalho, sem os itens.
+            *(
+                _page(entry[3], entry[1], entry[2], visibility="hidden")
+                for entry in _other_modules(user)
+            ),
         ]
     }
-
-    # Os módulos aos quais a conta tem acesso ficam sempre no menu, tanto
-    # para abrir o primeiro quanto para trocar sem voltar à Visão geral.
-    others = [entry for entry in accessible if entry[0] != active_module]
-    if others:
-        pages["Módulos"] = [
-            _page(entry[3], entry[1], entry[2]) for entry in others
-        ]
 
     if active_module:
         pages.update(_module_pages(active_module, user))
@@ -260,6 +272,26 @@ def _render_project_context(user: auth.User) -> None:
     )
 
 
+def _render_module_links(user: auth.User) -> None:
+    """Troca de módulo na barra lateral, sobre as páginas ocultas.
+
+    Roda depois do `st.navigation`: o `st.page_link` exige que a página já
+    esteja registrada nesta execução.
+    """
+    others = _other_modules(user)
+    if not others:
+        return
+    with st.sidebar:
+        st.markdown(
+            '<div style="font-size:.6rem;letter-spacing:.12em;'
+            'text-transform:uppercase;color:var(--nenc-faint);'
+            'padding:.7rem 0 .1rem">Módulos</div>',
+            unsafe_allow_html=True,
+        )
+        for _key, label, icon_name, path in others:
+            st.page_link(path, label=label, icon=material(icon_name))
+
+
 def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
     active_organization_id = auth.active_organization_id(user)
     state_key = "_nenc_ui_state_organization_id"
@@ -307,13 +339,27 @@ _clear_organization_ui_state_if_needed(authenticated_user)
 # O seletor roda antes de montar o menu: trocar de projeto precisa valer já
 # nesta execução, e não só no rerun seguinte.
 _render_project_context(authenticated_user)
-auth.render_auth_sidebar(authenticated_user)
 
 # `expanded=True` e obrigatorio aqui. No padrao (`False`) o Streamlit colapsa
 # o menu para caber na altura da barra lateral e esconde o excedente: com as
 # 14 paginas mais o seletor de projeto e o cartao de sessao, sobravam 10 itens
 # e a seccao "Administracao" sumia inteira.
 pg = st.navigation(_build_pages(authenticated_user), expanded=True)
+
+# O modulo ativo deriva da pagina que o menu resolveu. Chegar por
+# `st.page_link` ou por URL colada nao passa pela Visao geral, e sem isto o
+# menu continuaria expandindo o modulo anterior. O rerun so acontece na
+# troca; na execucao seguinte a condicao ja e falsa. Fica aqui, e nao em
+# `auth.require_module`, porque aquela funcao tambem autoriza leitura de
+# dados — a Visao geral le os tres modulos de uma vez.
+_rota_modulo = _module_of_route(getattr(pg, "url_path", "") or "")
+if _rota_modulo and st.session_state.get("modulo") != _rota_modulo:
+    st.session_state["modulo"] = _rota_modulo
+    st.rerun()
+
+# Depois do menu: `st.page_link` so alcanca pagina ja registrada.
+_render_module_links(authenticated_user)
+auth.render_auth_sidebar(authenticated_user)
 
 if st.session_state.get("_navigate_to"):
     _target = st.session_state.pop("_navigate_to")

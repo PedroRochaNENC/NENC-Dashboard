@@ -1232,6 +1232,14 @@ def require_login(database_path: Optional[os.PathLike] = None) -> User:
     return user
 
 def require_module(module_key: str, database_path: Optional[os.PathLike] = None) -> User:
+    """Autoriza acesso ao modulo. Sem efeito de navegacao.
+
+    Nao mexer em `st.session_state["modulo"]` aqui: alem das paginas,
+    `organization_data._access_context` chama esta funcao para autorizar
+    leitura de dados, e a Visao geral le o estado dos tres modulos numa
+    execucao so. O modulo ativo e definido em `app.py`, a partir da pagina
+    que o `st.navigation` resolveu.
+    """
     user = require_login(database_path)
     if not can_access_module(user, module_key):
         st = _streamlit()
