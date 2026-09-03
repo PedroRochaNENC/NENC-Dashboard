@@ -154,7 +154,7 @@ with st.container():
     nome = st.text_input(
         "Nome do Projeto *",
         value=project.get("name", ""),
-        placeholder="Ex: Kynetec — Mão de Obra Rural 2026",
+        placeholder="Ex: Pesquisa de Satisfação do Cliente 2026",
     )
 
     col_a, col_b = st.columns(2)
@@ -203,9 +203,9 @@ with st.container():
         value=project.get("questions", ""),
         placeholder=(
             "Ex:\n"
-            "Como você avalia a qualidade do produto?\n"
-            "Quais são suas principais dificuldades no campo?\n"
-            "Você recomendaria este serviço para outros produtores?"
+            "Como você avalia a qualidade do produto ou serviço?\n"
+            "Quais são suas principais dificuldades no dia a dia?\n"
+            "Você recomendaria isso para outras pessoas?"
         ),
         height=200,
         label_visibility="collapsed",
@@ -224,9 +224,9 @@ with st.container():
         "Entidades prioritárias",
         value=project.get("entities", ""),
         placeholder=(
-            "Candidato: Ana Silva\n"
-            "Marca: Campo Forte\n"
-            "Produto: Sementes Premium"
+            "Candidato: Nome do Candidato\n"
+            "Marca: Nome da Marca\n"
+            "Produto: Nome do Produto"
         ),
         height=130,
         help=(

@@ -45,7 +45,7 @@ with st.expander("Cadastrar Nova Entrevista Qualitativa", expanded=False):
     with st.form("form_nova_entrevista", clear_on_submit=True):
         c1, c2 = st.columns([2, 1])
         with c1:
-            tit = st.text_input("Título / Identificação da Entrevista", placeholder="Ex: Entrevista Consumidor 04 - Gôndola Cafe")
+            tit = st.text_input("Título / Identificação da Entrevista", placeholder="Ex: Entrevista Consumidor 04 - PDV Loja 01")
         with c2:
             part_id = st.text_input("ID do Participante", placeholder="Ex: P_04")
         txt = st.text_area("Transcrição do Relato / Entrevista", height=150, placeholder="Cole a transcrição da fala do consumidor aqui...")

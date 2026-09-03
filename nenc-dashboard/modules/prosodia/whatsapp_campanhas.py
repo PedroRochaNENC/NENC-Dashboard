@@ -301,7 +301,7 @@ with tab_nova:
             with st.form("form_nova_campanha"):
                 nome_campanha = st.text_input(
                     "Nome da Campanha *",
-                    placeholder="Ex: Campanha de Coleta - Pesquisa Kynetec"
+                    placeholder="Ex: Campanha de Coleta - Pesquisa de Satisfação"
                 )
                 template_name = st.text_input(
                     "Nome do Template no Meta Business *",

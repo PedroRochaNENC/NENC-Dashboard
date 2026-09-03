@@ -312,7 +312,7 @@ with organizations_tab:
                 initial_wa_numbers = st.text_area(
                     "Números de WhatsApp destino "
                     "(um por linha ou separados por vírgula)",
-                    placeholder="Ex:\n5511975218007\n5516981360051",
+                    placeholder="Ex:\n5511999999999\n5511988888888",
                     height=80,
                 )
                 created = st.form_submit_button(
@@ -378,7 +378,7 @@ with organizations_tab:
             "Números de WhatsApp destino (um por linha ou separados por vírgula)",
             value=managed_organization.whatsapp_numbers,
             height=110,
-            placeholder="Ex:\n5511975218007\n5516981360051",
+            placeholder="Ex:\n5511999999999\n5511988888888",
             help=(
                 "Estes números alimentam o seletor de WhatsApp destino na "
                 "criação de QR Codes do NencBoost."

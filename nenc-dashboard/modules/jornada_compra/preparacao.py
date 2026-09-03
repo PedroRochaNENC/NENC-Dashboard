@@ -264,8 +264,8 @@ with st.form("projeto_form", clear_on_submit=False):
         value=projeto.get("especialidade", ""),
         placeholder=(
             "Ex: Somos uma equipe de neuromarketing focada em comportamento "
-            "do consumidor no ponto de venda (PDV) para produtos de higiene "
-            "feminina..."
+            "do consumidor no ponto de venda (PDV), analisando atenção "
+            "visual e decisão de compra na gôndola..."
         ),
         height=120,
     )
@@ -274,7 +274,7 @@ with st.form("projeto_form", clear_on_submit=False):
         "2. Me conta um pouco sobre o histórico do problema que vamos discutir.",
         value=projeto.get("historico", ""),
         placeholder=(
-            "Ex: A marca Intimus está reavaliando sua estratégia de embalagens "
+            "Ex: A marca está reavaliando sua estratégia de embalagens "
             "e posicionamento na gôndola após mudanças de portfólio..."
         ),
         height=120,
@@ -284,9 +284,9 @@ with st.form("projeto_form", clear_on_submit=False):
         "3. Quais os problemas centrais que o estudo deve responder?",
         value=projeto.get("problemas", ""),
         placeholder=(
-            "Ex: 1) Qual marca atrai mais atenção visual? "
-            "2) As novas embalagens da Intimus são mais notadas? "
-            "3) Quais produtos são mais fixados vs. apenas olhados?"
+            "Ex: 1) Qual produto atrai mais atenção visual? "
+            "2) As novas embalagens são mais notadas pelo consumidor? "
+            "3) Quais itens são mais fixados vs. apenas olhados?"
         ),
         height=120,
     )
