@@ -115,3 +115,68 @@ depois o `.env` da raiz do workspace, quando existir.
 Vector stores OpenAI são armazenados por organização e módulo. Não defina um
 novo `PROSODIA_VECTOR_STORE_ID` ou `VECTOR_STORE_ID` compartilhado para uso
 normal; essas variáveis servem apenas como entrada da migração legada acima.
+
+## Exportação NencLex para Power BI
+
+Na tela **Análise Geral** de um projeto NencLex, use **Exportar para Power BI
+(.xlsx)**. O arquivo contém todo o conteúdo persistido que pertence ao projeto
+da organização ativa, inclusive históricos de análises de IA, verificações de
+qualidade, momentos de alta ativação e o conteúdo bruto decodificado de cada
+entrevista/audio (JSON de prosódia, CSV de transcrição e CSV sincronizado).
+Credenciais e chaves de API nunca são exportadas.
+No Power BI Desktop, selecione **Obter Dados > Excel**, escolha o arquivo e
+importe todas as abas. As tabelas são normalizadas para que os relacionamentos
+sejam criados pelos identificadores numéricos, sem relacionar dados por nomes
+ou texto.
+
+### Catálogo de abas
+
+| Aba | Conteúdo e colunas principais |
+| --- | --- |
+| `Projeto` | Uma linha com `id`, `organization_id`, contexto do estudo, briefing, IDs funcionais de WhatsApp/API, thresholds e criação. |
+| `Perguntas_Projeto` | Perguntas do roteiro: `project_id`, `question_index`, `question_text`. |
+| `Entrevistas` | Uma linha por áudio: `id`, `project_id`, `organization_id`, sessão, IDs OpenAI, metadados WhatsApp/QR, duração, qualidade, cobertura e contagem de análises. |
+| `Segmentos_VAD` | Segmentos de fala por áudio: `audio_id`, `project_id`, `session_id`, `start`, `end`, `duration`. |
+| `Transcricoes` | Turnos transcritos: `audio_id`, `project_id`, `session_id`, `SpeakerName`, `Timestamp`, `seconds`, `word_count`, `Text`. |
+| `Dados_Sincronizados` | Chaves da entrevista mais todas as colunas originais do CSV sincronizado, inclusive métricas acústicas. |
+| `Analises_Entrevista` | Histórico de IA por áudio: `id`, `audio_id`, `project_id`, `model`, `analysis_text`, `created_at`. |
+| `Citacoes_Analise_Entrevista` | Citações de análises individuais: `analysis_id`, `audio_id`, `project_id`, índice, arquivo, trecho e contexto disponível. |
+| `Analises_Projeto` | Histórico de IA consolidada: `id`, `project_id`, `model`, `analysis_text`, `created_at`. |
+| `Citacoes_Analise_Projeto` | Citações de análises consolidadas: `project_analysis_id`, `project_id`, índice, arquivo, trecho e contexto disponível. |
+| `Verificacoes_Qualidade` | Histórico mestre: `id`, `audio_id`, `project_id`, `overall_status`, `created_at`. |
+| `Checks_Qualidade` | Itens das verificações: `quality_check_id`, `audio_id`, `project_id`, ID/título/categoria/status/mensagem/valor. |
+| `Cobertura_Perguntas` | Cobertura por pergunta: `quality_check_id`, `audio_id`, `project_id`, índice/texto, flags de IA/keywords e evidências. |
+| `Momentos_Alta_Ativacao` | Histórico de momentos: `high_activation_id`, `audio_id`, `project_id`, índice, tempo, locutor, texto, score, motivo e criação. |
+| `Dados_Brutos_Entrevistas` | Resumo do conteúdo bruto por entrevista: `audio_id`, `project_id`, `session_id`, tipo do artefato, nome, tamanho, hash SHA-256, preview, truncamento e quantidade de chunks. |
+| `Chunks_Dados_Brutos_Entrevistas` | Chunks do conteúdo bruto para preservar o texto completo de cada artefato: `audio_id`, `project_id`, `session_id`, tipo, nome, índice do chunk e texto. |
+
+As abas filhas também preservam um campo JSON de detalhes quando a origem
+contém atributos adicionais, evitando perda de informação de versões futuras
+do pipeline.
+
+### Relacionamentos recomendados
+
+```text
+Projeto[id]
+  ├── Perguntas_Projeto[project_id]
+  ├── Entrevistas[project_id]
+  │     ├── Segmentos_VAD[audio_id]
+  │     ├── Transcricoes[audio_id]
+  │     ├── Dados_Sincronizados[audio_id]
+  │     ├── Dados_Brutos_Entrevistas[audio_id]
+  │     │     └── Chunks_Dados_Brutos_Entrevistas[audio_id]
+  │     ├── Analises_Entrevista[audio_id]
+  │     │     └── Citacoes_Analise_Entrevista[analysis_id]
+  │     ├── Verificacoes_Qualidade[audio_id]
+  │     │     ├── Checks_Qualidade[quality_check_id]
+  │     │     └── Cobertura_Perguntas[quality_check_id]
+  │     └── Momentos_Alta_Ativacao[audio_id]
+  └── Analises_Projeto[project_id]
+        └── Citacoes_Analise_Projeto[project_analysis_id]
+```
+
+Configure todos os relacionamentos como um-para-muitos, do identificador da
+tabela pai para a chave estrangeira da tabela filha. Quando uma tabela excede
+1.000.000 de linhas, o exportador gera continuações com sufixo numérico, como
+`Dados_Sincronizados_2`. No Power Query, anexe essas abas antes de criar os
+relacionamentos.
