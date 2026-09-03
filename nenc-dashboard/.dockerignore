@@ -16,3 +16,9 @@ backups
 docs
 tests
 plan-prosodiaEyeTracking.prompt.prompt.md
+
+# O banco vive no volume ./data, nao na imagem. Sem isto o COPY do
+# Dockerfile assa o prosodia.db de desenvolvimento — dados reais de
+# entrevista, e megabytes — em uma camada.
+*.db
+*.sqlite3

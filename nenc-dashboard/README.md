@@ -4,8 +4,7 @@ Dashboard Streamlit para visualização de dados de Neuromarketing do pipeline N
 
 ## Funcionalidades
 
-- **Timeline Sincronizada**: Gráficos de EEG (engagement, atenção, WTP, memória, assimetria) e periféricos (BPM, GSR) alinhados no tempo por participante
-- **Média Geral**: Médias por Etapa entre todos os participantes
+- **Sinais**: Gráficos de EEG (engagement, atenção, WTP, memória, assimetria) e periféricos (BPM, GSR) alinhados no tempo, por participante ou em média geral, com as médias por etapa no mesmo lugar
 - **Dados Brutos**: Explorador interativo dos dados tabulares com filtros e download
 
 ## Instalação
@@ -37,11 +36,32 @@ O dashboard espera os arquivos de saída do pipeline NENC:
 
 ## Deploy
 
-Para deploy no Streamlit Community Cloud:
+Produção roda em Docker Compose atrás do Caddy, que termina o TLS e publica
+`insights.nenc.in`. Nenhuma porta da aplicação é exposta no host: o acesso
+entra apenas pelo proxy.
 
-1. Push deste repositório no GitHub
-2. Acesse [share.streamlit.io](https://share.streamlit.io)
-3. Conecte o repositório e configure `app.py` como arquivo principal
+No servidor, a partir do diretório `nenc-dashboard/`:
+
+```bash
+git pull origin main
+docker compose up -d --build nenc-dashboard
+docker compose logs -f --tail=50 nenc-dashboard
+```
+
+Nomear o serviço é proposital: sem isso o compose reconstrói também
+`nenc-whatsapp-api`, que vem de outro repositório (`../../whatsapp-api`).
+
+O healthcheck consulta `/_stcore/health` a cada 30s; `docker compose ps`
+mostra `healthy` quando a aplicação sobe.
+
+O banco vive no volume `./data:/app/data`, apontado por `NENC_DB_PATH`, e não
+é tocado pelo build. `init_db()` aplica o esquema na subida, então mudanças
+que apenas acrescentam tabelas ou colunas não exigem passo de migração — as
+demais estão em [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+As rotas das páginas derivam do caminho do arquivo (`/prosodia-entrevistas`,
+`/teste-sensorial-preparacao`). Elas mudaram na revisão de interface, então
+links salvos para páginas internas de versões anteriores não resolvem mais.
 
 ## Segurança e organizações
 
@@ -116,10 +136,16 @@ Vector stores OpenAI são armazenados por organização e módulo. Não defina u
 novo `PROSODIA_VECTOR_STORE_ID` ou `VECTOR_STORE_ID` compartilhado para uso
 normal; essas variáveis servem apenas como entrada da migração legada acima.
 
-## Exportação NencLex para Power BI
+## Exportação NencBoost para Power BI
 
-Na tela **Análise Geral** de um projeto NencLex, use **Exportar para Power BI
-(.xlsx)**. O arquivo contém todo o conteúdo persistido que pertence ao projeto
+> **Desativado na interface.** O bloco que expunha o botão em **Análise
+> Geral** está comentado em `modules/prosodia/analise_geral.py`. O módulo
+> `utils/prosodia_powerbi_export.py` e a suíte
+> `tests/test_prosodia_powerbi_export.py` seguem ativos e verificados; para
+> reativar, descomente o bloco e o import no topo do arquivo. O restante
+> desta seção descreve o comportamento quando ativo.
+
+O arquivo gerado contém todo o conteúdo persistido que pertence ao projeto
 da organização ativa, inclusive históricos de análises de IA, verificações de
 qualidade, momentos de alta ativação e o conteúdo bruto decodificado de cada
 entrevista/audio (JSON de prosódia, CSV de transcrição e CSV sincronizado).
