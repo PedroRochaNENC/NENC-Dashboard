@@ -355,8 +355,9 @@ if wa_configured():
                                         vector_store_id=vs_id, file_id=fp.id
                                     )
                             if csv_bytes:
+                                # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
                                 fc = openai_client.files.create(
-                                    file=(f"Transcricao-{session_id}.csv", _io.BytesIO(csv_bytes), "text/csv"),
+                                    file=(f"Transcricao-{session_id}.txt", _io.BytesIO(csv_bytes), "text/plain"),
                                     purpose="assistants",
                                 )
                                 file_id_transcricao = fc.id
