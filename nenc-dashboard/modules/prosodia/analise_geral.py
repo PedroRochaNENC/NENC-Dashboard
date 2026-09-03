@@ -733,7 +733,7 @@ except ValueError as error:
     st.error(f"Não foi possível preparar a exportação: {error}")
 else:
     st.download_button(
-        "📊 Exportar para Power BI (.xlsx)",
+        "Exportar para Power BI (.xlsx)",
         data=powerbi_workbook,
         file_name=powerbi_filename,
         mime=(
@@ -744,7 +744,7 @@ else:
         use_container_width=False,
     )
 
-with st.expander("📖 Guia de Importação e Relacionamentos no Power BI"):
+with st.expander("Guia de importação e relacionamentos"):
     st.markdown(
         """
 1. No Power BI Desktop, selecione **Obter Dados > Excel** e escolha o arquivo
