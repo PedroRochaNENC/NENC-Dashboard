@@ -270,14 +270,14 @@ else:
                         with col_q1:
                             new_qr_name = st.text_input(
                                 "Nome do QR Code *",
-                                placeholder="Ex: Cartaz Recepção HCFMUSP",
+                                placeholder="Ex: Cartaz Recepção - Unidade Central",
                                 key=f"new_qr_name_{proj['id']}"
                             )
                             suggested_code = f"{api_proj_id:02d}-{len(qr_codes)+1:02d}"
-                            new_qr_code = st.text_input(
-                                "Código de Rastreio (opcional)",
+                            st.text_input(
+                                "Código de Rastreio (gerado automaticamente)",
                                 value=suggested_code,
-                                placeholder="Ex: 01-01",
+                                disabled=True,
                                 key=f"new_qr_code_{proj['id']}"
                             )
                             new_target_phone = st.selectbox(
@@ -338,7 +338,7 @@ else:
                                     api_proj_id,
                                     name=new_qr_name.strip(),
                                     description=new_qr_desc.strip() if new_qr_desc else None,
-                                    code=new_qr_code.strip() if new_qr_code else None,
+                                    code=suggested_code,
                                     target_phone=new_target_phone.strip() if new_target_phone else None,
                                     welcome_message=new_welcome_msg.strip() if new_welcome_msg else None,
                                     verification_text=new_verification_text.strip() if new_verification_text else None,
