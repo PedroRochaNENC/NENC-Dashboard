@@ -173,7 +173,7 @@ with users_tab:
                     phone=phone,
                     password=password,
                     organization_id=organization_id,
-                    modules=module_keys,
+                    module_keys=module_keys,
                     is_organization_admin=is_organization_admin,
                     is_platform_admin=is_platform_admin,
                 )
@@ -253,7 +253,7 @@ with users_tab:
                     phone=edited_phone,
                     password=reset_password or None,
                     organization_id=edited_organization_id,
-                    modules=edited_modules,
+                    module_keys=edited_modules,
                     is_active=edited_active,
                     is_organization_admin=edited_organization_admin,
                     is_platform_admin=edited_platform_admin,
