@@ -3,6 +3,9 @@ Prosódia — Monitoramento da API do WhatsApp.
 
 Permite visualizar os áudios recebidos, monitorar o status dos jobs de processamento
 e realizar a importação manual de áudios para qualquer projeto local.
+
+Escopo: só entra aqui o que está em um projeto da API pertencente à organização
+ativa. Telefone é filtro de exibição, nunca fonte de busca.
 """
 
 import streamlit as st
@@ -114,37 +117,37 @@ def _register_owned_audio(audio: dict, parent_type: str, parent_id) -> bool:
     return True
 
 
-def _owned_audios(
-    phone_filter: str,
-    limit: int,
-    api_project_ids: list[int],
-    contact_ids_by_phone: dict[str, str],
-) -> list[dict]:
-    contact_phones = set(contact_ids_by_phone)
-    normalized_phone_filter = _normalize_phone(phone_filter)
-    if normalized_phone_filter:
-        if normalized_phone_filter not in contact_phones:
-            return []
-        return [
-            audio
-            for audio in get_all_audios(phone=normalized_phone_filter, limit=limit)
-            if _register_owned_audio(
-                audio,
-                "whatsapp_contact",
-                contact_ids_by_phone[normalized_phone_filter],
-            )
-        ]
+# Cada projeto e varrido uma vez por render; o slider corta a exibicao depois,
+# sem refazer chamada.
+_AUDIO_FETCH_LIMIT = 500
 
+
+def _audios_in_owned_projects(api_project_ids: list[int]) -> list[dict]:
+    """Tudo que o monitor pode exibir, e nada alem disso.
+
+    A unica fonte permitida e o projeto da API que pertence a organizacao ativa.
+    Buscar por telefone traria junto os audios que aquele contato mandou para
+    projetos de outra organizacao - e ainda os reivindicaria para a organizacao
+    ativa via `_register_owned_audio`. Por isso telefone virou filtro de
+    exibicao, tratado em `_filtered_audios`.
+    """
     audios_by_id = {}
     for api_project_id in api_project_ids:
-        for audio in get_all_audios(project_id=api_project_id, limit=limit):
+        for audio in get_all_audios(project_id=api_project_id, limit=_AUDIO_FETCH_LIMIT):
             if _register_owned_audio(audio, "whatsapp_api_project", api_project_id):
                 audios_by_id[str(audio.get("id"))] = audio
-    for phone, contact_id in contact_ids_by_phone.items():
-        for audio in get_all_audios(phone=phone, limit=limit):
-            if _register_owned_audio(audio, "whatsapp_contact", contact_id):
-                audios_by_id[str(audio.get("id"))] = audio
-    return list(audios_by_id.values())[:limit]
+    return list(audios_by_id.values())
+
+
+def _filtered_audios(audios: list[dict], phone_filter: str, limit: int) -> list[dict]:
+    normalized_phone_filter = _normalize_phone(phone_filter)
+    if not normalized_phone_filter:
+        return audios[:limit]
+    return [
+        audio
+        for audio in audios
+        if _normalize_phone(audio.get("contact_phone")) == normalized_phone_filter
+    ][:limit]
 
 # A navegacao de volta vive no menu lateral, na seccao "Coleta via WhatsApp".
 ui.inject_theme()
@@ -165,6 +168,24 @@ projects = get_projects()
 owned_api_project_ids = _owned_api_project_ids(projects)
 owned_contact_ids_by_phone = _owned_contact_ids_by_phone()
 
+if not owned_api_project_ids:
+    st.warning(
+        "Nenhum projeto da API pertence a esta organização. O monitor só mostra "
+        "áudios e jobs de projetos da organização ativa — vincule o projeto à API "
+        "na página de Projetos para acompanhá-lo aqui."
+    )
+
+# As duas abas leem do mesmo escopo, buscado uma vez só.
+audios_no_escopo: list[dict] = []
+escopo_erro: Exception | None = None
+if owned_api_project_ids:
+    try:
+        with st.spinner("Buscando áudios na API..."):
+            audios_no_escopo = _audios_in_owned_projects(owned_api_project_ids)
+    except Exception as e:
+        escopo_erro = e
+audio_ids_no_escopo = {str(audio.get("id")) for audio in audios_no_escopo}
+
 # Abas do Monitor
 tab_audios, tab_jobs = st.tabs(["Áudios recebidos", "Jobs de processamento"])
 
@@ -180,13 +201,9 @@ with tab_audios:
         filtro_limit = st.slider("Quantidade limite", min_value=10, max_value=200, value=50, step=10)
         
     try:
-        with st.spinner("Buscando áudios na API..."):
-            audios_api = _owned_audios(
-                filtro_phone,
-                filtro_limit,
-                owned_api_project_ids,
-                owned_contact_ids_by_phone,
-            )
+        if escopo_erro is not None:
+            raise escopo_erro
+        audios_api = _filtered_audios(audios_no_escopo, filtro_phone, filtro_limit)
         if filtro_phone.strip() and not audios_api:
             if _normalize_phone(filtro_phone) not in owned_contact_ids_by_phone:
                 st.warning("O telefone informado nao pertence a organizacao ativa.")
@@ -515,8 +532,14 @@ with tab_jobs:
     
     try:
         status_filter = None if col_job_status == "Todos" else col_job_status
-        jobs = list_owned_jobs(status=status_filter, limit=100)
-        
+        # A posse do audio sozinha nao basta: ela reflete claims antigos, alguns
+        # feitos pelo caminho de telefone. O escopo que vale e o do projeto.
+        jobs = [
+            job
+            for job in list_owned_jobs(status=status_filter, limit=100)
+            if str(job.get("audio_id")) in audio_ids_no_escopo
+        ]
+
         if not jobs:
             st.info("Nenhum job de processamento encontrado.")
         else:
