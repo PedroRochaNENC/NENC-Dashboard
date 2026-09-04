@@ -17,6 +17,8 @@ import pandas as pd
 import io as _io
 from utils.whatsapp_api_client import (
     get_all_audios,
+    get_inbound_messages,
+    get_unmatched_inbound_messages,
     get_audio_status,
     get_audio_result,
     list_owned_jobs,
@@ -64,6 +66,18 @@ _STATUS_EMOJIS = {
     "failed": "Falhou",
     "not_processed": "Não Processado",
 }
+
+
+# Espelha os OUTCOME_* de participation_service, na API.
+_OUTCOME_LABELS = {
+    "accepted": "Aceito",
+    "code_not_found": "Codigo invalido",
+    "project_inactive": "Projeto inativo",
+    "project_not_started": "Projeto nao iniciado",
+    "project_ended": "Projeto encerrado",
+}
+
+_INBOUND_FETCH_LIMIT = 200
 
 
 def _normalize_phone(value) -> str:
@@ -151,6 +165,52 @@ def _audios_in_owned_projects(
     return list(audios_by_id.values()), falhas
 
 
+def _inbound_in_owned_projects(
+    api_project_ids: list[int],
+) -> tuple[list[dict], list[str]]:
+    """Mensagens de codigo que a organizacao ativa pode ver.
+
+    Mesmo desenho de `_audios_in_owned_projects`: o projeto da API e a unica
+    fonte, e projeto que a API nao responde nao derruba os outros. Mensagem de
+    codigo invalido nao aparece aqui - ela nao tem projeto, entao nao pertence a
+    organizacao nenhuma.
+    """
+    messages_by_id = {}
+    falhas = []
+    for api_project_id in api_project_ids:
+        try:
+            messages = get_inbound_messages(api_project_id, limit=_INBOUND_FETCH_LIMIT)
+        except Exception as error:
+            falhas.append("mensagens do projeto {} da API: {}".format(api_project_id, error))
+            continue
+        for message in messages:
+            messages_by_id[str(message.get("id"))] = message
+    ordenadas = sorted(
+        messages_by_id.values(), key=lambda m: m.get("id") or 0, reverse=True
+    )
+    return ordenadas, falhas
+
+
+def _inbound_rows(messages: list[dict], com_texto: bool = False) -> list[dict]:
+    rows = []
+    for message in messages:
+        row = {
+            "Data": message.get("received_at", ""),
+            "Telefone": message.get("contact_phone", ""),
+            "Nome": message.get("sender_name") or "",
+            "Codigo": message.get("code", ""),
+            "QR Code": message.get("qr_code_name") or "",
+            "Projeto": message.get("project_name") or "",
+            "Situacao": _OUTCOME_LABELS.get(
+                message.get("outcome"), message.get("outcome") or ""
+            ),
+        }
+        if com_texto:
+            row["Texto"] = message.get("text", "")
+        rows.append(row)
+    return rows
+
+
 def _filtered_audios(audios: list[dict], phone_filter: str, limit: int) -> list[dict]:
     normalized_phone_filter = _normalize_phone(phone_filter)
     if not normalized_phone_filter:
@@ -191,8 +251,10 @@ if not owned_api_project_ids:
 audios_no_escopo: list[dict] = []
 falhas_escopo: list[str] = []
 if owned_api_project_ids:
-    with st.spinner("Buscando áudios na API..."):
+    with st.spinner("Buscando áudios e mensagens na API..."):
         audios_no_escopo, falhas_escopo = _audios_in_owned_projects(owned_api_project_ids)
+        mensagens_no_escopo, falhas_mensagens = _inbound_in_owned_projects(owned_api_project_ids)
+        falhas_escopo = falhas_escopo + falhas_mensagens
 audio_ids_no_escopo = {str(audio.get("id")) for audio in audios_no_escopo}
 
 if falhas_escopo:
@@ -212,7 +274,9 @@ elif owned_api_project_ids:
     )
 
 # Abas do Monitor
-tab_audios, tab_jobs = st.tabs(["Áudios recebidos", "Jobs de processamento"])
+tab_audios, tab_jobs, tab_mensagens = st.tabs(
+    ["Áudios recebidos", "Jobs de processamento", "Mensagens recebidas"]
+)
 
 # ---------------------------------------------------------------------------
 # TAB 1: Áudios Recebidos & Importação
@@ -605,3 +669,57 @@ with tab_jobs:
             
     except Exception as e:
         st.error(f"Erro ao obter lista de jobs da API: {e}")
+
+
+# ---------------------------------------------------------------------------
+# TAB 3: Mensagens Recebidas
+# ---------------------------------------------------------------------------
+with tab_mensagens:
+    st.subheader("Mensagens de código recebidas")
+    st.caption(
+        "Texto que o participante enviou com o código do projeto — de quem entrou "
+        "agora e de quem já participava. Áudio fica na primeira aba."
+    )
+
+    if falhas_escopo:
+        st.warning("Lista indisponível enquanto a API não responder.")
+    elif not mensagens_no_escopo:
+        st.info("Nenhuma mensagem de código recebida nos projetos desta organização.")
+    else:
+        df_mensagens = pd.DataFrame(_inbound_rows(mensagens_no_escopo))
+        df_mensagens["Data"] = pd.to_datetime(df_mensagens["Data"]).dt.strftime(
+            "%d/%m/%Y %H:%M"
+        )
+        st.dataframe(df_mensagens, use_container_width=True, hide_index=True)
+
+    # Codigo invalido nao resolveu para projeto algum, entao nao pertence a
+    # organizacao nenhuma. So o administrador da plataforma ve.
+    if auth.is_current_user_platform_admin():
+        st.markdown("---")
+        st.subheader("Códigos inválidos")
+        st.caption(
+            "Visível apenas para o administrador global: estas mensagens não resolveram "
+            "para nenhum projeto, então não pertencem a nenhuma organização."
+        )
+        try:
+            invalidas = get_unmatched_inbound_messages(limit=_INBOUND_FETCH_LIMIT)
+            if not invalidas:
+                st.info("Nenhuma mensagem com código inválido.")
+            else:
+                df_invalidas = pd.DataFrame(_inbound_rows(invalidas, com_texto=True))
+                df_invalidas["Data"] = pd.to_datetime(df_invalidas["Data"]).dt.strftime(
+                    "%d/%m/%Y %H:%M"
+                )
+                st.dataframe(
+                    df_invalidas[
+                        ["Data", "Telefone", "Nome", "Codigo", "Texto", "Situacao"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "Resposta curta de uma palavra cai aqui também: o reconhecimento de "
+                    "código aceita qualquer alfanumérico solto de 2 a 30 caracteres."
+                )
+        except Exception as e:
+            st.error(f"Não foi possível obter as mensagens com código inválido: {e}")

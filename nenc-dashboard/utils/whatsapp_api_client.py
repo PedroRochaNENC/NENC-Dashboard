@@ -522,6 +522,41 @@ def get_audio_transcript(audio_id: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Mensagens recebidas
+#
+# A API guarda toda mensagem de texto que trazia um codigo de projeto. Quem ve o
+# que e decidido aqui: mensagem cujo codigo resolveu para projeto da organizacao
+# ativa, e nada mais. As de codigo invalido nao resolveram para projeto nenhum,
+# logo nao pertencem a organizacao alguma, e ficam so para o administrador da
+# plataforma.
+# ---------------------------------------------------------------------------
+
+def get_inbound_messages(project_id: int, limit: int = 200) -> List[Dict]:
+    """Mensagens de codigo de um projeto da API pertencente a organizacao ativa."""
+    _require_owned_resource("whatsapp_api_project", project_id)
+    with _client() as c:
+        resp = c.get("/inbound-messages", params={"project_id": project_id, "limit": limit})
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_unmatched_inbound_messages(limit: int = 200) -> List[Dict]:
+    """Mensagens cujo codigo nao resolveu para projeto algum.
+
+    Levanta antes de sair da maquina: sem projeto nao ha como dizer de quem e a
+    mensagem, entao esconder o botao na interface nao serviria de autorizacao.
+    """
+    if not auth.is_current_user_platform_admin():
+        raise auth.AuthorizationError(
+            "Mensagens de codigo invalido sao visiveis apenas para o administrador global."
+        )
+    with _client() as c:
+        resp = c.get("/inbound-messages", params={"unmatched": "true", "limit": limit})
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # Projetos API
 # ---------------------------------------------------------------------------
 
