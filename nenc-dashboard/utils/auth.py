@@ -1163,7 +1163,22 @@ def authenticate(
     return user, create_session(user.id, database_path=database_path)
 
 def can_access_module(user: User, module_key: str) -> bool:
-    return module_key in MODULE_KEYS and (user.is_admin or module_key in user.modules)
+    """Quais modulos a conta alcanca. Ser administrador nao amplia a lista.
+
+    Acesso a modulo e permissao de escrita sao dimensoes distintas, como
+    `can_write` logo abaixo documenta: administrador da organizacao decide o que
+    pode ALTERAR dentro dos modulos que recebeu, nao QUAIS modulos recebeu.
+    Antes o `is_admin` entrava nesta conta e dava os tres modulos a qualquer
+    administrador de organizacao, esvaziando a lista "Modulos permitidos" da
+    tela de Usuarios.
+
+    O administrador da plataforma segue alcancando todos: ele ja atravessa as
+    organizacoes em `active_organization_id` e em `list_external_resources`.
+    """
+
+    return module_key in MODULE_KEYS and (
+        user.is_platform_admin or module_key in user.modules
+    )
 
 def can_write(user: User) -> bool:
     """True somente para contas que podem alterar dados de negocio.

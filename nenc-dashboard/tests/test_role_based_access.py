@@ -48,9 +48,39 @@ class WritePredicateTests(unittest.TestCase):
 
         self.assertTrue(auth.can_access_module(reader, "prosodia"))
         self.assertFalse(auth.can_write_module(reader, "prosodia"))
-        # Administradores recebem todo modulo por can_access_module.
-        self.assertTrue(auth.can_write_module(admin_without_module, "prosodia"))
+        # Ser administrador diz o que a conta pode ALTERAR, nao quais modulos
+        # ela alcanca: sem a concessao, nao escreve porque nem entra.
+        self.assertFalse(auth.can_write_module(admin_without_module, "prosodia"))
         self.assertFalse(auth.can_write_module(reader, "teste_sensorial"))
+
+
+class ModuleAccessTests(unittest.TestCase):
+    """A lista por conta manda; o papel de administrador nao a substitui."""
+
+    def test_organization_administrator_is_limited_to_the_granted_modules(self):
+        """Regressao: administrador de organizacao alcancava os tres modulos.
+
+        A tela de Usuarios oferece "Modulos permitidos" por conta, mas com
+        is_admin dentro de can_access_module a lista nao valia nada para quem
+        fosse administrador da organizacao - a conta via, e abria, modulo que
+        ninguem lhe deu.
+        """
+        admin = _user(is_organization_admin=True, modules=("prosodia",))
+
+        self.assertTrue(auth.can_access_module(admin, "prosodia"))
+        self.assertFalse(auth.can_access_module(admin, "teste_sensorial"))
+        self.assertFalse(auth.can_access_module(admin, "jornada_compra"))
+
+    def test_platform_administrator_reaches_every_module(self):
+        platform = _user(is_platform_admin=True, modules=())
+
+        for module_key in auth.MODULE_KEYS:
+            self.assertTrue(auth.can_access_module(platform, module_key))
+
+    def test_a_module_outside_the_catalog_is_never_granted(self):
+        platform = _user(is_platform_admin=True, modules=("inexistente",))
+
+        self.assertFalse(auth.can_access_module(platform, "inexistente"))
 
 
 class AssertModuleWriteTests(unittest.TestCase):
