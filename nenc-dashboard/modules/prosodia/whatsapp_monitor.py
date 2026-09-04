@@ -122,7 +122,9 @@ def _register_owned_audio(audio: dict, parent_type: str, parent_id) -> bool:
 _AUDIO_FETCH_LIMIT = 500
 
 
-def _audios_in_owned_projects(api_project_ids: list[int]) -> list[dict]:
+def _audios_in_owned_projects(
+    api_project_ids: list[int],
+) -> tuple[list[dict], list[str]]:
     """Tudo que o monitor pode exibir, e nada alem disso.
 
     A unica fonte permitida e o projeto da API que pertence a organizacao ativa.
@@ -130,13 +132,23 @@ def _audios_in_owned_projects(api_project_ids: list[int]) -> list[dict]:
     projetos de outra organizacao - e ainda os reivindicaria para a organizacao
     ativa via `_register_owned_audio`. Por isso telefone virou filtro de
     exibicao, tratado em `_filtered_audios`.
+
+    Devolve (audios, falhas). Um projeto que a API nao consegue responder nao
+    derruba os outros: a falha e devolvida para a pagina dizer o que houve, em
+    vez de a tela alegar que nao existe audio nenhum.
     """
     audios_by_id = {}
+    falhas = []
     for api_project_id in api_project_ids:
-        for audio in get_all_audios(project_id=api_project_id, limit=_AUDIO_FETCH_LIMIT):
+        try:
+            audios = get_all_audios(project_id=api_project_id, limit=_AUDIO_FETCH_LIMIT)
+        except Exception as error:
+            falhas.append("projeto {} da API: {}".format(api_project_id, error))
+            continue
+        for audio in audios:
             if _register_owned_audio(audio, "whatsapp_api_project", api_project_id):
                 audios_by_id[str(audio.get("id"))] = audio
-    return list(audios_by_id.values())
+    return list(audios_by_id.values()), falhas
 
 
 def _filtered_audios(audios: list[dict], phone_filter: str, limit: int) -> list[dict]:
@@ -177,14 +189,27 @@ if not owned_api_project_ids:
 
 # As duas abas leem do mesmo escopo, buscado uma vez só.
 audios_no_escopo: list[dict] = []
-escopo_erro: Exception | None = None
+falhas_escopo: list[str] = []
 if owned_api_project_ids:
-    try:
-        with st.spinner("Buscando áudios na API..."):
-            audios_no_escopo = _audios_in_owned_projects(owned_api_project_ids)
-    except Exception as e:
-        escopo_erro = e
+    with st.spinner("Buscando áudios na API..."):
+        audios_no_escopo, falhas_escopo = _audios_in_owned_projects(owned_api_project_ids)
 audio_ids_no_escopo = {str(audio.get("id")) for audio in audios_no_escopo}
+
+if falhas_escopo:
+    # Sem isto a tela diz "nenhum áudio encontrado" quando o que houve foi a API
+    # fora do ar — diagnóstico errado manda procurar o problema no lugar errado.
+    st.error(
+        "Não foi possível consultar a API de WhatsApp. Confira a URL e a "
+        "chave em Configurações e se o servidor está no ar."
+    )
+    for falha in falhas_escopo:
+        st.caption("• {}".format(falha))
+elif owned_api_project_ids:
+    st.caption(
+        "Escopo desta organização: projeto(s) {} da API · {} áudio(s).".format(
+            ", ".join(str(pid) for pid in owned_api_project_ids), len(audios_no_escopo)
+        )
+    )
 
 # Abas do Monitor
 tab_audios, tab_jobs = st.tabs(["Áudios recebidos", "Jobs de processamento"])
@@ -201,15 +226,16 @@ with tab_audios:
         filtro_limit = st.slider("Quantidade limite", min_value=10, max_value=200, value=50, step=10)
         
     try:
-        if escopo_erro is not None:
-            raise escopo_erro
         audios_api = _filtered_audios(audios_no_escopo, filtro_phone, filtro_limit)
         if filtro_phone.strip() and not audios_api:
             if _normalize_phone(filtro_phone) not in owned_contact_ids_by_phone:
                 st.warning("O telefone informado nao pertence a organizacao ativa.")
-            
+
         if not audios_api:
-            st.info("Nenhum áudio pertencente a esta organização foi encontrado.")
+            if falhas_escopo:
+                st.warning("Lista indisponível enquanto a API não responder.")
+            else:
+                st.info("Nenhum áudio pertencente a esta organização foi encontrado.")
         else:
             # Enriquecer com status de cada áudio
             dados_enriquecidos = []
@@ -535,13 +561,18 @@ with tab_jobs:
         status_filter = None if col_job_status == "Todos" else col_job_status
         # A posse do audio sozinha nao basta: ela reflete claims antigos, alguns
         # feitos pelo caminho de telefone. O escopo que vale e o do projeto.
-        jobs = [
+        jobs = [] if falhas_escopo else [
             job
             for job in list_owned_jobs(status=status_filter, limit=100)
             if str(job.get("audio_id")) in audio_ids_no_escopo
         ]
 
-        if not jobs:
+        if falhas_escopo:
+            # list_owned_jobs devolve lista vazia sem nem chamar a API quando
+            # nenhum audio esta registrado, entao sem esta guarda a aba diria
+            # "nenhum job" com a API fora do ar.
+            st.warning("Lista indisponível enquanto a API não responder.")
+        elif not jobs:
             st.info("Nenhum job de processamento encontrado.")
         else:
             df_jobs = pd.DataFrame(jobs)
