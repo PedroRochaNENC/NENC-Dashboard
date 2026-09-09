@@ -26,7 +26,12 @@ from utils.prosodia_db import (
     user_can_modify_project,
     DEFAULT_QR_VERIFICATION_TEXT,
 )
-from utils.ai_provider import get_openai_client, get_prosodia_vector_store_id
+from utils.ai_provider import (
+    add_document_to_vector_store,
+    get_openai_client,
+    get_prosodia_vector_store_id,
+)
+from utils.kb_attributes import project_document
 from utils.organization_data import claim_external_resource, list_external_resources
 
 init_db()
@@ -96,7 +101,9 @@ def _slugify(text: str) -> str:
     return safe.strip("_")[:80] or "projeto"
 
 
-def _upload_briefing_to_kb(filename: str, content: bytes) -> tuple[bool, str]:
+def _upload_briefing_to_kb(
+    filename: str, content: bytes, project_id=None
+) -> tuple[bool, str]:
     client = get_openai_client()
     prosodia_vs_id = get_prosodia_vector_store_id()
 
@@ -106,13 +113,12 @@ def _upload_briefing_to_kb(filename: str, content: bytes) -> tuple[bool, str]:
         return False, "A base de conhecimento do NencBoost nao esta configurada para a organizacao ativa."
 
     try:
-        uploaded = client.files.create(
-            file=(filename, content),
-            purpose="assistants",
-        )
-        client.vector_stores.files.create(
-            vector_store_id=prosodia_vs_id,
-            file_id=uploaded.id,
+        add_document_to_vector_store(
+            prosodia_vs_id,
+            filename,
+            content,
+            project_document("prosodia", project_id, tipo="briefing"),
+            wait=False,
         )
         return True, filename
     except Exception as e:
@@ -652,7 +658,9 @@ if submitted:
         if uploaded_briefing_name and uploaded_briefing_bytes:
             now_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
             kb_filename = f"briefing_{_slugify(nome.strip())}_{now_tag}_{uploaded_briefing_name}"
-            kb_ok, kb_msg = _upload_briefing_to_kb(kb_filename, uploaded_briefing_bytes)
+            kb_ok, kb_msg = _upload_briefing_to_kb(
+                kb_filename, uploaded_briefing_bytes, saved_project_id
+            )
             if kb_ok:
                 st.caption(f"Briefing enviado para a base de conhecimento: {kb_msg}")
             else:

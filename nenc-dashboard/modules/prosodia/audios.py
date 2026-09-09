@@ -40,10 +40,12 @@ from utils.prosodia_quality import (
 )
 from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
 from utils.ai_provider import (
+    add_document_to_vector_store,
     get_openai_client,
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils.kb_attributes import build_kb_filter, project_document
 from utils.organization_data import claim_external_resource
 
 init_db()
@@ -197,29 +199,33 @@ if json_files or csv_files or sinc_files:
             # -- Upload OpenAI KB --
             file_id_prosodia = None
             file_id_transcricao = None
-            if openai_client:
+            # Sem base configurada nao ha por que criar o arquivo: ele ficaria
+            # na conta da OpenAI sem pertencer a base nenhuma.
+            if openai_client and vs_id:
                 try:
                     if json_bytes:
-                        fp = openai_client.files.create(
-                            file=(f"Prosodia-{sid}.json", io.BytesIO(json_bytes), "application/json"),
-                            purpose="assistants",
+                        documento = add_document_to_vector_store(
+                            vs_id,
+                            f"Prosodia-{sid}.json",
+                            json_bytes,
+                            project_document(
+                                "prosodia", project_id, session_id=sid, tipo="prosodia"
+                            ),
+                            wait=False,
                         )
-                        file_id_prosodia = fp.id
-                        if vs_id:
-                            openai_client.vector_stores.files.create(
-                                vector_store_id=vs_id, file_id=fp.id
-                            )
+                        file_id_prosodia = documento.id
                     if csv_bytes:
                         # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
-                        fc = openai_client.files.create(
-                            file=(f"Transcricao-{sid}.txt", io.BytesIO(csv_bytes), "text/plain"),
-                            purpose="assistants",
+                        documento = add_document_to_vector_store(
+                            vs_id,
+                            f"Transcricao-{sid}.txt",
+                            csv_bytes,
+                            project_document(
+                                "prosodia", project_id, session_id=sid, tipo="transcricao"
+                            ),
+                            wait=False,
                         )
-                        file_id_transcricao = fc.id
-                        if vs_id:
-                            openai_client.vector_stores.files.create(
-                                vector_store_id=vs_id, file_id=fc.id
-                            )
+                        file_id_transcricao = documento.id
                     update_audio_openai_ids(audio_id, file_id_prosodia, file_id_transcricao)
                 except Exception as e:
                     st.warning(f"[{sid}] Falha no upload para KB: {e}")
@@ -264,6 +270,7 @@ if json_files or csv_files or sinc_files:
                         user_prompt=user_prompt,
                         model="gpt-4.1-mini",
                         vector_store_id=vs_id,
+                        kb_filter=build_kb_filter(project_id),
                         temperature=0.5,
                         max_tokens=3000,
                     )

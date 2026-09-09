@@ -49,10 +49,12 @@ from utils.prosodia_prompts import (
     build_prosodia_user_prompt,
 )
 from utils.ai_provider import (
+    add_document_to_vector_store,
     get_openai_client,
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils.kb_attributes import build_kb_filter, project_document
 
 init_db()
 
@@ -331,7 +333,9 @@ def _build_quality_markdown(
     return "\n".join(lines)
 
 
-def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
+def _append_result_to_kb(
+    filename: str, content: str, project_id=None, session_id=None
+) -> tuple[bool, str]:
     """
     Adiciona documento de resultado (análise/qualidade) ao vector store da Prosódia.
     Não lança exceção para não quebrar o fluxo principal.
@@ -345,13 +349,17 @@ def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
         return False, "A base de conhecimento do NencBoost nao esta configurada para a organizacao ativa."
 
     try:
-        uploaded = client.files.create(
-            file=(filename, content.encode("utf-8")),
-            purpose="assistants",
-        )
-        client.vector_stores.files.create(
-            vector_store_id=prosodia_vs_id,
-            file_id=uploaded.id,
+        add_document_to_vector_store(
+            prosodia_vs_id,
+            filename,
+            content.encode("utf-8"),
+            project_document(
+                "prosodia",
+                project_id,
+                escopo="analise",
+                session_id=session_id,
+            ),
+            wait=False,
         )
         return True, filename
     except Exception as e:
@@ -662,7 +670,7 @@ if is_wa and h2 is not None:
                             checks=new_checks,
                             coverage=cov_merged,
                         )
-                        _append_result_to_kb(kb_doc_name_q, kb_doc_q)
+                        _append_result_to_kb(kb_doc_name_q, kb_doc_q, project_id, sid)
                         
                         # 8. Atualizar Análise de IA
                         status_container.info("Atualizando análise de IA...")
@@ -700,6 +708,7 @@ if is_wa and h2 is not None:
                                 user_prompt=user_prompt,
                                 model=openai_model,
                                 vector_store_id=vs_id,
+                                kb_filter=build_kb_filter(project_id),
                                 temperature=0.5,
                                 max_tokens=3000,
                             )
@@ -727,7 +736,7 @@ if is_wa and h2 is not None:
                             text=result_ai.get("text", ""),
                             citations=result_ai.get("citations", []),
                         )
-                        _append_result_to_kb(kb_doc_name_a, kb_doc_a)
+                        _append_result_to_kb(kb_doc_name_a, kb_doc_a, project_id, sid)
                         
                         status_container.success("Áudio, transcrição, NencBoost e análise reprocessados com sucesso!")
                         time.sleep(2)
@@ -769,11 +778,17 @@ with analysis_section:
             key="download_latest_ai_analysis",
         )
 
-        citations = latest_analysis.get("citations", [])
-        if citations:
-            with st.expander("Referências da Base de Conhecimento"):
-                for i, cit in enumerate(citations, 1):
-                    st.markdown(f"**[{i}]** {cit.get('filename', 'Documento')} — _{cit.get('quote', '')}_")
+        with st.expander("Referências da Base de Conhecimento"):
+            ui.knowledge_base_references(
+                {
+                    "citations": latest_analysis.get("citations", []),
+                    # A tela recarrega depois de salvar e o banco guarda so as
+                    # citacoes: o que a busca fez fica na sessao desta rodada.
+                    "search": st.session_state.get(
+                        f"pr_kb_search_audio_{audio_id}", {}
+                    ),
+                }
+            )
 
         with st.expander(f"Histórico de análises ({len(get_analyses(audio_id))} registros)"):
             for an in get_analyses(audio_id):
@@ -841,6 +856,7 @@ with analysis_section:
                                     user_prompt=chat_user_prompt,
                                     model=st.session_state.get("an_openai_model", "gpt-4.1-mini"),
                                     vector_store_id=chat_vs_id,
+                                    kb_filter=build_kb_filter(project_id),
                                     temperature=0.7,
                                     max_tokens=1500,
                                 )
@@ -902,6 +918,7 @@ with analysis_section:
                             user_prompt=user_prompt,
                             model=openai_model,
                             vector_store_id=vs_id,
+                            kb_filter=build_kb_filter(project_id),
                             temperature=0.5,
                             max_tokens=3000,
                         )
@@ -938,6 +955,7 @@ with analysis_section:
                             user_prompt=strat_user,
                             model=openai_model,
                             vector_store_id=vs_id,
+                            kb_filter=build_kb_filter(project_id),
                             temperature=0.5,
                             max_tokens=2000,
                         )
@@ -973,6 +991,9 @@ with analysis_section:
 
                 used_model = openai_model if openai_client else groq_model
                 save_analysis(audio_id, used_model, result["text"], result["citations"])
+                st.session_state[f"pr_kb_search_audio_{audio_id}"] = result.get(
+                    "search", {}
+                )
 
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 kb_doc_name = f"analise_ia_{_slugify(sid)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
@@ -984,7 +1005,9 @@ with analysis_section:
                     text=result.get("text", ""),
                     citations=result.get("citations", []),
                 )
-                kb_ok, kb_msg = _append_result_to_kb(kb_doc_name, kb_doc)
+                kb_ok, kb_msg = _append_result_to_kb(
+                    kb_doc_name, kb_doc, project_id, sid
+                )
 
                 st.success("Análise salva!")
                 if kb_ok:
@@ -1244,7 +1267,9 @@ with quality_section:
                     checks=new_checks,
                     coverage=cov_merged,
                 )
-                kb_ok, kb_msg = _append_result_to_kb(kb_doc_name, kb_doc)
+                kb_ok, kb_msg = _append_result_to_kb(
+                    kb_doc_name, kb_doc, project_id, sid
+                )
 
                 st.success("Qualidade reverificada!")
                 if kb_ok:

@@ -11,7 +11,11 @@ from datetime import datetime
 import streamlit as st
 
 from utils import auth, ui
-from utils.ai_provider import get_openai_client, get_vector_store_id
+from utils.ai_provider import (
+    get_openai_client,
+    get_vector_store_id,
+    list_vector_store_documents,
+)
 from utils.icons import icon
 from utils.organization_data import load_module_state
 
@@ -94,11 +98,7 @@ def _module_status(module_key: str) -> tuple[str, bool]:
             client = get_openai_client()
             if client:
                 try:
-                    documents = list(
-                        client.vector_stores.files.list(
-                            vector_store_id=vector_store_id
-                        )
-                    )
+                    documents = list_vector_store_documents(vector_store_id)
                     text += " · {} docs".format(len(documents))
                 except Exception:
                     text += " · base configurada"

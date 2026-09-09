@@ -126,7 +126,6 @@ def init_db() -> None:
                 questions TEXT,
                 marcas TEXT,
                 briefing_text TEXT,
-                vector_store_id TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 updated_at TEXT DEFAULT (datetime('now','localtime'))
             );
@@ -234,7 +233,6 @@ def create_project(
     questions: str = "",
     marcas: str = "",
     briefing_text: str = "",
-    vector_store_id: str = "",
 ) -> int:
     """Cria um novo projeto de Jornada de Compra."""
     init_db()
@@ -244,8 +242,8 @@ def create_project(
             """
             INSERT INTO jc_projects (
                 organization_id, name, categoria, historico, problemas,
-                questions, marcas, briefing_text, vector_store_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                questions, marcas, briefing_text
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 org_id,
@@ -256,7 +254,6 @@ def create_project(
                 questions.strip(),
                 marcas.strip(),
                 briefing_text.strip(),
-                vector_store_id.strip(),
             ),
         )
         return cursor.lastrowid
@@ -271,7 +268,6 @@ def update_project(
     questions: Optional[str] = None,
     marcas: Optional[str] = None,
     briefing_text: Optional[str] = None,
-    vector_store_id: Optional[str] = None,
 ) -> bool:
     """Atualiza dados de um projeto existente."""
     init_db()
@@ -287,14 +283,13 @@ def update_project(
     new_q = questions if questions is not None else current["questions"]
     new_marcas = marcas if marcas is not None else current["marcas"]
     new_btext = briefing_text if briefing_text is not None else current["briefing_text"]
-    new_vs = vector_store_id if vector_store_id is not None else current["vector_store_id"]
 
     with _connect() as conn:
         conn.execute(
             """
             UPDATE jc_projects
             SET name = ?, categoria = ?, historico = ?, problemas = ?,
-                questions = ?, marcas = ?, briefing_text = ?, vector_store_id = ?,
+                questions = ?, marcas = ?, briefing_text = ?,
                 updated_at = datetime('now','localtime')
             WHERE id = ? AND organization_id = ?
             """,
@@ -306,7 +301,6 @@ def update_project(
                 new_q,
                 new_marcas,
                 new_btext,
-                new_vs,
                 project_id,
                 org_id,
             ),

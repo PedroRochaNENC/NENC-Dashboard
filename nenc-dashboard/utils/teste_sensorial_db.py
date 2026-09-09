@@ -295,15 +295,30 @@ def update_project(
 
 
 def delete_project(project_id: int) -> bool:
-    """Exclui um projeto e todos os seus registros associados."""
+    """Exclui um projeto e todos os seus registros associados.
+
+    Aqui o vector store e do projeto, entao apagar o projeto e apagar a base:
+    sem isto ela fica na conta da OpenAI sem nenhuma referencia no banco —
+    invisivel para todo mundo e cobrada do mesmo jeito.
+    """
     init_db()
     org_id = _active_organization_id()
+    projeto = get_project(project_id) or {}
     with _connect() as conn:
         cursor = conn.execute(
             "DELETE FROM ts_projects WHERE id = ? AND organization_id = ?",
             (project_id, org_id),
         )
-        return cursor.rowcount > 0
+        removido = cursor.rowcount > 0
+
+    if removido and projeto.get("vector_store_id"):
+        try:
+            from utils import kb_cleanup
+
+            kb_cleanup.delete_vector_store(projeto["vector_store_id"])
+        except Exception:
+            pass
+    return removido
 
 
 # ---------------------------------------------------------------------------

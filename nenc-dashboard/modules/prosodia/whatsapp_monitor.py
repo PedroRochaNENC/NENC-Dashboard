@@ -46,10 +46,12 @@ from utils.prosodia_prompts import (
     build_prosodia_user_prompt,
 )
 from utils.ai_provider import (
+    add_document_to_vector_store,
     get_openai_client,
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils.kb_attributes import build_kb_filter, project_document
 from utils import ui
 from utils.icons import page_title
 from utils.organization_data import (
@@ -484,29 +486,37 @@ with tab_audios:
                                     # 4. Enviar para OpenAI KB
                                     file_id_prosodia = None
                                     file_id_transcricao = None
-                                    if openai_client:
+                                    if openai_client and vs_id:
                                         try:
                                             if json_bytes:
-                                                fp = openai_client.files.create(
-                                                    file=(f"Prosodia-{session_id}.json", _io.BytesIO(json_bytes), "application/json"),
-                                                    purpose="assistants"
+                                                documento = add_document_to_vector_store(
+                                                    vs_id,
+                                                    f"Prosodia-{session_id}.json",
+                                                    json_bytes,
+                                                    project_document(
+                                                        "prosodia",
+                                                        project_id,
+                                                        session_id=session_id,
+                                                        tipo="prosodia",
+                                                    ),
+                                                    wait=False,
                                                 )
-                                                file_id_prosodia = fp.id
-                                                if vs_id:
-                                                    openai_client.vector_stores.files.create(
-                                                        vector_store_id=vs_id, file_id=fp.id
-                                                    )
+                                                file_id_prosodia = documento.id
                                             if csv_bytes:
                                                 # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
-                                                fc = openai_client.files.create(
-                                                    file=(f"Transcricao-{session_id}.txt", _io.BytesIO(csv_bytes), "text/plain"),
-                                                    purpose="assistants"
+                                                documento = add_document_to_vector_store(
+                                                    vs_id,
+                                                    f"Transcricao-{session_id}.txt",
+                                                    csv_bytes,
+                                                    project_document(
+                                                        "prosodia",
+                                                        project_id,
+                                                        session_id=session_id,
+                                                        tipo="transcricao",
+                                                    ),
+                                                    wait=False,
                                                 )
-                                                file_id_transcricao = fc.id
-                                                if vs_id:
-                                                    openai_client.vector_stores.files.create(
-                                                        vector_store_id=vs_id, file_id=fc.id
-                                                    )
+                                                file_id_transcricao = documento.id
                                             update_audio_openai_ids(audio_id, file_id_prosodia, file_id_transcricao)
                                         except Exception as e:
                                             st.warning(f"[{session_id}] Falha no upload para KB: {e}")
@@ -567,7 +577,8 @@ with tab_audios:
                                             system_prompt=system_prompt,
                                             user_prompt=user_prompt,
                                             model="gpt-4.1-mini",
-                                            vector_store_id=vs_id
+                                            vector_store_id=vs_id,
+                                            kb_filter=build_kb_filter(project_id),
                                         )
                                     save_analysis(
                                         audio_id=audio_id,

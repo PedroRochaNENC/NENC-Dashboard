@@ -127,11 +127,15 @@ Por favor, elabore um diagnóstico neurocientífico completo sobre a experiênci
                         max_tokens=3500,
                     )
                     full_text = res["text"]
-                    citations = [c.get("filename", "") for c in res.get("citations", [])]
+                    # A citacao inteira: guardar so o nome jogava fora o trecho
+                    # e o score que a busca devolveu.
+                    citations = res.get("citations", [])
 
                     # Salvar no Banco SQLite
                     teste_sensorial_db.save_analysis(project_id, analysis_text=full_text, model=ai_model, citations=citations)
                     st.session_state["ts_last_ai_text"] = full_text
+                    st.session_state["ts_last_ai_search"] = res.get("search", {})
+                    st.session_state["ts_last_ai_citations"] = citations
                     st.success("Análise sensorial salva no banco de dados com sucesso!")
                     st.markdown(full_text)
                 except Exception as e:
@@ -141,6 +145,13 @@ Por favor, elabore um diagnóstico neurocientífico completo sobre a experiênci
             st.divider()
             st.markdown("### Diagnóstico Recente")
             st.markdown(st.session_state["ts_last_ai_text"])
+            with st.expander("Referências da Base de Conhecimento"):
+                ui.knowledge_base_references(
+                    {
+                        "citations": st.session_state.get("ts_last_ai_citations", []),
+                        "search": st.session_state.get("ts_last_ai_search", {}),
+                    }
+                )
 
 with tab_history:
     st.subheader("Histórico de Análises Salvas no Banco")
@@ -152,7 +163,7 @@ with tab_history:
             with st.expander(f"Análise Sensorial de {item['created_at']} (Modelo: {item['model']})"):
                 st.markdown(item["analysis_text"])
                 if item.get("citations"):
-                    st.caption(f"Fontes: {', '.join(item['citations'])}")
+                    ui.knowledge_base_references({"citations": item["citations"]})
 
 # Navegação
 st.divider()

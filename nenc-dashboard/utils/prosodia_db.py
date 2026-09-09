@@ -642,6 +642,7 @@ def delete_project(project_id: int) -> None:
             )
     if result.rowcount:
         _audit("prosodia.project.delete", "project", project_id, organization_id or 0, write=True)
+        _remove_from_knowledge_base(project_id=project_id, whole_project=True)
 
 
 # ---------------------------------------------------------------------------
@@ -983,10 +984,53 @@ def get_audio(audio_id: int) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def _audio_kb_reference(audio_id: int) -> Dict:
+    """So os campos que a limpeza usa.
+
+    `get_audio` faz SELECT * e traz os blobs de prosodia e transcricao junto —
+    peso desnecessario numa funcao chamada uma vez por sessao durante a
+    ingestao em lote.
+    """
+
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT project_id, session_id,
+                      openai_file_id_prosodia, openai_file_id_transcricao
+               FROM audios WHERE id = ?""",
+            (audio_id,),
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def _remove_from_knowledge_base(
+    project_id=None, session_id=None, file_ids=(), whole_project=False
+) -> None:
+    """Tira da base de conhecimento o que o registro apagado tinha deixado la.
+
+    Best-effort e importado aqui dentro de proposito: a verdade e este banco, e
+    uma indisponibilidade da OpenAI nao pode impedir ninguem de apagar um
+    projeto. O que escapar e recolhido por scripts/cleanup_orphan_kb_files.py.
+    """
+
+    try:
+        from utils import kb_cleanup
+
+        if whole_project:
+            kb_cleanup.remove_documents_for_project(project_id, file_ids)
+        elif session_id:
+            kb_cleanup.remove_documents_for_audio(project_id, session_id, file_ids)
+        else:
+            kb_cleanup.remove_files(file_ids)
+    except Exception:
+        pass
+
+
 def delete_audio(audio_id: int) -> None:
     """Remove um áudio (cascata: análises, quality_checks)."""
     _require_write()
     organization_id = _active_organization_id()
+    # Antes do DELETE: depois nao ha de onde tirar a sessao nem os ids OpenAI.
+    audio = _audio_kb_reference(audio_id)
     with _connect() as conn:
         if not organization_id:
             result = conn.execute("DELETE FROM audios WHERE id = ?", (audio_id,))
@@ -997,6 +1041,14 @@ def delete_audio(audio_id: int) -> None:
             )
     if result.rowcount:
         _audit("prosodia.audio.delete", "audio", audio_id, organization_id or 0, write=True)
+        _remove_from_knowledge_base(
+            project_id=audio.get("project_id"),
+            session_id=audio.get("session_id"),
+            file_ids=(
+                audio.get("openai_file_id_prosodia"),
+                audio.get("openai_file_id_transcricao"),
+            ),
+        )
 
 
 def update_audio_openai_ids(
@@ -1007,6 +1059,10 @@ def update_audio_openai_ids(
     """Atualiza os IDs de arquivo OpenAI de um áudio."""
     _require_write()
     organization_id = _active_organization_id()
+    # Reprocessar sobrescreve estes ids. Sem apagar os anteriores, cada
+    # reprocessamento deixa mais uma copia da mesma entrevista na base — e a
+    # referencia para remove-la se perde justamente nesta linha.
+    anterior = _audio_kb_reference(audio_id)
     with _connect() as conn:
         if not organization_id:
             result = conn.execute(
@@ -1024,6 +1080,18 @@ def update_audio_openai_ids(
             )
     if result.rowcount:
         _audit("prosodia.audio.update_openai_ids", "audio", audio_id, organization_id or 0, write=True)
+        substituidos = [
+            anterior.get("openai_file_id_prosodia"),
+            anterior.get("openai_file_id_transcricao"),
+        ]
+        novos = {file_id_prosodia, file_id_transcricao}
+        _remove_from_knowledge_base(
+            file_ids=[
+                file_id
+                for file_id in substituidos
+                if file_id and file_id not in novos
+            ]
+        )
 
 
 def update_audio_content(

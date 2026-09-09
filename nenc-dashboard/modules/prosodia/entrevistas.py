@@ -97,11 +97,25 @@ if project and project.get("quality_thresholds"):
 # Cabecalho
 # ------------------------------------------------------------------
 ui.breadcrumb("NencBoost", project["name"], "Entrevistas")
-page_title(
-    "list-bullets",
-    "Entrevistas",
-    "{} no projeto".format(len(get_audios_for_interviews(project_id))),
+
+# Os dois saltos que mais se usam a partir daqui. Ambos os destinos ja estao
+# no menu do projeto aberto, entao `switch_page` direto basta — nao ha
+# mudanca de nivel para o `_navigate_to` cobrir.
+titulo, ir_analise, voltar = st.columns(
+    [6, 1.7, 1.7], vertical_alignment="center"
 )
+with titulo:
+    page_title(
+        "list-bullets",
+        "Entrevistas",
+        "{} no projeto".format(len(get_audios_for_interviews(project_id))),
+    )
+with ir_analise:
+    if st.button("Análise Geral", width="stretch", key="en_ir_analise"):
+        st.switch_page("modules/prosodia/analise_geral.py")
+with voltar:
+    if st.button("← Projetos", width="stretch", key="en_voltar_projetos"):
+        st.switch_page("modules/prosodia/projetos.py")
 
 # ------------------------------------------------------------------
 # Sincronização com WhatsApp API
@@ -283,10 +297,12 @@ if wa_configured():
                     build_prosodia_user_prompt,
                 )
                 from utils.ai_provider import (
+                    add_document_to_vector_store,
                     get_openai_client,
                     get_prosodia_vector_store_id,
                     create_analysis as ai_create_analysis,
                 )
+                from utils.kb_attributes import build_kb_filter, project_document
                 import io as _io
 
                 questions = get_project_questions(project_id)
@@ -342,29 +358,37 @@ if wa_configured():
                     # -- Upload OpenAI KB --
                     file_id_prosodia = None
                     file_id_transcricao = None
-                    if openai_client:
+                    if openai_client and vs_id:
                         try:
                             if json_bytes:
-                                fp = openai_client.files.create(
-                                    file=(f"Prosodia-{session_id}.json", _io.BytesIO(json_bytes), "application/json"),
-                                    purpose="assistants",
+                                documento = add_document_to_vector_store(
+                                    vs_id,
+                                    f"Prosodia-{session_id}.json",
+                                    json_bytes,
+                                    project_document(
+                                        "prosodia",
+                                        project_id,
+                                        session_id=session_id,
+                                        tipo="prosodia",
+                                    ),
+                                    wait=False,
                                 )
-                                file_id_prosodia = fp.id
-                                if vs_id:
-                                    openai_client.vector_stores.files.create(
-                                        vector_store_id=vs_id, file_id=fp.id
-                                    )
+                                file_id_prosodia = documento.id
                             if csv_bytes:
                                 # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
-                                fc = openai_client.files.create(
-                                    file=(f"Transcricao-{session_id}.txt", _io.BytesIO(csv_bytes), "text/plain"),
-                                    purpose="assistants",
+                                documento = add_document_to_vector_store(
+                                    vs_id,
+                                    f"Transcricao-{session_id}.txt",
+                                    csv_bytes,
+                                    project_document(
+                                        "prosodia",
+                                        project_id,
+                                        session_id=session_id,
+                                        tipo="transcricao",
+                                    ),
+                                    wait=False,
                                 )
-                                file_id_transcricao = fc.id
-                                if vs_id:
-                                    openai_client.vector_stores.files.create(
-                                        vector_store_id=vs_id, file_id=fc.id
-                                    )
+                                file_id_transcricao = documento.id
                             update_audio_openai_ids(audio_id, file_id_prosodia, file_id_transcricao)
                         except Exception as e:
                             st.warning(f"[{session_id}] Falha no upload para KB: {e}")
@@ -444,6 +468,7 @@ if wa_configured():
                                 user_prompt=user_prompt,
                                 model="gpt-4.1-mini",
                                 vector_store_id=vs_id,
+                                kb_filter=build_kb_filter(project_id),
                                 temperature=0.5,
                                 max_tokens=3000,
                             )
@@ -793,7 +818,16 @@ else:
                                 from utils.prosodia_db import get_project_questions, save_quality_check, save_analysis
                                 from utils.prosodia_quality import run_quality_checks, check_question_coverage_keywords, check_question_coverage_ai, merge_coverage, compute_overall_status
                                 from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
-                                from utils.ai_provider import get_openai_client, get_prosodia_vector_store_id, create_analysis as ai_create_analysis
+                                from utils.ai_provider import (
+                                    add_document_to_vector_store,
+                                    get_openai_client,
+                                    get_prosodia_vector_store_id,
+                                    create_analysis as ai_create_analysis,
+                                )
+                                from utils.kb_attributes import (
+                                    build_kb_filter,
+                                    project_document,
+                                )
                                 
                                 questions = get_project_questions(project_id)
                                 openai_client = get_openai_client()
@@ -824,13 +858,18 @@ else:
                                             f"- Checks OK: {n_pass}\n- Alertas: {n_warn}\n- Problemas: {n_fail}\n"
                                         )
                                         q_name = f"qualidade_entrevista_{selected_audio['session_id']}.md"
-                                        uploaded_q = openai_client.files.create(
-                                            file=(q_name, quality_md.encode("utf-8")),
-                                            purpose="assistants"
-                                        )
-                                        openai_client.vector_stores.files.create(
-                                            vector_store_id=vs_id,
-                                            file_id=uploaded_q.id
+                                        add_document_to_vector_store(
+                                            vs_id,
+                                            q_name,
+                                            quality_md.encode("utf-8"),
+                                            project_document(
+                                                "prosodia",
+                                                project_id,
+                                                escopo="analise",
+                                                session_id=selected_audio["session_id"],
+                                                tipo="qualidade",
+                                            ),
+                                            wait=False,
                                         )
                                     except Exception:
                                         pass
@@ -861,6 +900,7 @@ else:
                                     user_prompt=user_prompt,
                                     model="gpt-4.1-mini",
                                     vector_store_id=vs_id,
+                                    kb_filter=build_kb_filter(project_id),
                                     temperature=0.5,
                                     max_tokens=3000,
                                 )
@@ -877,13 +917,18 @@ else:
                                             f"## Resultado\n\n{result_ai['text']}"
                                         )
                                         a_name = f"analise_ia_{selected_audio['session_id']}.md"
-                                        uploaded_a = openai_client.files.create(
-                                            file=(a_name, analysis_md.encode("utf-8")),
-                                            purpose="assistants"
-                                        )
-                                        openai_client.vector_stores.files.create(
-                                            vector_store_id=vs_id,
-                                            file_id=uploaded_a.id
+                                        add_document_to_vector_store(
+                                            vs_id,
+                                            a_name,
+                                            analysis_md.encode("utf-8"),
+                                            project_document(
+                                                "prosodia",
+                                                project_id,
+                                                escopo="analise",
+                                                session_id=selected_audio["session_id"],
+                                                tipo="analise_ia",
+                                            ),
+                                            wait=False,
                                         )
                                     except Exception:
                                         pass

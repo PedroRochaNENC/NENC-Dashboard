@@ -50,6 +50,50 @@ deve selecionar a organizacao proprietaria e registralos na tela de configuracao
 da API WhatsApp. Vector stores legados devem ser adotados somente com
 `NENC_LEGACY_ORGANIZATION_ID` apontando para a mesma organizacao.
 
+## Base de conhecimento: atributos e limpeza
+
+A analise filtra a base pelo projeto aberto: cada documento carrega `escopo`
+(`referencia`, `projeto` ou `analise`) e, quando e material de projeto,
+`project_id`. Documento sem atributo nao casa com filtro nenhum e some da busca,
+entao o acervo anterior precisa ser carimbado **antes** de o filtro entrar em
+producao. Confira o dry-run e so entao aplique:
+
+```powershell
+py scripts/backfill_kb_attributes.py --database C:\dados\nenc-insights.db
+py scripts/backfill_kb_attributes.py --database C:\dados\nenc-insights.db --apply
+```
+
+O relatorio marca com `SEM PROJETO` o material que parece de projeto mas nao tem
+projeto correspondente no banco: ele fica fora de qualquer busca filtrada ate ser
+removido.
+
+Apagar projeto ou audio ja remove os documentos correspondentes da OpenAI. Para o
+que ficou para tras — inclusive vector stores de projetos do Teste Sensorial ja
+excluidos — rode a limpeza, tambem em dry-run primeiro:
+
+```powershell
+py scripts/cleanup_orphan_kb_files.py --database C:\dados\nenc-insights.db
+py scripts/cleanup_orphan_kb_files.py --database C:\dados\nenc-insights.db --apply
+```
+
+Acrescente `--apagar-stores` ao `--apply` para apagar tambem os vector stores sem
+dono no banco. Transcricao de entrevista e dado pessoal: esta limpeza e o que
+garante que ela sai da OpenAI quando sai do banco.
+
+## Historico de analises
+
+Cada geracao de analise insere uma linha nova, com o texto inteiro, e nada e
+removido: o historico de um audio ou de um projeto cresce sem limite. A poda
+mantem as N mais recentes de cada dono e nunca remove a ultima de ninguem.
+
+```powershell
+py scripts/prune_analysis_history.py --database C:\dados\nenc-insights.db
+py scripts/prune_analysis_history.py --database C:\dados\nenc-insights.db --keep 10 --apply
+```
+
+Faca a copia do banco antes do `--apply`: o texto das analises antigas nao tem
+outra copia.
+
 ## Recuperacao de administrador
 
 O bootstrap nao deve ser reutilizado para recuperar acesso. Um administrador
@@ -91,3 +135,8 @@ Execute estes testes em uma base nao produtiva apos cada deploy relevante:
    ativa.
 5. Confirme que somente o administrador global pode abrir a configuracao de
    WhatsApp e que as credenciais nao aparecem em telas de usuarios comuns.
+6. Com dois projetos na mesma organizacao, gere a analise de um deles com a base
+   ligada e confirme, na aba Referencias, que nenhum documento do outro projeto
+   aparece.
+7. Exclua um audio de teste e confirme, pela pagina de Base de Conhecimento, que
+   a transcricao dele saiu da lista.

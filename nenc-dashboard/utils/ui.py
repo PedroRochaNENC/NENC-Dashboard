@@ -321,3 +321,58 @@ def selection_bar(
             ):
                 triggered = key
     return triggered
+
+
+# ---------------------------------------------------------------------------
+# Base de conhecimento
+# ---------------------------------------------------------------------------
+
+def knowledge_base_references(result: dict) -> None:
+    """Mostra o que a base de conhecimento devolveu para uma analise.
+
+    "Nenhuma citacao" cobria tres situacoes muito diferentes: a base nao foi
+    consultada, foi consultada e nao achou nada, ou achou e o texto nao citou.
+    Quem le a analise precisa saber em qual delas esta antes de concluir que a
+    base nao serve. Analises antigas nao guardam o que a busca fez; nesse caso
+    so as citacoes aparecem.
+    """
+    citations = result.get("citations") or []
+    search = result.get("search") or {}
+
+    if citations:
+        for position, citation in enumerate(citations, 1):
+            # O Teste Sensorial gravou por um tempo so o nome do arquivo; o
+            # historico dele continua sendo lido por esta mesma funcao.
+            if not isinstance(citation, dict):
+                citation = {"filename": str(citation)}
+            title = "**[{}]** {}".format(
+                position, citation.get("filename") or "Documento"
+            )
+            score = citation.get("score") or 0
+            if score:
+                title += " · relevância {:.2f}".format(score)
+            st.markdown(title)
+            quote = (citation.get("quote") or "").strip()
+            if quote:
+                st.caption(quote[:400])
+    elif not search:
+        st.info("Nenhuma citação de documentos da base nesta análise.")
+    elif not search.get("available"):
+        st.info("A base de conhecimento não foi usada nesta análise.")
+    elif not search.get("searched"):
+        st.warning(
+            "A base estava ligada, mas o modelo não chegou a consultá-la."
+        )
+    elif search.get("excerpts"):
+        st.info(
+            "A base foi consultada e devolveu {} trecho(s), mas a análise não "
+            "citou nenhum documento.".format(search.get("excerpts"))
+        )
+    else:
+        st.info("A base foi consultada e não encontrou nada relacionado.")
+
+    queries = search.get("queries") or []
+    if queries:
+        # Sem expander: as telas de analise chamam esta funcao de dentro de um,
+        # e o Streamlit nao aninha expanders.
+        st.caption("Buscas feitas na base: " + " · ".join(queries))

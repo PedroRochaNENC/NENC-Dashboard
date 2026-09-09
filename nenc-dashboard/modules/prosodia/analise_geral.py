@@ -42,10 +42,12 @@ from utils.prosodia_prompts import (
     build_project_user_prompt,
 )
 from utils.ai_provider import (
+    add_document_to_vector_store,
     get_openai_client,
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
 )
+from utils.kb_attributes import build_kb_filter, project_document
 
 init_db()
 
@@ -213,7 +215,9 @@ def _build_project_analysis_pdf(
     return buf.getvalue()
 
 
-def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
+def _append_result_to_kb(
+    filename: str, content: str, project_id=None
+) -> tuple[bool, str]:
     client = get_openai_client()
     prosodia_vs_id = get_prosodia_vector_store_id()
 
@@ -223,13 +227,12 @@ def _append_result_to_kb(filename: str, content: str) -> tuple[bool, str]:
         return False, "A base de conhecimento do NencBoost nao esta configurada para a organizacao ativa."
 
     try:
-        uploaded = client.files.create(
-            file=(filename, content.encode("utf-8")),
-            purpose="assistants",
-        )
-        client.vector_stores.files.create(
-            vector_store_id=prosodia_vs_id,
-            file_id=uploaded.id,
+        add_document_to_vector_store(
+            prosodia_vs_id,
+            filename,
+            content.encode("utf-8"),
+            project_document("prosodia", project_id, escopo="analise"),
+            wait=False,
         )
         return True, filename
     except Exception as e:
@@ -1077,11 +1080,17 @@ if latest_analysis:
             use_container_width=True,
         )
 
-    citations = latest_analysis.get("citations", [])
-    if citations:
-        with st.expander("Referencias da Base de Conhecimento"):
-            for i, cit in enumerate(citations, 1):
-                st.markdown(f"**[{i}]** {cit.get('filename', 'Documento')} - _{cit.get('quote', '')}_")
+    with st.expander("Referencias da Base de Conhecimento"):
+        ui.knowledge_base_references(
+            {
+                "citations": latest_analysis.get("citations", []),
+                # A tela recarrega depois de salvar e o banco guarda so as
+                # citacoes: o que a busca fez fica na sessao desta rodada.
+                "search": st.session_state.get(
+                    f"pr_kb_search_project_{project_id}", {}
+                ),
+            }
+        )
 
     history = get_project_analyses(project_id)
     with st.expander(f"Historico de analises gerais ({len(history)} registros)"):
@@ -1153,6 +1162,7 @@ if latest_analysis:
                                 user_prompt=chat_user_prompt,
                                 model=openai_model,
                                 vector_store_id=chat_vs_id,
+                                kb_filter=build_kb_filter(project_id),
                                 temperature=0.7,
                                 max_tokens=1500,
                             )
@@ -1248,6 +1258,7 @@ if st.button(btn_label, type="primary"):
                         user_prompt=user_prompt,
                         model=openai_model,
                         vector_store_id=vs_id,
+                        kb_filter=build_kb_filter(project_id),
                         temperature=0.5,
                         max_tokens=3500,
                     )
@@ -1282,6 +1293,7 @@ if st.button(btn_label, type="primary"):
                         user_prompt=strat_user,
                         model=openai_model,
                         vector_store_id=vs_id,
+                        kb_filter=build_kb_filter(project_id),
                         temperature=0.5,
                         max_tokens=2200,
                     )
@@ -1327,6 +1339,9 @@ if st.button(btn_label, type="primary"):
 
             used_model = openai_model if openai_client else groq_model
             save_project_analysis(project_id, used_model, result.get("text", ""), result.get("citations", []))
+            st.session_state[f"pr_kb_search_project_{project_id}"] = result.get(
+                "search", {}
+            )
 
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             kb_doc_name = (
@@ -1340,7 +1355,14 @@ if st.button(btn_label, type="primary"):
                 text=result.get("text", ""),
                 citations=result.get("citations", []),
             )
-            kb_ok, kb_msg = _append_result_to_kb(kb_doc_name, kb_doc)
+            # Devolver a analise para a base so faz sentido para quem esta
+            # usando a base: antes isto rodava ate com ela desligada.
+            if use_kb:
+                kb_ok, kb_msg = _append_result_to_kb(
+                    kb_doc_name, kb_doc, project_id
+                )
+            else:
+                kb_ok, kb_msg = False, "base de conhecimento desligada nesta analise"
 
             st.success("Analise geral salva!")
             if kb_ok:

@@ -504,11 +504,14 @@ else:
             try:
                 if is_deep:
                     # Step 1: Statistical analysis
+                    # Sem a base: esta etapa e aritmetica sobre as tabelas, e
+                    # consultar em ambas as etapas paga duas buscas pelo mesmo
+                    # contexto. A literatura entra na interpretacao, abaixo.
                     stat_result = create_analysis(
                         system_prompt=NEURO_SYSTEM_PROMPT_STATISTICAL,
                         user_prompt=user_prompt,
                         model=ai_model,
-                        vector_store_id=vs_id,
+                        vector_store_id=None,
                         temperature=0.3,
                         max_tokens=3000,
                     )
@@ -543,14 +546,8 @@ else:
                         st.markdown(strat_result["text"])
 
                     with tab_refs:
-                        all_citations = stat_result["citations"] + strat_result["citations"]
-                        if all_citations:
-                            for i, cit in enumerate(all_citations, 1):
-                                st.markdown(f"**[{i}]** {cit['filename']}")
-                                if cit.get("quote"):
-                                    st.caption(cit["quote"][:300])
-                        else:
-                            st.info("Nenhuma citação de documentos da base nesta análise.")
+                        # So a etapa estrategica consulta a base.
+                        ui.knowledge_base_references(strat_result)
 
                     st.session_state["jc_ai_result"] = (
                         "## Análise Estatística\n\n" + stat_result["text"]
@@ -568,7 +565,7 @@ else:
                         max_tokens=4000,
                     )
 
-                    if result["citations"]:
+                    if vs_id:
                         tab_analysis, tab_refs = st.tabs([
                             "Análise",
                             "Referências",
@@ -576,10 +573,7 @@ else:
                         with tab_analysis:
                             st.markdown(result["text"])
                         with tab_refs:
-                            for i, cit in enumerate(result["citations"], 1):
-                                st.markdown(f"**[{i}]** {cit['filename']}")
-                                if cit.get("quote"):
-                                    st.caption(cit["quote"][:300])
+                            ui.knowledge_base_references(result)
                     else:
                         st.markdown(result["text"])
 

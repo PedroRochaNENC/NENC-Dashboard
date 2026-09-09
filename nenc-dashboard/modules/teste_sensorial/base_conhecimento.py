@@ -9,10 +9,14 @@ import streamlit as st
 from utils import auth, ui
 from utils.icons import page_title
 
-auth.require_module("teste_sensorial")
+user = auth.require_module("teste_sensorial")
 
 from utils import teste_sensorial_db
-from utils.ai_provider import get_openai_client
+from utils.ai_provider import (
+    add_document_to_vector_store,
+    get_openai_client,
+    list_vector_store_documents,
+)
 
 teste_sensorial_db.init_db()
 
@@ -48,6 +52,13 @@ if client is None:
     )
     st.stop()
 
+# Acesso ao modulo e leitura; alterar a base e escrita, e so administrador da
+# organizacao escreve. Cada acao repete a guarda no servidor: esconder o botao
+# organiza a tela, nao autoriza nada.
+pode_editar = auth.can_write(user)
+if not pode_editar:
+    st.info("Sua conta consulta a base de conhecimento, mas não pode alterá-la.")
+
 # ==================================================================
 # Seção 1: Configuração do Vector Store
 # ==================================================================
@@ -59,13 +70,20 @@ if vs_id:
     st.success(f"Vector Store ativo para o projeto: `{vs_id}`")
 else:
     st.warning("Este projeto ainda não possui um Vector Store para busca RAG.")
-    if st.button("Criar Vector Store para este Projeto", type="primary"):
+    if not pode_editar:
+        st.caption("Peça a um administrador da organização para criar a base.")
+    elif st.button("Criar Vector Store para este Projeto", type="primary"):
         with st.spinner("Criando vector store..."):
             try:
+                # Antes de criar na OpenAI: negar depois deixaria um vector
+                # store orfao, pago e sem dono no projeto.
+                auth.assert_module_write("teste_sensorial")
                 vs = client.vector_stores.create(name=f"TS - {project['name']}")
                 teste_sensorial_db.update_project(project_id, vector_store_id=vs.id)
                 st.success(f"Vector Store criado com sucesso: `{vs.id}`")
                 st.rerun()
+            except auth.AuthorizationError as error:
+                st.error(str(error))
             except Exception as e:
                 st.error(f"Erro ao criar vector store: {e}")
     st.stop()
@@ -76,31 +94,48 @@ else:
 st.divider()
 st.subheader("Upload de Documentos de Produto / Laudos")
 
-uploaded_files = st.file_uploader(
-    "Selecione laudos sensoriais, pesquisas ou fichas técnicas",
-    type=["pdf", "pptx", "docx", "txt", "csv", "md"],
-    accept_multiple_files=True,
-    key="ts_kb_upload",
-)
+if pode_editar:
+    uploaded_files = st.file_uploader(
+        "Selecione laudos sensoriais, pesquisas ou fichas técnicas",
+        type=["pdf", "pptx", "docx", "txt", "csv", "md"],
+        accept_multiple_files=True,
+        key="ts_kb_upload",
+    )
+else:
+    uploaded_files = None
+    st.caption("Somente administradores da organização enviam documentos.")
 
 if uploaded_files:
     if st.button("Indexar Documentos na Base do Projeto", type="primary"):
+        try:
+            auth.assert_module_write("teste_sensorial")
+        except auth.AuthorizationError as error:
+            st.error(str(error))
+            st.stop()
+
         progress = st.progress(0)
         for i, f in enumerate(uploaded_files):
             with st.spinner(f"Enviando {f.name}..."):
                 try:
-                    uploaded = client.files.create(
-                        file=(f.name, f.getvalue()),
-                        purpose="assistants",
+                    documento = add_document_to_vector_store(
+                        vs_id,
+                        f.name,
+                        f.getvalue(),
+                        {
+                            "escopo": "referencia",
+                            "modulo": "teste_sensorial",
+                            "projeto": project["name"],
+                            "project_id": project_id,
+                        },
                     )
-                    client.vector_stores.files.create(
-                        vector_store_id=vs_id,
-                        file_id=uploaded.id,
-                    )
-                    st.success(f"{f.name} indexado")
+                    if documento.status == "completed":
+                        st.success(f"{f.name} indexado")
+                    else:
+                        st.warning(f"{f.name}: {documento.status}")
                 except Exception as e:
                     st.error(f"Erro ao enviar {f.name}: {e}")
             progress.progress((i + 1) / len(uploaded_files))
+        list_vector_store_documents.clear()
         st.rerun()
 
 # ==================================================================
@@ -110,31 +145,41 @@ st.divider()
 st.subheader("Documentos Indexados no Projeto")
 
 try:
-    vs_files = client.vector_stores.files.list(vector_store_id=vs_id)
-    file_list = list(vs_files)
+    file_list = list_vector_store_documents(vs_id)
 except Exception as e:
     st.error(f"Erro ao listar arquivos: {e}")
     file_list = []
 
 if file_list:
-    st.metric("Total de documentos", len(file_list))
+    col_total, col_refresh = st.columns([3, 1])
+    with col_total:
+        st.metric("Total de documentos", len(file_list))
+    with col_refresh:
+        # A listagem fica em cache por um minuto: quem acabou de indexar um
+        # documento precisa de um jeito de acompanhar a mudanca de status.
+        if st.button("Atualizar lista", key="ts_kb_refresh"):
+            list_vector_store_documents.clear()
+            st.rerun()
 
-    for vf in file_list:
+    for document in file_list:
         col_name, col_status, col_action = st.columns([4, 2, 1])
 
-        try:
-            file_info = client.files.retrieve(vf.id)
-            filename = file_info.filename
-            size_kb = file_info.bytes / 1024 if file_info.bytes else 0
-        except Exception:
-            filename = vf.id
-            size_kb = 0
+        filename = document["filename"]
 
         with col_name:
-            st.text(f"{filename} ({size_kb:.1f} KB)")
+            st.text(f"{filename} ({document['size_kb']:.1f} KB)")
+            # Os metadados do envio existem para filtrar a busca; mostra-los e a
+            # unica forma de perceber um documento que subiu sem eles.
+            etiquetas = [
+                f"{chave}: {valor}"
+                for chave, valor in sorted(document.get("attributes", {}).items())
+                if chave not in ("escopo", "modulo")
+            ]
+            if etiquetas:
+                st.caption(" · ".join(etiquetas))
 
         with col_status:
-            status = vf.status
+            status = document["status"]
             if status == "completed":
                 st.success("Pronto")
             elif status == "in_progress":
@@ -143,14 +188,20 @@ if file_list:
                 st.error(status)
 
         with col_action:
-            if st.button("🗑️", key=f"del_ts_vs_{vf.id}", help=f"Remover {filename}"):
+            if pode_editar and st.button(
+                "🗑️", key=f"del_ts_vs_{document['id']}", help=f"Remover {filename}"
+            ):
                 try:
+                    auth.assert_module_write("teste_sensorial")
                     client.vector_stores.files.delete(
                         vector_store_id=vs_id,
-                        file_id=vf.id,
+                        file_id=document["id"],
                     )
-                    client.files.delete(vf.id)
+                    client.files.delete(document["id"])
+                    list_vector_store_documents.clear()
                     st.rerun()
+                except auth.AuthorizationError as error:
+                    st.error(str(error))
                 except Exception as e:
                     st.error(f"Erro: {e}")
 else:
@@ -171,24 +222,24 @@ test_query = st.text_input(
 if test_query and st.button("Buscar", key="btn_ts_kb_search"):
     with st.spinner("Consultando base de conhecimento..."):
         try:
-            response = client.responses.create(
-                model="gpt-4.1-mini",
-                input=test_query,
-                tools=[{
-                    "type": "file_search",
-                    "vector_store_ids": [vs_id],
-                }],
-                max_output_tokens=500,
+            # A busca crua, sem gerar texto: mostra os mesmos trechos que o
+            # file_search entregaria ao modelo, com o score de cada um. Era aqui
+            # que uma resposta bem escrita escondia uma base que nao devolvia nada.
+            found = list(
+                client.vector_stores.search(
+                    vector_store_id=vs_id,
+                    query=test_query,
+                    max_num_results=10,
+                )
             )
 
-            for item in response.output:
-                if item.type == "message":
-                    for content_block in item.content:
-                        if content_block.type == "output_text":
-                            st.markdown(content_block.text)
-                            for ann in getattr(content_block, "annotations", []):
-                                if ann.type == "file_citation":
-                                    st.caption(f"Fonte: {getattr(ann, 'filename', 'arquivo')}")
+            if not found:
+                st.info("Nenhum trecho encontrado para essa consulta.")
+            for result in found:
+                st.markdown(f"**{result.filename}** · relevância {result.score:.2f}")
+                for part in result.content:
+                    if part.type == "text":
+                        st.caption(part.text[:500])
         except Exception as e:
             st.error(f"Erro na busca: {e}")
 
