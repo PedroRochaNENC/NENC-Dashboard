@@ -1214,6 +1214,23 @@ def get_project_participations(project_id: int) -> List[Dict]:
         return resp.json()
 
 
+def suggest_next_qr_code(project_id: int, qr_codes: List[Dict]) -> str:
+    """Proximo codigo de rastreio livre, a partir do maior sufixo ja usado.
+
+    Contar os QR codes existentes nao serve: apagar um do meio faz a sugestao
+    cair sobre um codigo que ainda existe, e a API recusa com 400. Como o campo
+    do formulario e desabilitado, nao havia como corrigir pela tela.
+    """
+    prefix = f"{project_id:02d}-"
+    highest = 0
+    for qr in qr_codes:
+        code = str(qr.get("code") or "")
+        suffix = code[len(prefix):]
+        if code.startswith(prefix) and suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return f"{prefix}{highest + 1:02d}"
+
+
 def create_project_qr_code(
     project_id: int,
     name: str,

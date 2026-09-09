@@ -15,6 +15,7 @@ from utils.prosodia_db import (
 from utils.whatsapp_api_client import (
     build_whatsapp_deeplink,
     generate_qr_code_bytes,
+    suggest_next_qr_code,
 )
 
 
@@ -116,6 +117,34 @@ class TestQRVerificationText(unittest.TestCase):
             self.organization.id, database_path=self.database_path
         )
         self.assertEqual(numbers, ["5511975218007", "5516981360051"])
+
+
+class TestQRCodeSuggestion(unittest.TestCase):
+    """O codigo sugerido sai do maior sufixo, nunca da contagem de linhas."""
+
+    def test_first_code_of_a_project_without_qr_codes(self):
+        self.assertEqual(suggest_next_qr_code(5, []), "05-01")
+
+    def test_skips_gap_left_by_deleted_qr_codes(self):
+        qr_codes = [
+            {"code": "05-03"},
+            {"code": "05-04"},
+            {"code": "05-05"},
+            {"code": "05-06"},
+            {"code": "05-07"},
+        ]
+        # Cinco linhas, mas os codigos vao ate o 07: contar sugeriria o 05-06,
+        # que ainda esta em uso, e a API recusava a criacao com 400.
+        self.assertEqual(suggest_next_qr_code(5, qr_codes), "05-08")
+
+    def test_ignores_codes_from_other_projects_and_custom_codes(self):
+        qr_codes = [
+            {"code": "05-02"},
+            {"code": "PESQ-FONO-CARTAZ-A"},
+            {"code": "50-99"},
+            {"code": None},
+        ]
+        self.assertEqual(suggest_next_qr_code(5, qr_codes), "05-03")
 
 
 if __name__ == "__main__":

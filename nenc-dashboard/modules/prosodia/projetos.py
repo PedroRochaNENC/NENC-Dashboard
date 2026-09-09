@@ -154,6 +154,7 @@ else:
                     get_project_qr_codes,
                     get_project_participations,
                     create_project_qr_code,
+                    suggest_next_qr_code,
                     update_project_qr_code,
                     delete_project_qr_code,
                     generate_qr_code_bytes,
@@ -273,7 +274,7 @@ else:
                                 placeholder="Ex: Cartaz Recepção - Unidade Central",
                                 key=f"new_qr_name_{proj['id']}"
                             )
-                            suggested_code = f"{api_proj_id:02d}-{len(qr_codes)+1:02d}"
+                            suggested_code = suggest_next_qr_code(api_proj_id, qr_codes)
                             st.text_input(
                                 "Código de Rastreio (gerado automaticamente)",
                                 value=suggested_code,
