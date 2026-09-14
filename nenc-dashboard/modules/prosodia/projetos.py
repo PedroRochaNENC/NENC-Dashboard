@@ -275,11 +275,17 @@ else:
                                 key=f"new_qr_name_{proj['id']}"
                             )
                             suggested_code = suggest_next_qr_code(api_proj_id, qr_codes)
+                            # O codigo sugerido entra no key de proposito: o
+                            # `value` de um widget so vale na primeira vez que
+                            # aquele key aparece, entao um key fixo congelava o
+                            # campo no codigo de quando a pagina abriu. Quem vai
+                            # para a API sempre foi `suggested_code`, entao os
+                            # QR nasciam certos e so o texto na tela mentia.
                             st.text_input(
                                 "Código de Rastreio (gerado automaticamente)",
                                 value=suggested_code,
                                 disabled=True,
-                                key=f"new_qr_code_{proj['id']}"
+                                key=f"new_qr_code_{proj['id']}_{suggested_code}"
                             )
                             new_target_phone = st.selectbox(
                                 "Número WhatsApp Destino da Organização *",
