@@ -118,7 +118,14 @@ with users_tab:
     selected_rows = (
         selection.selection.rows if hasattr(selection, "selection") else []
     )
-    selected_user = visible_users[selected_rows[0]] if selected_rows else None
+    # A selecao guarda o indice da linha, e o indice sobrevive a mudanca da
+    # lista: depois de excluir, convidar ou trocar de organizacao ele pode
+    # apontar alem do fim. Indice que nao existe mais vale como nenhuma selecao.
+    selected_user = (
+        visible_users[selected_rows[0]]
+        if selected_rows and 0 <= selected_rows[0] < len(visible_users)
+        else None
+    )
 
     st.markdown(
         '<div style="display:flex;align-items:center;gap:.5rem;'
@@ -127,8 +134,9 @@ with users_tab:
         'color:var(--nenc-muted);margin:.2rem 0 .9rem">{i}{t}</div>'.format(
             i=icon("info", 15),
             t=(
-                "Administradores da organização recebem todos os módulos "
-                "automaticamente. Contas regulares recebem acesso módulo a módulo."
+                "Cada conta acessa só os módulos marcados para ela, inclusive "
+                "administradores da organização. Só o administrador global "
+                "alcança todos."
             ),
         ),
         unsafe_allow_html=True,
