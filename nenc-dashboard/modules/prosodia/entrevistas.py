@@ -689,7 +689,14 @@ else:
             selected_rows = getattr(selection, "rows", []) or []
 
     if selected_rows:
-        selected_audio = filtered[int(selected_rows[0])]
+        try:
+            row_idx = int(selected_rows[0])
+            if 0 <= row_idx < len(filtered):
+                selected_audio = filtered[row_idx]
+            else:
+                selected_audio = None
+        except (ValueError, IndexError):
+            selected_audio = None
 
 # ------------------------------------------------------------------
 # Ações da linha selecionada
@@ -954,6 +961,9 @@ else:
             if st.button("Confirmar exclusão", width="stretch", key=f"en_del_yes_{selected_id}"):
                 delete_audio(selected_id)
                 st.session_state.pop(f"confirm_del_interview_{selected_id}", None)
+                st.session_state.pop("en_interviews_table", None)
+                if st.session_state.get("pros_audio_id") == selected_id:
+                    st.session_state.pop("pros_audio_id", None)
                 st.rerun()
         with dc2:
             if st.button("Cancelar", width="stretch", key=f"en_del_no_{selected_id}"):

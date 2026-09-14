@@ -901,30 +901,33 @@ if not all_sinc.empty:
                 st.info("Selecione um momento na tabela acima para localizar a timeline correspondente.")
             else:
                 idx = int(selected_rows[0])
-                moment_row = top_moments.iloc[idx]
-                
-                target_sess = moment_row.get("session_id")
-                target_audio = next((a for a in audios if a.get("session_id") == target_sess), None)
-                
-                if target_audio:
-                    st.session_state["pros_audio_id"] = target_audio["id"]
-                    st.session_state["pros_timeline_focus"] = {
-                        "audio_id": target_audio["id"],
-                        "session_id": target_sess,
-                        "question": "Momento de Alta Ativação Geral",
-                        "seconds": float(moment_row.get("seconds", moment_row.get("start_s", 0.0))),
-                        "timestamp": str(moment_row.get("Timestamp", "")),
-                        "speaker": str(moment_row.get("SpeakerName", "")),
-                        "text": str(moment_row.get("Text", "")),
-                        "source": "Filtro de Ativação Consolidado",
-                    }
-                    # Cruza para o nivel da entrevista; ver `app.py`.
-                    st.session_state["_navigate_to"] = (
-                        "modules/prosodia/audio_timeline.py"
-                    )
-                    st.rerun()
+                if idx < 0 or idx >= len(top_moments):
+                    st.warning("Não foi possível identificar o momento selecionado.")
                 else:
-                    st.error("Não foi possível localizar o ID do áudio para esta entrevista.")
+                    moment_row = top_moments.iloc[idx]
+                    
+                    target_sess = moment_row.get("session_id")
+                    target_audio = next((a for a in audios if a.get("session_id") == target_sess), None)
+                
+                    if target_audio:
+                        st.session_state["pros_audio_id"] = target_audio["id"]
+                        st.session_state["pros_timeline_focus"] = {
+                            "audio_id": target_audio["id"],
+                            "session_id": target_sess,
+                            "question": "Momento de Alta Ativação Geral",
+                            "seconds": float(moment_row.get("seconds", moment_row.get("start_s", 0.0))),
+                            "timestamp": str(moment_row.get("Timestamp", "")),
+                            "speaker": str(moment_row.get("SpeakerName", "")),
+                            "text": str(moment_row.get("Text", "")),
+                            "source": "Filtro de Ativação Consolidado",
+                        }
+                        # Cruza para o nivel da entrevista; ver `app.py`.
+                        st.session_state["_navigate_to"] = (
+                            "modules/prosodia/audio_timeline.py"
+                        )
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível localizar o ID do áudio para esta entrevista.")
                     
         # Tabela de Tópicos Consolidados/Agrupados
         moments_list = []

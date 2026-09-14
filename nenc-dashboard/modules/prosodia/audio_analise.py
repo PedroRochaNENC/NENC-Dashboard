@@ -1208,19 +1208,22 @@ with quality_section:
                         st.info("Selecione um momento na tabela acima para localizar a timeline correspondente.")
                     else:
                         idx = int(selected_rows[0])
-                        moment = high_activations_list[idx]
-                        
-                        st.session_state["pros_timeline_focus"] = {
-                            "audio_id": audio_id,
-                            "session_id": sid,
-                            "question": "Momento de Maior Ativação Prosódica",
-                            "seconds": float(moment.get("seconds", 0.0)),
-                            "timestamp": str(moment.get("Timestamp", "")),
-                            "speaker": str(moment.get("SpeakerName", "")),
-                            "text": str(moment.get("Text", "")),
-                            "source": "Filtro de Ativação Individual",
-                        }
-                        st.switch_page("modules/prosodia/audio_timeline.py")
+                        if idx < 0 or idx >= len(high_activations_list):
+                            st.warning("Não foi possível identificar o momento selecionado.")
+                        else:
+                            moment = high_activations_list[idx]
+                            
+                            st.session_state["pros_timeline_focus"] = {
+                                "audio_id": audio_id,
+                                "session_id": sid,
+                                "question": "Momento de Maior Ativação Prosódica",
+                                "seconds": float(moment.get("seconds", 0.0)),
+                                "timestamp": str(moment.get("Timestamp", "")),
+                                "speaker": str(moment.get("SpeakerName", "")),
+                                "text": str(moment.get("Text", "")),
+                                "source": "Filtro de Ativação Individual",
+                            }
+                            st.switch_page("modules/prosodia/audio_timeline.py")
             else:
                 st.info("Nenhum momento de alta ativação calculado. Clique em 'Reverificar Qualidade' para gerar.")
     else:
