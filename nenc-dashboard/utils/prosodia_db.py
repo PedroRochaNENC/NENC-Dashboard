@@ -358,6 +358,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE audios ADD COLUMN whatsapp_message_id TEXT")
         if "duration_seconds" not in audio_cols:
             conn.execute("ALTER TABLE audios ADD COLUMN duration_seconds REAL")
+        if "qr_code_name" not in audio_cols:
+            conn.execute("ALTER TABLE audios ADD COLUMN qr_code_name TEXT")
 
         for table_name in (
             "projects",
@@ -656,8 +658,14 @@ def create_audio(
     transcricao_csv: Optional[bytes] = None,
     sincronizado_csv: Optional[bytes] = None,
     whatsapp_message_id: Optional[str] = None,
+    qr_code_name: Optional[str] = None,
 ) -> int:
-    """Salva um áudio com seus arquivos brutos. Retorna o ID gerado."""
+    """Salva um áudio com seus arquivos brutos. Retorna o ID gerado.
+
+    `qr_code_name` e o QR por onde o participante entrou, copiado da API na
+    importacao. A tabela de Entrevistas e a exportacao Power BI leem daqui para
+    nao depender da API no ar a cada render. Upload direto nao tem QR.
+    """
     _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
@@ -667,10 +675,10 @@ def create_audio(
         cur = conn.execute(
             """INSERT INTO audios
                (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-                whatsapp_message_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                whatsapp_message_id, qr_code_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (actual_org_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-             whatsapp_message_id),
+             whatsapp_message_id, qr_code_name or None),
         )
         audio_id = cur.lastrowid
     _audit("prosodia.audio.create", "audio", audio_id, actual_org_id, write=True)
@@ -825,6 +833,7 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.session_id,
                     a.created_at,
                     a.duration_seconds,
+                    a.qr_code_name,
                     a.openai_file_id_prosodia,
                     a.openai_file_id_transcricao,
                     (
@@ -868,6 +877,7 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.session_id,
                     a.created_at,
                     a.duration_seconds,
+                    a.qr_code_name,
                     a.openai_file_id_prosodia,
                     a.openai_file_id_transcricao,
                     (

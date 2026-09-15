@@ -218,6 +218,7 @@ if wa_configured():
                                     transcricao_csv=None,
                                     sincronizado_csv=None,
                                     whatsapp_message_id=wa_msg_id,
+                                    qr_code_name=a.get("qr_code_name") or a.get("qr_code_code"),
                                 )
                                 save_quality_check(
                                     audio_id=audio_id,
@@ -235,6 +236,7 @@ if wa_configured():
                                     transcricao_csv=None,
                                     sincronizado_csv=None,
                                     whatsapp_message_id=wa_msg_id,
+                                    qr_code_name=a.get("qr_code_name") or a.get("qr_code_code"),
                                 )
                                 save_quality_check(
                                     audio_id=audio_id,
@@ -346,6 +348,9 @@ if wa_configured():
                             transcricao_csv=csv_bytes,
                             sincronizado_csv=sinc_bytes,
                             whatsapp_message_id=wa_msg_id,
+                            qr_code_name=(
+                                api_audio.get("qr_code_name") or api_audio.get("qr_code_code")
+                            ),
                         )
                     else:
                         update_audio_content(
@@ -637,8 +642,19 @@ else:
             else:
                 quality = "Aprovado"
 
+        # Sem nome de QR, a origem decide o rotulo: upload direto nunca teve QR;
+        # entrevista do WhatsApp sem nome fica "Sem QR" e nao "Geral", porque
+        # pode so nao ter sido carimbada ainda (importada antes desta coluna).
+        if a.get("qr_code_name"):
+            qr_code_label = a["qr_code_name"]
+        elif str(a.get("session_id", "")).startswith("wa_"):
+            qr_code_label = "Sem QR"
+        else:
+            qr_code_label = "Upload direto"
+
         rows.append({
             "Sessão": a.get("session_id", ""),
+            "QR Code": qr_code_label,
             "Data": str(a.get("created_at", ""))[:10],
             "Duração": (
                 a.get("duration_str", "00:00")

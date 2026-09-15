@@ -432,6 +432,13 @@ with tab_audios:
                                 except Exception:
                                     pass
                             
+                            # A linha da tabela so carrega ID, telefone e mensagem; o QR
+                            # vem do registro completo da API, buscado junto com o escopo.
+                            api_audio_por_id = {
+                                str(api_audio.get("id")): api_audio
+                                for api_audio in audios_no_escopo
+                            }
+
                             # Iterar sobre as linhas selecionadas
                             for i, row in enumerate(selecionados.to_dict("records")):
                                 wa_msg_id = row["Mensagem ID"]
@@ -474,13 +481,18 @@ with tab_audios:
                                     json_bytes, csv_bytes, sinc_bytes = map_api_result_to_all_formats(result_json, session_id)
                                     
                                     # 3. Salvar no banco local
+                                    api_audio = api_audio_por_id.get(str(audio_api_id), {})
                                     audio_id = create_audio(
                                         project_id=project_id,
                                         session_id=session_id,
                                         prosodia_json=json_bytes,
                                         transcricao_csv=csv_bytes,
                                         sincronizado_csv=sinc_bytes,
-                                        whatsapp_message_id=wa_msg_id
+                                        whatsapp_message_id=wa_msg_id,
+                                        qr_code_name=(
+                                            api_audio.get("qr_code_name")
+                                            or api_audio.get("qr_code_code")
+                                        ),
                                     )
                                     
                                     # 4. Enviar para OpenAI KB
