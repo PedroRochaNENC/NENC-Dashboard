@@ -1335,19 +1335,36 @@ def get_quality_checks_history_for_project(project_id: int) -> List[Dict]:
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
-        rows = conn.execute(
-            """
-            SELECT q.*, a.project_id
-            FROM quality_checks q
-            JOIN audios a
-              ON a.id = q.audio_id
-             AND a.organization_id = q.organization_id
-            WHERE a.project_id = ?
-              AND q.organization_id = ?
-            ORDER BY q.created_at ASC, q.id ASC
-            """,
-            (project_id, organization_id),
-        ).fetchall()
+        # Organizacao 0 e "Todas as organizacoes" do administrador global. Sem
+        # este desvio a consulta procurava organization_id = 0 e o historico
+        # vinha vazio, como se o projeto nunca tivesse sido verificado.
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT q.*, a.project_id
+                FROM quality_checks q
+                JOIN audios a
+                  ON a.id = q.audio_id
+                 AND a.organization_id = q.organization_id
+                WHERE a.project_id = ?
+                ORDER BY q.created_at ASC, q.id ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT q.*, a.project_id
+                FROM quality_checks q
+                JOIN audios a
+                  ON a.id = q.audio_id
+                 AND a.organization_id = q.organization_id
+                WHERE a.project_id = ?
+                  AND q.organization_id = ?
+                ORDER BY q.created_at ASC, q.id ASC
+                """,
+                (project_id, organization_id),
+            ).fetchall()
 
     _audit("prosodia.quality_check.list_history", "project", project_id, organization_id)
     result = []
@@ -1414,19 +1431,36 @@ def get_high_activations_history_for_project(project_id: int) -> List[Dict]:
     organization_id = _active_organization_id()
     with _connect() as conn:
         _require_visible_project(conn, project_id, organization_id)
-        rows = conn.execute(
-            """
-            SELECT h.*, a.project_id
-            FROM high_activations h
-            JOIN audios a
-              ON a.id = h.audio_id
-             AND a.organization_id = h.organization_id
-            WHERE a.project_id = ?
-              AND h.organization_id = ?
-            ORDER BY h.created_at ASC, h.id ASC
-            """,
-            (project_id, organization_id),
-        ).fetchall()
+        # Organizacao 0 e "Todas as organizacoes" do administrador global. Sem
+        # este desvio a consulta procurava organization_id = 0 e o historico
+        # vinha vazio, como se o projeto nunca tivesse sido verificado.
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT h.*, a.project_id
+                FROM high_activations h
+                JOIN audios a
+                  ON a.id = h.audio_id
+                 AND a.organization_id = h.organization_id
+                WHERE a.project_id = ?
+                ORDER BY h.created_at ASC, h.id ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT h.*, a.project_id
+                FROM high_activations h
+                JOIN audios a
+                  ON a.id = h.audio_id
+                 AND a.organization_id = h.organization_id
+                WHERE a.project_id = ?
+                  AND h.organization_id = ?
+                ORDER BY h.created_at ASC, h.id ASC
+                """,
+                (project_id, organization_id),
+            ).fetchall()
 
     _audit("prosodia.high_activation.list_history", "project", project_id, organization_id)
     result = []

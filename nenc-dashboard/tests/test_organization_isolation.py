@@ -239,6 +239,41 @@ class OrganizationIsolationTests(unittest.TestCase):
                 self.assertEqual(prosodia_db.get_audios(project_two_id), [])
                 self.assertIsNone(prosodia_db.get_audio(organization_two_audio_id))
 
+    def test_all_organizations_mode_reads_project_history(self):
+        """Regressao: em "Todas as organizacoes" o historico vinha vazio.
+
+        As duas leituras filtravam organization_id = 0 sem o desvio que as demais
+        tem, e a exportacao Power BI saia sem verificacao nem ativacao nenhuma.
+        """
+        with patch.object(prosodia_db, "_audit"):
+            with patch.object(
+                prosodia_db,
+                "_active_organization_id",
+                return_value=self.organization_two.id,
+            ):
+                project_id = prosodia_db.create_project("Organization Two Project")
+                audio_id = prosodia_db.create_audio(project_id, "organization-two-audio")
+                prosodia_db.save_quality_check(audio_id, "ok", [], [])
+                prosodia_db.save_high_activations(audio_id, [{"seconds": 1.0}])
+
+            with patch.object(prosodia_db, "_active_organization_id", return_value=0):
+                self.assertEqual(
+                    len(prosodia_db.get_quality_checks_history_for_project(project_id)), 1
+                )
+                self.assertEqual(
+                    len(prosodia_db.get_high_activations_history_for_project(project_id)), 1
+                )
+
+            with patch.object(
+                prosodia_db,
+                "_active_organization_id",
+                return_value=self.organization_one.id,
+            ):
+                with self.assertRaises(ValueError):
+                    prosodia_db.get_quality_checks_history_for_project(project_id)
+                with self.assertRaises(ValueError):
+                    prosodia_db.get_high_activations_history_for_project(project_id)
+
     def test_module_state_and_vector_stores_are_not_shared_between_organizations(self):
         with patch.object(auth, "audit_business_access"):
             with patch.object(
