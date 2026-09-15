@@ -45,6 +45,8 @@ PASSWORD_MIN_LENGTH = 12
 SESSION_HOURS = 12
 SESSION_STATE_KEY = "_nenc_auth_session_token"
 ACTIVE_ORGANIZATION_STATE_KEY = "_nenc_active_organization_id"
+# Chave do selectbox que apenas espelha a organizacao ativa; ver render_auth_sidebar.
+ACTIVE_ORGANIZATION_WIDGET_KEY = "_nenc_active_organization_widget"
 
 # Bloqueio de forca bruta por conta. O audit_log ja registra cada tentativa;
 # estes limites transformam esse registro em barreira efetiva.
@@ -1225,6 +1227,7 @@ def current_user(database_path: Optional[os.PathLike] = None) -> Optional[User]:
     if user is None:
         st.session_state.pop(SESSION_STATE_KEY, None)
         st.session_state.pop(ACTIVE_ORGANIZATION_STATE_KEY, None)
+        st.session_state.pop(ACTIVE_ORGANIZATION_WIDGET_KEY, None)
     return user
 
 def login(email: str, password: str, database_path: Optional[os.PathLike] = None) -> User:
@@ -1236,6 +1239,7 @@ def logout(database_path: Optional[os.PathLike] = None) -> None:
     st = _streamlit()
     session_token = st.session_state.pop(SESSION_STATE_KEY, None)
     st.session_state.pop(ACTIVE_ORGANIZATION_STATE_KEY, None)
+    st.session_state.pop(ACTIVE_ORGANIZATION_WIDGET_KEY, None)
     revoke_session(session_token, database_path)
 
 def require_login(database_path: Optional[os.PathLike] = None) -> User:
@@ -1640,6 +1644,23 @@ def render_auth_sidebar(user: User, database_path: Optional[os.PathLike] = None)
                     if user.organization_id in labels
                     else available_ids[0]
                 )
+            # A organizacao ativa mora numa chave que nao e de widget. Quando era
+            # a propria chave do selectbox, o Streamlit descartava o valor no
+            # salto de pagina do `st.switch_page` que abre um projeto: a conta
+            # voltava para a organizacao de origem, `app.py` lia isso como troca
+            # de organizacao e fechava o projeto recem-aberto. O widget so
+            # espelha o valor; a escolha do usuario chega por `on_change`, que
+            # roda antes do script e portanto antes de `app.py` ler a
+            # organizacao ativa.
+            st.session_state[ACTIVE_ORGANIZATION_STATE_KEY] = selected_id
+            if st.session_state.get(ACTIVE_ORGANIZATION_WIDGET_KEY) != selected_id:
+                st.session_state[ACTIVE_ORGANIZATION_WIDGET_KEY] = selected_id
+
+            def _apply_organization_choice() -> None:
+                st.session_state[ACTIVE_ORGANIZATION_STATE_KEY] = st.session_state[
+                    ACTIVE_ORGANIZATION_WIDGET_KEY
+                ]
+
             st.markdown(
                 '<div style="font-size:.6rem;letter-spacing:.12em;'
                 'text-transform:uppercase;color:var(--nenc-faint);'
@@ -1649,9 +1670,9 @@ def render_auth_sidebar(user: User, database_path: Optional[os.PathLike] = None)
             st.selectbox(
                 "Organização ativa",
                 available_ids,
-                index=available_ids.index(selected_id),
                 format_func=lambda organization_id: labels[organization_id],
-                key=ACTIVE_ORGANIZATION_STATE_KEY,
+                key=ACTIVE_ORGANIZATION_WIDGET_KEY,
+                on_change=_apply_organization_choice,
                 label_visibility="collapsed",
             )
         else:
