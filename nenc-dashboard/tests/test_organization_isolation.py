@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from datetime import timedelta
 from pathlib import Path
@@ -599,6 +600,81 @@ class WhatsAppClientAuthorizationTests(unittest.TestCase):
             whatsapp_api_client._authorize_audio_file_request(request)
 
         require.assert_not_called()
+
+    def _api_with_fake_transport(self, handler):
+        real_client = httpx.Client
+        return (
+            patch.dict(
+                os.environ,
+                {"WHATSAPP_API_URL": "https://api.invalid", "WHATSAPP_API_KEY": "key"},
+            ),
+            patch.object(
+                whatsapp_api_client.httpx,
+                "Client",
+                side_effect=lambda **kwargs: real_client(
+                    transport=httpx.MockTransport(handler), **kwargs
+                ),
+            ),
+        )
+
+    def test_authorized_audio_download_runs_in_a_thread_without_session(self):
+        """Regressao: a timeline nunca carregava o audio.
+
+        O download roda numa thread criada pela pagina, onde st.session_state nao
+        existe. A checagem de posse le o login dali, levantava dentro da thread e
+        a requisicao nem saia. A posse precisa ser conferida antes, na thread do
+        script, e o download devolvido tem que funcionar sem sessao.
+        """
+        script_thread = threading.current_thread()
+
+        def require_owned_only_with_session(resource_type, resource_id):
+            if threading.current_thread() is not script_thread:
+                raise auth.AuthorizationError("Sem sessao fora da thread do script.")
+
+        requests = []
+
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(200, content=b"RIFF-wav")
+
+        environment, transport = self._api_with_fake_transport(handler)
+        outcome = {}
+        with environment, transport, patch.object(
+            whatsapp_api_client,
+            "_require_owned_resource",
+            side_effect=require_owned_only_with_session,
+        ) as require:
+            download = whatsapp_api_client.authorize_audio_file_download(123, kind="wav")
+
+            def run_download():
+                try:
+                    outcome["bytes"] = download()
+                except Exception as error:
+                    outcome["error"] = error
+
+            thread = threading.Thread(target=run_download)
+            thread.start()
+            thread.join()
+
+        self.assertEqual(outcome, {"bytes": b"RIFF-wav"})
+        require.assert_called_once_with("whatsapp_audio", 123)
+        self.assertEqual([request.url.path for request in requests], ["/audios/123/file"])
+        self.assertEqual(requests[0].url.params["kind"], "wav")
+
+    def test_audio_download_is_not_returned_for_an_unowned_audio(self):
+        requests = []
+        environment, transport = self._api_with_fake_transport(
+            lambda request: requests.append(request) or httpx.Response(200)
+        )
+        with environment, transport, patch.object(
+            whatsapp_api_client,
+            "_require_owned_resource",
+            side_effect=auth.AuthorizationError("Audio de outra organizacao."),
+        ):
+            with self.assertRaises(auth.AuthorizationError):
+                whatsapp_api_client.authorize_audio_file_download(123)
+
+        self.assertEqual(requests, [])
 
 
 if __name__ == "__main__":

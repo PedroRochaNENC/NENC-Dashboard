@@ -8,6 +8,7 @@ Exibe:
 """
 
 import io
+import logging
 import os
 import secrets
 import threading
@@ -32,13 +33,7 @@ from utils.prosodia_charts import (
 
 init_db()
 
-@st.cache_data(show_spinner="Carregando áudio da API...")
-def _load_audio_bytes(api_audio_id: int) -> bytes:
-    from utils.whatsapp_api_client import get_audio_file, is_configured
-    if not is_configured():
-        raise RuntimeError("WhatsApp API não está configurada.")
-    return get_audio_file(api_audio_id, kind="wav")
-
+_LOGGER = logging.getLogger(__name__)
 
 # Downloads de áudio em andamento, por caminho de destino. Vive no processo e não
 # em st.session_state porque quem limpa a marcação é a thread de download, que
@@ -322,17 +317,29 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
             # A flag de controle nao pode viver em st.session_state: a thread roda
             # sem ScriptRunContext e nao pode tocar no estado da sessao.
             if _claim_audio_download(audio_filepath):
+                from utils.whatsapp_api_client import authorize_audio_file_download
 
-                def download_bg(api_id=audio_api_id, destino=audio_filepath):
+                # Pelo mesmo motivo, a posse do audio, que depende do login da
+                # sessao, e conferida aqui; a thread recebe o download autorizado.
+                try:
+                    baixar_audio = authorize_audio_file_download(audio_api_id, kind="wav")
+                except BaseException:
+                    _release_audio_download(audio_filepath)
+                    raise
+
+                def download_bg(api_id=audio_api_id, baixar=baixar_audio, destino=audio_filepath):
                     # Baixa para um arquivo temporario e renomeia: assim o player
                     # nunca busca um .wav escrito pela metade.
                     parcial = destino + ".part"
                     try:
-                        audio_bytes = _load_audio_bytes(api_id)
+                        audio_bytes = baixar()
                         with open(parcial, "wb") as f:
                             f.write(audio_bytes)
                         os.replace(parcial, destino)
                     except Exception:
+                        # Sem este registro a falha nao deixa rastro: a pagina so
+                        # mostra o tempo esgotado, dois minutos depois.
+                        _LOGGER.exception("Falha ao baixar o audio %s da API.", api_id)
                         try:
                             os.remove(parcial)
                         except OSError:

@@ -17,7 +17,7 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import urllib.parse
 import httpx
@@ -350,8 +350,12 @@ def _authorize_audio_file_request(request: httpx.Request) -> None:
             return
 
 
-def _client(timeout: float = 30.0) -> httpx.Client:
-    """Cria um httpx.Client configurado com timeout e autenticação."""
+def _client(timeout: float = 30.0, authorize_audio_files: bool = True) -> httpx.Client:
+    """Cria um httpx.Client configurado com timeout e autenticação.
+
+    `authorize_audio_files=False` so serve a quem ja conferiu a posse do audio
+    antes: ver `authorize_audio_file_download`.
+    """
     url = _get_api_url()
     key = _get_api_key()
     if not url or not key:
@@ -362,7 +366,9 @@ def _client(timeout: float = 30.0) -> httpx.Client:
         base_url=url,
         headers={"X-API-Key": key},
         timeout=timeout,
-        event_hooks={"request": [_authorize_audio_file_request]},
+        event_hooks={
+            "request": [_authorize_audio_file_request] if authorize_audio_files else []
+        },
     )
 
 
@@ -1081,14 +1087,36 @@ def get_existing_whatsapp_message_ids(project_id: int) -> set:
 def get_audio_file(audio_id: int, kind: str = "wav") -> bytes:
     """Busca o arquivo de áudio (original ou wav) da API."""
     with _client() as c:
-        resp = c.get(f"/audios/{audio_id}/file", params={"kind": kind})
-        if resp.status_code == httpx.codes.GONE:
-            raise AudioFileUnavailableError(
-                "O arquivo de áudio não está mais disponível na API. "
-                "Reenvie-o ou recupere-o no serviço de origem."
-            )
-        resp.raise_for_status()
-        return resp.content
+        return _read_audio_file(c, audio_id, kind)
+
+
+def authorize_audio_file_download(audio_id: int, kind: str = "wav") -> Callable[[], bytes]:
+    """Confere agora a posse do áudio e devolve a função que baixa o arquivo.
+
+    A posse é conferida pelo login guardado em st.session_state, que só existe
+    na thread do script. Numa thread criada pela página, o gancho de _client
+    levantava antes de a requisição sair e o download nunca acontecia. Chame
+    esta função na thread do script; a função devolvida roda em qualquer thread.
+    """
+    _require_owned_resource("whatsapp_audio", audio_id)
+
+    def download() -> bytes:
+        # A posse ja foi conferida acima, com a sessao disponivel.
+        with _client(authorize_audio_files=False) as c:
+            return _read_audio_file(c, audio_id, kind)
+
+    return download
+
+
+def _read_audio_file(c: httpx.Client, audio_id: int, kind: str) -> bytes:
+    resp = c.get(f"/audios/{audio_id}/file", params={"kind": kind})
+    if resp.status_code == httpx.codes.GONE:
+        raise AudioFileUnavailableError(
+            "O arquivo de áudio não está mais disponível na API. "
+            "Reenvie-o ou recupere-o no serviço de origem."
+        )
+    resp.raise_for_status()
+    return resp.content
 
 
 # ---------------------------------------------------------------------------
