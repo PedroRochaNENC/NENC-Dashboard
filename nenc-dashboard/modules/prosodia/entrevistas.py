@@ -645,9 +645,12 @@ else:
         # Sem nome de QR, a origem decide o rotulo: upload direto nunca teve QR;
         # entrevista do WhatsApp sem nome fica "Sem QR" e nao "Geral", porque
         # pode so nao ter sido carimbada ainda (importada antes desta coluna).
+        # "wa_upload_<id>" e upload feito pela API, sem mensagem e portanto sem
+        # QR: o prefixo "wa_" sozinho o confundia com entrevista do WhatsApp.
+        session_id = str(a.get("session_id", ""))
         if a.get("qr_code_name"):
             qr_code_label = a["qr_code_name"]
-        elif str(a.get("session_id", "")).startswith("wa_"):
+        elif session_id.startswith("wa_") and not session_id.startswith("wa_upload_"):
             qr_code_label = "Sem QR"
         else:
             qr_code_label = "Upload direto"
