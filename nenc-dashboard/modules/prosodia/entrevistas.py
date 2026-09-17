@@ -972,18 +972,61 @@ else:
             st.session_state[f"confirm_del_interview_{selected_id}"] = True
 
     if st.session_state.get(f"confirm_del_interview_{selected_id}"):
-        st.warning(
-            f"Excluir entrevista **{selected_audio.get('session_id', '')}**? Esta ação não pode ser desfeita."
+        from utils.prosodia_db import get_audio_deletion_reference
+        from utils.whatsapp_api_client import (
+            ApiAudioDeletion,
+            api_audio_id_from_session,
+            delete_api_audio,
+            plan_api_audio_deletion,
         )
+
+        sessao = selected_audio.get("session_id", "")
+        # O plano sai antes da confirmacao, para a tela dizer se o audio na API
+        # vai junto. Sem resposta da API nao ha confirmacao: excluir so a
+        # entrevista a deixaria voltar na proxima sincronizacao.
+        plano = ApiAudioDeletion(None, False)
+        erro_api = None
+        referencia = get_audio_deletion_reference(
+            selected_id, api_audio_id_from_session(sessao)
+        )
+        if referencia is not None:
+            try:
+                plano = plan_api_audio_deletion(referencia, project.get("api_project_id"))
+            except Exception as e:
+                erro_api = e
+
+        if erro_api is not None:
+            st.error(
+                f"Não foi possível consultar o áudio na API ({erro_api}). "
+                "A entrevista não será excluída sem saber se o áudio sai junto; tente de novo."
+            )
+        elif plano.delete_in_api:
+            st.warning(
+                f"Excluir a entrevista **{sessao}** e o áudio dela na API "
+                "(gravação, transcrição e resultado da análise)? Esta ação não pode ser desfeita."
+            )
+        else:
+            aviso = f"Excluir a entrevista **{sessao}**? Esta ação não pode ser desfeita."
+            if plano.api_audio_id is not None:
+                aviso += f"\n\nO áudio na API não será excluído: {plano.reason}"
+            st.warning(aviso)
         dc1, dc2 = st.columns(2)
         with dc1:
-            if st.button("Confirmar exclusão", width="stretch", key=f"en_del_yes_{selected_id}"):
-                delete_audio(selected_id)
-                st.session_state.pop(f"confirm_del_interview_{selected_id}", None)
-                st.session_state.pop("en_interviews_table", None)
-                if st.session_state.get("pros_audio_id") == selected_id:
-                    st.session_state.pop("pros_audio_id", None)
-                st.rerun()
+            if erro_api is None and st.button(
+                "Confirmar exclusão", width="stretch", key=f"en_del_yes_{selected_id}"
+            ):
+                try:
+                    if plano.delete_in_api:
+                        delete_api_audio(plano.api_audio_id)
+                except Exception as e:
+                    st.error(f"Falha ao excluir o áudio na API ({e}). A entrevista não foi excluída.")
+                else:
+                    delete_audio(selected_id)
+                    st.session_state.pop(f"confirm_del_interview_{selected_id}", None)
+                    st.session_state.pop("en_interviews_table", None)
+                    if st.session_state.get("pros_audio_id") == selected_id:
+                        st.session_state.pop("pros_audio_id", None)
+                    st.rerun()
         with dc2:
             if st.button("Cancelar", width="stretch", key=f"en_del_no_{selected_id}"):
                 st.session_state.pop(f"confirm_del_interview_{selected_id}", None)

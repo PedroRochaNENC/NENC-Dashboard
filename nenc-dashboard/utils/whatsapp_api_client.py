@@ -16,6 +16,9 @@ A sincronização pode ser feita por:
 import io
 import json
 import os
+import re
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -1106,6 +1109,146 @@ def authorize_audio_file_download(audio_id: int, kind: str = "wav") -> Callable[
             return _read_audio_file(c, audio_id, kind)
 
     return download
+
+
+# ---------------------------------------------------------------------------
+# Exclusão do áudio na API junto com a entrevista
+#
+# Sem apagar na API, a próxima sincronização reimporta a entrevista excluída.
+# Mas o id do áudio vem do fim do session_id, e parte do acervo foi importada de
+# uma instância anterior da API, com numeração própria: o mesmo id hoje pode ser
+# a gravação de outra pessoa. Só se apaga na API o que se confirma ser o mesmo
+# áudio.
+# ---------------------------------------------------------------------------
+
+_API_AUDIO_ID_IN_SESSION = re.compile(r"^wa_.*_(\d+)$")
+
+# created_at local e gravado no fuso do servidor; received_at da API, em UTC.
+_IMPORT_CLOCK_TOLERANCE = timedelta(days=1)
+
+
+def api_audio_id_from_session(session_id: Any) -> Optional[int]:
+    """Id do áudio na API a partir do session_id da importação (wa_<tel>_<id>, wa_upload_<id>)."""
+    match = _API_AUDIO_ID_IN_SESSION.match(str(session_id or ""))
+    return int(match.group(1)) if match else None
+
+
+@dataclass(frozen=True)
+class ApiAudioDeletion:
+    """O que a exclusão da entrevista faz com o áudio na API."""
+
+    api_audio_id: Optional[int]
+    delete_in_api: bool
+    reason: str = ""  # por que o áudio fica na API; vazio quando é excluído
+
+
+def _naive_utc(value: Any) -> Optional[datetime]:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def decide_api_audio_deletion(
+    interview: Dict, api_audio: Optional[Dict], api_project_id: Any
+) -> ApiAudioDeletion:
+    """Decide se o áudio da API sai junto com a entrevista. Função pura.
+
+    `interview` é a referência de `prosodia_db.get_audio_deletion_reference`;
+    `api_audio`, o GET /audios/{id} (None quando a API responde 404).
+    """
+
+    session_id = str(interview.get("session_id") or "")
+    api_audio_id = api_audio_id_from_session(session_id)
+
+    def keep(reason: str) -> ApiAudioDeletion:
+        return ApiAudioDeletion(api_audio_id, False, reason)
+
+    if api_audio_id is None:
+        return keep("a entrevista não veio da API de WhatsApp.")
+    if interview.get("other_interviews"):
+        return keep("outra entrevista ainda usa este áudio.")
+    if api_audio is None:
+        return keep("o áudio já não existe na API.")
+
+    other_recording = (
+        "o áudio com este número na API é outra gravação "
+        "(entrevista importada de uma instância anterior da API)."
+    )
+    local_message = str(interview.get("whatsapp_message_id") or "").strip()
+    api_message = str(api_audio.get("whatsapp_message_id") or "").strip()
+    if local_message:
+        if api_message != local_message:
+            return keep(other_recording)
+        return ApiAudioDeletion(api_audio_id, True)
+
+    # Upload feito pela API: não há mensagem para comparar.
+    if not session_id.startswith("wa_upload_"):
+        return keep("não há como confirmar que o áudio na API é o desta entrevista.")
+    if api_message or api_audio.get("source") != "upload":
+        return keep(other_recording)
+    if str(api_audio.get("project_id")) != str(api_project_id):
+        return keep("o áudio com este número na API pertence a outro projeto.")
+    imported_at = _naive_utc(interview.get("created_at"))
+    received_at = _naive_utc(api_audio.get("received_at"))
+    if imported_at is None or received_at is None:
+        return keep("não há como confirmar que o áudio na API é o desta entrevista.")
+    # Uma entrevista não pode ter sido importada antes de a API receber o áudio.
+    if imported_at < received_at - _IMPORT_CLOCK_TOLERANCE:
+        return keep(other_recording)
+    return ApiAudioDeletion(api_audio_id, True)
+
+
+def plan_api_audio_deletion(interview: Dict, api_project_id: Any) -> ApiAudioDeletion:
+    """Consulta a API e aplica `decide_api_audio_deletion`.
+
+    Levanta se a API não responder: sem confirmar o áudio não dá para excluir
+    só a entrevista, que a próxima sincronização traria de volta.
+    """
+
+    api_audio_id = api_audio_id_from_session(interview.get("session_id"))
+    if api_audio_id is None or interview.get("other_interviews"):
+        return decide_api_audio_deletion(interview, None, api_project_id)
+    if not is_configured():
+        return ApiAudioDeletion(api_audio_id, False, "a API de WhatsApp não está configurada.")
+    try:
+        _require_owned_resource("whatsapp_audio", api_audio_id)
+    except auth.AuthorizationError:
+        return ApiAudioDeletion(
+            api_audio_id, False, "o áudio na API não pertence à organização ativa."
+        )
+    with _client() as c:
+        resp = c.get(f"/audios/{api_audio_id}")
+        if resp.status_code == httpx.codes.NOT_FOUND:
+            api_audio = None
+        else:
+            resp.raise_for_status()
+            api_audio = resp.json()
+    return decide_api_audio_deletion(interview, api_audio, api_project_id)
+
+
+def delete_api_audio(api_audio_id: int) -> None:
+    """Exclui o áudio na API: registro, jobs de análise, arquivo original e WAV.
+
+    404 conta como sucesso: o áudio já não estava lá. Qualquer outra falha
+    levanta, para quem chama não seguir com a exclusão local.
+    """
+
+    _require_write()
+    _require_owned_resource("whatsapp_audio", api_audio_id)
+    with _client() as c:
+        resp = c.delete(f"/audios/{api_audio_id}")
+        if resp.status_code != httpx.codes.NOT_FOUND:
+            resp.raise_for_status()
+    try:
+        release_external_resource("whatsapp_audio", api_audio_id)
+    except auth.AuthorizationError:
+        # Registro de outra organização (administrador em "Todas"): o áudio já
+        # saiu da API, e um registro apontando para o nada não autoriza nada.
+        pass
 
 
 def _read_audio_file(c: httpx.Client, audio_id: int, kind: str) -> bytes:

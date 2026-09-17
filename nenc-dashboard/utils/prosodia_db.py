@@ -994,6 +994,51 @@ def get_audio(audio_id: int) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def get_audio_deletion_reference(audio_id: int, api_audio_id: Optional[int]) -> Optional[Dict]:
+    """O que a exclusao precisa saber para decidir se apaga o audio na API.
+
+    A entrevista e lida no escopo da organizacao ativa. `other_interviews` conta,
+    em qualquer organizacao, as outras entrevistas importadas do mesmo audio da
+    API: o mesmo audio pode ter entrado em mais de um projeto, e apaga-lo na API
+    por causa de uma delas deixaria as demais sem arquivo. Mesmo audio quer dizer
+    mesmo id no fim da sessao e a mesma mensagem do WhatsApp (ou, sem mensagem,
+    a mesma sessao).
+    """
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        query = (
+            "SELECT id, project_id, session_id, whatsapp_message_id, created_at"
+            " FROM audios WHERE id = ?"
+        )
+        params: tuple = (audio_id,)
+        if organization_id:
+            query += " AND organization_id = ?"
+            params = (audio_id, organization_id)
+        row = conn.execute(query, params).fetchone()
+        if row is None:
+            return None
+        reference = dict(row)
+        reference["other_interviews"] = 0
+        if api_audio_id is None:
+            return reference
+        candidates = conn.execute(
+            r"""SELECT session_id, whatsapp_message_id FROM audios
+                WHERE id <> ? AND session_id LIKE 'wa\_%\_' || ? ESCAPE '\'""",
+            (audio_id, str(api_audio_id)),
+        ).fetchall()
+    message_id = (reference.get("whatsapp_message_id") or "").strip()
+    reference["other_interviews"] = sum(
+        1
+        for candidate in candidates
+        if (
+            (candidate["whatsapp_message_id"] or "").strip() == message_id
+            if message_id
+            else candidate["session_id"] == reference["session_id"]
+        )
+    )
+    return reference
+
+
 def _audio_kb_reference(audio_id: int) -> Dict:
     """So os campos que a limpeza usa.
 
