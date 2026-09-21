@@ -201,7 +201,7 @@ def load_prosodia_from_uploads(
     sincronizado_files: Optional[List] = None,
 ) -> Dict:
     """
-    Carrega múltiplos pares de arquivos (JSON + CSV) e retorna pr_data.
+    Carrega múltiplos pares de arquivos (JSON + CSV) e retorna os dataframes.
 
     Parâmetros
     ----------

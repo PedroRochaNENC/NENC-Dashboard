@@ -989,6 +989,66 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
     return result
 
 
+def get_audio_blobs_for_project(project_id: int) -> Dict[int, Dict[str, Optional[bytes]]]:
+    """Conteúdo dos áudios de um projeto, indexado por audio_id.
+
+    Companheira de get_audios_for_interviews, que devolve só metadado: a tabela
+    de entrevistas relê os áudios a cada render e carregar os blobs ali lia o
+    banco quase inteiro. Quem precisa do conteúdo — a Análise Geral — pede aqui,
+    uma vez, quando vai de fato montar os dataframes do projeto.
+    """
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT id, prosodia_json, transcricao_csv, sincronizado_csv
+                FROM audios WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, prosodia_json, transcricao_csv, sincronizado_csv
+                FROM audios WHERE project_id = ? AND organization_id = ?
+                """,
+                (project_id, organization_id),
+            ).fetchall()
+
+    _audit("prosodia.audio.blobs", "project", project_id, organization_id or 0)
+
+    return {
+        int(row["id"]): {
+            "prosodia_json": row["prosodia_json"],
+            "transcricao_csv": row["transcricao_csv"],
+            "sincronizado_csv": row["sincronizado_csv"],
+        }
+        for row in rows
+    }
+
+
+def attach_audio_blobs(project_id: int, audios: List[Dict]) -> List[Dict]:
+    """Copia dos áudios com o conteúdo preenchido, na mesma ordem.
+
+    get_audios_for_interviews devolve metadado; quem precisa ler prosódia,
+    transcrição ou sincronizado passa a lista por aqui antes. Áudio ainda em
+    processamento fica com os três campos em None, como o banco os tem.
+    """
+    blobs = get_audio_blobs_for_project(project_id)
+    merged: List[Dict] = []
+    for audio in audios:
+        enriched = dict(audio)
+        enriched.update(
+            blobs.get(
+                int(audio["id"]),
+                {"prosodia_json": None, "transcricao_csv": None, "sincronizado_csv": None},
+            )
+        )
+        merged.append(enriched)
+    return merged
+
+
 def _backfill_audio_duration(audio_id: int) -> float:
     """Calcula e materializa a duração de um áudio ainda não medido."""
     with _connect() as conn:

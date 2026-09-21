@@ -23,6 +23,7 @@ from utils.prosodia_db import (
     init_db,
     get_project,
     get_audios_for_interviews,
+    attach_audio_blobs,
     get_latest_project_analysis,
     get_project_analyses,
     save_project_analysis,
@@ -238,7 +239,16 @@ def _append_result_to_kb(
         return False, str(e)
 
 
-def _load_project_frames(audios: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _load_project_frames(
+    project_id: int, audios: list[dict]
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Dataframes consolidados do projeto, lidos do conteúdo dos áudios.
+
+    Os áudios chegam da tabela de entrevistas, que carrega só metadado; os
+    blobs vêm aqui, onde vão ser de fato lidos.
+    """
+    audios = attach_audio_blobs(project_id, audios)
+
     vad_parts = []
     tr_parts = []
     sinc_parts = []
@@ -781,7 +791,7 @@ if not audios:
     st.info("Nenhum áudio disponível para análise geral. Faça uploads primeiro.")
     st.stop()
 
-all_vad, all_tr, all_sinc = _load_project_frames(audios)
+all_vad, all_tr, all_sinc = _load_project_frames(project_id, audios)
 
 # ------------------------------------------------------------------
 # Sidebar

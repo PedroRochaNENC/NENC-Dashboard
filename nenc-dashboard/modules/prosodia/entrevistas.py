@@ -21,6 +21,7 @@ from utils.icons import page_title
 from utils.prosodia_db import (
     init_db,
     get_project,
+    get_audio,
     get_audios_for_interviews,
     delete_audio,
 )
@@ -1031,22 +1032,24 @@ else:
                 st.rerun()
 
     st.divider()
+    # A tabela carrega so metadado; o conteudo vem do audio selecionado.
+    selected_content = get_audio(selected_id) or {}
     d1, d2 = st.columns(2)
     with d1:
-        if selected_audio.get("prosodia_json"):
+        if selected_content.get("prosodia_json"):
             st.download_button(
                 "Baixar NencBoost (JSON)",
-                data=selected_audio["prosodia_json"],
+                data=selected_content["prosodia_json"],
                 file_name=f"NencLex-{selected_audio.get('session_id', 'sessao')}.json",
                 mime="application/json",
                 width="stretch",
                 key=f"en_dl_json_{selected_id}",
             )
     with d2:
-        if selected_audio.get("transcricao_csv"):
+        if selected_content.get("transcricao_csv"):
             st.download_button(
                 "Baixar transcrição (CSV)",
-                data=selected_audio["transcricao_csv"],
+                data=selected_content["transcricao_csv"],
                 file_name=f"Transcricao-{selected_audio.get('session_id', 'sessao')}.csv",
                 mime="text/csv",
                 width="stretch",

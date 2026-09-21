@@ -5,6 +5,7 @@ update_project: ele regrava todas as colunas, e as telas de texto do QR, de
 vínculo com a API e de campanha o chamam sem conhecer o tipo.
 """
 
+import ast
 import json
 import os
 import sqlite3
@@ -300,6 +301,73 @@ class PromptByTypeTests(unittest.TestCase):
     def test_unknown_mode_is_refused(self):
         with self.assertRaises(ValueError):
             get_prosodia_system_prompt(PESQUISA_OPINIAO, "estrategico")
+
+
+class PagesResolvePromptByTypeTests(unittest.TestCase):
+    """As telas tem de perguntar o prompt pelo tipo, nao importar o fixo.
+
+    A extinta analise.py importava PROSODIA_SYSTEM_PROMPT direto e mandava o
+    prompt de entrevista — com o "neutralize o entrevistador" — para audio de
+    pesquisa de opiniao, que e monologo e nao tem entrevistador.
+    get_prosodia_system_prompt existe para resolver isso; quem pula a funcao
+    anula o tipo do projeto.
+
+    A varredura e por diretorio, nao por lista: pagina nova entra sozinha, e
+    pagina removida nao deixa o teste apontando para um arquivo que sumiu.
+    """
+
+    _CONSTANTES_FIXAS = (
+        "PROSODIA_SYSTEM_PROMPT",
+        "PROSODIA_SYSTEM_PROMPT_STATISTICAL",
+        "PROSODIA_SYSTEM_PROMPT_STRATEGIC",
+        "PROSODIA_PROJECT_SYSTEM_PROMPT",
+        "PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL",
+        "PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC",
+    )
+
+    def _paginas(self):
+        diretorio = Path(__file__).resolve().parent.parent / "modules" / "prosodia"
+        return sorted(p for p in diretorio.glob("*.py") if p.name != "__init__.py")
+
+    def _imports_de_prompts(self, caminho):
+        """Nomes que a pagina importa de utils.prosodia_prompts."""
+        arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+        nomes = set()
+        for node in ast.walk(arvore):
+            if isinstance(node, ast.ImportFrom) and node.module == "utils.prosodia_prompts":
+                nomes.update(alias.name for alias in node.names)
+        return nomes
+
+    def test_the_sweep_finds_the_prosody_pages(self):
+        """Glob vazio passaria os outros testes por vacuidade."""
+        nomes = {p.name for p in self._paginas()}
+
+        self.assertIn("analise_geral.py", nomes)
+        self.assertIn("audio_analise.py", nomes)
+        self.assertGreaterEqual(len(nomes), 10)
+
+    def test_no_page_imports_a_fixed_prompt(self):
+        for pagina in self._paginas():
+            with self.subTest(pagina=pagina.name):
+                importados = self._imports_de_prompts(pagina)
+                fixos = importados.intersection(self._CONSTANTES_FIXAS)
+                self.assertEqual(
+                    fixos,
+                    set(),
+                    f"{pagina.name} importa {sorted(fixos)} em vez de resolver pelo tipo",
+                )
+
+    def test_pages_that_analyse_ask_for_the_prompt_by_type(self):
+        resolvedores = {"get_prosodia_system_prompt", "get_prosodia_project_system_prompt"}
+        for pagina in self._paginas():
+            with self.subTest(pagina=pagina.name):
+                importados = self._imports_de_prompts(pagina)
+                if not importados:
+                    continue  # pagina que nao chama a IA
+                self.assertTrue(
+                    importados.intersection(resolvedores),
+                    f"{pagina.name} usa prompts sem passar pelo tipo do projeto",
+                )
 
 
 if __name__ == "__main__":

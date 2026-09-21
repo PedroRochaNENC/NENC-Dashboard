@@ -256,12 +256,5 @@ if test_query:
 # Navegação
 # ==================================================================
 st.divider()
-col_nav1, col_nav2 = st.columns(2)
-
-with col_nav1:
-    if st.button("Voltar para Preparação", width='stretch'):
-        st.switch_page("modules/prosodia/preparacao.py")
-
-with col_nav2:
-    if st.button("Avançar para Análise", width='stretch', type="primary"):
-        st.switch_page("modules/prosodia/analise.py")
+if st.button("Voltar para Preparação", width='stretch'):
+    st.switch_page("modules/prosodia/preparacao.py")
