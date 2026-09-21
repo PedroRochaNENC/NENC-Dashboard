@@ -1,7 +1,7 @@
 """
 Prosódia — Dados do Projeto.
 
-Formulário de criação/edição de um projeto: nome, contexto e perguntas da entrevista.
+Formulário de criação/edição de um projeto: nome, tipo, contexto e perguntas.
 As perguntas serão usadas na verificação automática de qualidade de cada áudio.
 """
 
@@ -33,6 +33,11 @@ from utils.ai_provider import (
 )
 from utils.kb_attributes import project_document
 from utils.organization_data import claim_external_resource, list_external_resources
+from utils.prosodia_project_types import (
+    PESQUISA_OPINIAO,
+    PROJECT_TYPE_LABELS,
+    normalize_project_type,
+)
 
 init_db()
 
@@ -157,6 +162,32 @@ page_title(
 with st.container():
     st.subheader("Informações do Projeto")
 
+    tipo_salvo = normalize_project_type(project.get("tipo_projeto"))
+    tipos = list(PROJECT_TYPE_LABELS)
+    tipo_projeto = st.radio(
+        "Tipo de projeto",
+        options=tipos,
+        index=tipos.index(tipo_salvo),
+        format_func=PROJECT_TYPE_LABELS.get,
+        horizontal=True,
+        # O id na chave impede que a escolha feita num projeto passe para
+        # outro quando o projeto ativo muda na barra lateral.
+        key=f"prep_tipo_projeto_{project_id or 'novo'}",
+        help=(
+            "Entrevista: conversa entre entrevistador e entrevistado. "
+            "Pesquisa de opinião: áudio curto de um único respondente, como o "
+            "recado enviado pelo QR Code do WhatsApp. O tipo define o roteiro "
+            "da análise de IA e os parâmetros padrão de qualidade."
+        ),
+    )
+    opiniao = tipo_projeto == PESQUISA_OPINIAO
+    if editing and tipo_projeto != tipo_salvo:
+        st.info(
+            "Análises e checagens já feitas não mudam; as próximas usam o novo tipo. "
+            "Parâmetros personalizados continuam valendo — marque **Usar valores "
+            "padrão do sistema** para adotar os do tipo."
+        )
+
     nome = st.text_input(
         "Nome do Projeto *",
         value=project.get("name", ""),
@@ -197,12 +228,22 @@ with st.container():
 
     st.divider()
 
-    st.subheader("Perguntas da Entrevista")
-    st.markdown(
-        "Liste as perguntas que **devem ser abordadas** em cada entrevista. "
-        "O sistema verificará automaticamente a cobertura ao carregar os uploads. "
-        "**Uma pergunta por linha.**"
-    )
+    # Só textos fora de widget mudam com o tipo: um widget sem key cujo label
+    # ou placeholder muda é recriado e perde o que o usuário já digitou.
+    if opiniao:
+        st.subheader("Perguntas / Tópicos da Pesquisa de Opinião")
+        st.markdown(
+            "Liste as perguntas ou tópicos norteadores da coleta de feedback. "
+            "O sistema verificará automaticamente se cada áudio os aborda. "
+            "**Um item por linha.**"
+        )
+    else:
+        st.subheader("Perguntas da Entrevista")
+        st.markdown(
+            "Liste as perguntas que **devem ser abordadas** em cada entrevista. "
+            "O sistema verificará automaticamente a cobertura ao carregar os uploads. "
+            "**Uma pergunta por linha.**"
+        )
 
     questions_raw = st.text_area(
         "Perguntas",
@@ -418,14 +459,20 @@ with st.container():
         except Exception:
             pass
 
-    from utils.prosodia_quality import DEFAULT_THRESHOLDS
+    from utils.prosodia_quality import default_thresholds
+    # "Usar valores padrão" grava NULL; o padrão do tipo é resolvido na hora
+    # da checagem (prosodia_quality.thresholds_for_project).
+    tipo_defaults = default_thresholds(tipo_projeto)
     using_default = saved_thresholds is None
-    display_thresholds = saved_thresholds if saved_thresholds else DEFAULT_THRESHOLDS
+    display_thresholds = saved_thresholds if saved_thresholds else tipo_defaults
 
     usar_padrao = st.checkbox(
         "Usar valores padrão do sistema",
         value=using_default,
-        help="Se marcado, o sistema utilizará os valores padrão recomendados. Desmarque para personalizar os limites.",
+        help=(
+            "Se marcado, o sistema utilizará os valores padrão recomendados para o "
+            "tipo de projeto. Desmarque para personalizar os limites."
+        ),
     )
 
     if not usar_padrao:
@@ -436,30 +483,30 @@ with st.container():
             val_dur_fail = st.number_input(
                 "Duração de fala mínima (Erro - seg)",
                 min_value=0,
-                value=int(display_thresholds.get("duration_fail_s", DEFAULT_THRESHOLDS["duration_fail_s"])),
+                value=int(display_thresholds.get("duration_fail_s", tipo_defaults["duration_fail_s"])),
                 help="Duração total de fala em segundos abaixo da qual o check falhará."
             )
             val_dur_warn = st.number_input(
                 "Duração de fala recomendada (Alerta - seg)",
                 min_value=0,
-                value=int(display_thresholds.get("duration_warn_s", DEFAULT_THRESHOLDS["duration_warn_s"])),
+                value=int(display_thresholds.get("duration_warn_s", tipo_defaults["duration_warn_s"])),
                 help="Duração recomendada de fala em segundos. Abaixo disso, gera um alerta."
             )
             val_words_fail = st.number_input(
                 "Contagem mínima de palavras (Erro)",
                 min_value=0,
-                value=int(display_thresholds.get("words_fail", DEFAULT_THRESHOLDS["words_fail"])),
+                value=int(display_thresholds.get("words_fail", tipo_defaults["words_fail"])),
                 help="Mínimo de palavras na transcrição. Abaixo disso, o check falhará."
             )
             val_words_warn = st.number_input(
                 "Contagem recomendada de palavras (Alerta)",
                 min_value=0,
-                value=int(display_thresholds.get("words_warn", DEFAULT_THRESHOLDS["words_warn"])),
+                value=int(display_thresholds.get("words_warn", tipo_defaults["words_warn"])),
                 help="Mínimo recomendado de palavras. Abaixo disso, gera um alerta."
             )
 
             st.markdown("**Inteligibilidade & Diálogo**")
-            init_unint_warn_pct = float(display_thresholds.get("unintelligible_warn_pct", DEFAULT_THRESHOLDS["unintelligible_warn_pct"]))
+            init_unint_warn_pct = float(display_thresholds.get("unintelligible_warn_pct", tipo_defaults["unintelligible_warn_pct"]))
             val_unint_warn = st.slider(
                 "Alerta de ininteligibilidade (%)",
                 min_value=0,
@@ -468,7 +515,7 @@ with st.container():
                 help="Proporção limite de turnos com marcadores de ininteligibilidade para gerar um alerta."
             ) / 100.0
 
-            init_unint_fail_pct = float(display_thresholds.get("unintelligible_fail_pct", DEFAULT_THRESHOLDS["unintelligible_fail_pct"]))
+            init_unint_fail_pct = float(display_thresholds.get("unintelligible_fail_pct", tipo_defaults["unintelligible_fail_pct"]))
             val_unint_fail = st.slider(
                 "Erro de ininteligibilidade (%)",
                 min_value=0,
@@ -477,7 +524,7 @@ with st.container():
                 help="Proporção limite de turnos com marcadores de ininteligibilidade para falhar o check."
             ) / 100.0
 
-            init_silence_ratio_warn = float(display_thresholds.get("silence_ratio_warn", DEFAULT_THRESHOLDS["silence_ratio_warn"]))
+            init_silence_ratio_warn = float(display_thresholds.get("silence_ratio_warn", tipo_defaults["silence_ratio_warn"]))
             val_silence = st.slider(
                 "Alerta de silêncio excessivo (%)",
                 min_value=0,
@@ -486,42 +533,47 @@ with st.container():
                 help="Proporção de silêncio acima da qual gera um alerta."
             ) / 100.0
 
-            init_speaker_dom = float(display_thresholds.get("speaker_dominance_warn_pct", DEFAULT_THRESHOLDS["speaker_dominance_warn_pct"]))
-            val_speaker_dom = st.slider(
-                "Alerta de dominância de locutor (%)",
-                min_value=0,
-                max_value=100,
-                value=int(init_speaker_dom * 100),
-                help="Limite de dominância de um único locutor (em número de palavras) para gerar alerta."
-            ) / 100.0
+            init_speaker_dom = float(display_thresholds.get("speaker_dominance_warn_pct", tipo_defaults["speaker_dominance_warn_pct"]))
+            if opiniao:
+                # Um só respondente por áudio: a checagem de equilíbrio entre
+                # locutores não roda nesse tipo. O valor segue no JSON, sem uso.
+                val_speaker_dom = init_speaker_dom
+            else:
+                val_speaker_dom = st.slider(
+                    "Alerta de dominância de locutor (%)",
+                    min_value=0,
+                    max_value=100,
+                    value=int(init_speaker_dom * 100),
+                    help="Limite de dominância de um único locutor (em número de palavras) para gerar alerta."
+                ) / 100.0
 
         with t_col2:
             st.markdown("**Ritmo & Acústica**")
             val_min_vad = st.number_input(
                 "Mínimo de segmentos VAD (Alerta)",
                 min_value=1,
-                value=int(display_thresholds.get("min_vad_segments_warn", DEFAULT_THRESHOLDS["min_vad_segments_warn"])),
+                value=int(display_thresholds.get("min_vad_segments_warn", tipo_defaults["min_vad_segments_warn"])),
                 help="Quantidade mínima esperada de segmentos VAD. Abaixo disso, gera um alerta."
             )
             val_wpm_low = st.number_input(
                 "Taxa de fala mínima (Alerta - WPM)",
                 min_value=0,
-                value=int(display_thresholds.get("wpm_low_warn", DEFAULT_THRESHOLDS["wpm_low_warn"])),
+                value=int(display_thresholds.get("wpm_low_warn", tipo_defaults["wpm_low_warn"])),
                 help="Taxa de fala em palavras por minuto (WPM) abaixo da qual gera alerta de lentidão."
             )
             val_wpm_high = st.number_input(
                 "Taxa de fala máxima (Alerta - WPM)",
                 min_value=0,
-                value=int(display_thresholds.get("wpm_high_warn", DEFAULT_THRESHOLDS["wpm_high_warn"])),
+                value=int(display_thresholds.get("wpm_high_warn", tipo_defaults["wpm_high_warn"])),
                 help="Taxa de fala em palavras por minuto (WPM) acima da qual gera alerta de rapidez excessiva."
             )
             val_loudness = st.number_input(
                 "Volume mínimo (Alerta - Loudness dB)",
-                value=float(display_thresholds.get("loudness_low_warn", DEFAULT_THRESHOLDS["loudness_low_warn"])),
+                value=float(display_thresholds.get("loudness_low_warn", tipo_defaults["loudness_low_warn"])),
                 help="Loudness média mínima em dB. Abaixo disso gera alerta de volume baixo."
             )
 
-            init_f0_zero = float(display_thresholds.get("f0_zero_ratio_warn", DEFAULT_THRESHOLDS["f0_zero_ratio_warn"]))
+            init_f0_zero = float(display_thresholds.get("f0_zero_ratio_warn", tipo_defaults["f0_zero_ratio_warn"]))
             val_f0_zero = st.slider(
                 "Alerta de F0 zerado / Falta de voz (%)",
                 min_value=0,
@@ -530,7 +582,7 @@ with st.container():
                 help="Proporção limite de frames com F0 zerado para gerar um alerta."
             ) / 100.0
 
-            init_neutral = float(display_thresholds.get("emotion_neutral_warn", DEFAULT_THRESHOLDS["emotion_neutral_warn"]))
+            init_neutral = float(display_thresholds.get("emotion_neutral_warn", tipo_defaults["emotion_neutral_warn"]))
             val_neutral = st.slider(
                 "Alerta de neutralidade emocional (%)",
                 min_value=0,
@@ -546,7 +598,7 @@ with st.container():
             st.info("Sua conta tem acesso somente de leitura ao NencBoost.")
 
     submitted = st.button(
-        "Salvar e ir para Entrevistas",
+        "Salvar e ir para Áudios",
         type="primary",
         width='stretch',
         disabled=not pode_editar,
@@ -634,6 +686,7 @@ if submitted:
                 quality_thresholds=quality_thresholds_json,
                 api_project_id=api_project_id_to_save,
                 qr_verification_text=qr_verification_input.strip() if qr_verification_input else None,
+                tipo_projeto=tipo_projeto,
             )
             st.success("Projeto atualizado!")
         else:
@@ -650,6 +703,7 @@ if submitted:
                 quality_thresholds=quality_thresholds_json,
                 api_project_id=api_project_id_to_save,
                 qr_verification_text=qr_verification_input.strip() if qr_verification_input else None,
+                tipo_projeto=tipo_projeto,
             )
             st.session_state["pros_project_id"] = new_id
             saved_project_id = new_id
@@ -673,6 +727,6 @@ if submitted:
             st.session_state["pros_project_id"] = saved_project_id
 
         # Num projeto recem-criado o menu desta execucao foi montado sem
-        # projeto, entao Entrevistas ainda nao esta registrada.
+        # projeto, entao a pagina de Audios ainda nao esta registrada.
         st.session_state["_navigate_to"] = "modules/prosodia/entrevistas.py"
         st.rerun()

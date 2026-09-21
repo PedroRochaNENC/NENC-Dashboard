@@ -528,7 +528,7 @@ def create_project_acoustic_comparison(
     title: str = "",
 ) -> go.Figure:
     """
-    Gráfico de barras agrupadas comparando médias de Arousal, Valence, Loudness e Speaking Rate por entrevista.
+    Gráfico de barras agrupadas comparando médias de Arousal, Valence, Loudness e Speaking Rate por áudio.
     """
     if sinc_df.empty:
         fig = go.Figure()
@@ -576,8 +576,8 @@ def create_project_acoustic_comparison(
         )
         
     fig.update_layout(
-        title=title or "Média Acústica por Entrevista",
-        xaxis_title="Entrevista / Sessão",
+        title=title or "Média Acústica por Áudio",
+        xaxis_title="Áudio / Sessão",
         yaxis_title="Valor Médio",
         template="nenc",
         barmode="group",
@@ -592,7 +592,7 @@ def create_project_emotion_distribution(
     title: str = "",
 ) -> go.Figure:
     """
-    Gráfico de barras empilhadas mostrando a proporção média das emoções por entrevista.
+    Gráfico de barras empilhadas mostrando a proporção média das emoções por áudio.
     """
     if sinc_df.empty:
         fig = go.Figure()
@@ -645,8 +645,8 @@ def create_project_emotion_distribution(
         )
         
     fig.update_layout(
-        title=title or "Distribuição de Emoções por Entrevista (%)",
-        xaxis_title="Entrevista / Sessão",
+        title=title or "Distribuição de Emoções por Áudio (%)",
+        xaxis_title="Áudio / Sessão",
         yaxis_title="Proporção (%)",
         template="nenc",
         barmode="stack",

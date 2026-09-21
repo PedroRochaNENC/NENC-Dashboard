@@ -70,7 +70,7 @@ class ApiAudioDeletionDecisionTests(unittest.TestCase):
         plan = decide_api_audio_deletion(_interview(other_interviews=1), _api_audio(), 7)
 
         self.assertFalse(plan.delete_in_api)
-        self.assertIn("outra entrevista", plan.reason)
+        self.assertIn("outra importação", plan.reason)
 
     def test_interview_that_did_not_come_from_the_api_has_no_api_audio(self):
         plan = decide_api_audio_deletion(_interview(session_id="35523510_Fim"), None, 7)

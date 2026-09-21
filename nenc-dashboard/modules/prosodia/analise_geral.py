@@ -1,7 +1,7 @@
 """
 Prosodia - Analise Geral do Projeto.
 
-Consolida dados de todas as entrevistas de um projeto para gerar:
+Consolida dados de todos os áudios de um projeto para gerar:
 - visao agregada de metricas
 - visualizacoes por locutor/features
 - analise geral por IA com historico
@@ -26,6 +26,7 @@ from utils.prosodia_db import (
     get_latest_project_analysis,
     get_project_analyses,
     save_project_analysis,
+    delete_project_analyses,
 )
 from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
 # from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
@@ -36,8 +37,6 @@ from utils.prosodia_charts import (
     create_project_word_ranking,
 )
 from utils.prosodia_prompts import (
-    PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
-    PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC,
     get_prosodia_project_system_prompt,
     build_project_user_prompt,
 )
@@ -497,7 +496,7 @@ def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
     if top_moments.empty:
         return "Nenhum momento de alta ativação encontrado."
         
-    lines = ["| Tópico | Entrevista | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |", "|---|---|---|---|---|---|---|---|"]
+    lines = ["| Tópico | Áudio | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |", "|---|---|---|---|---|---|---|---|"]
     moments_list = []
     for _, row in top_moments.iterrows():
         sid = row.get("session_id", "")
@@ -526,7 +525,7 @@ def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
     if grouped:
         group_lines = [
             "\n### Tópicos Consolidados de Maior Ativação Prosódica (Agrupados):",
-            "| Tópico Consolidado | Ocorrências | Arousal Médio | Entrevistas Relacionadas | Exemplo de Destaque |",
+            "| Tópico Consolidado | Ocorrências | Arousal Médio | Áudios Relacionados | Exemplo de Destaque |",
             "|---|---|---|---|---|",
         ]
         for g in grouped:
@@ -642,11 +641,11 @@ def _load_individual_analyses(audios: list[dict]) -> str:
         sid = a.get("session_id", "")
         analysis = get_latest_analysis(a["id"])
         if analysis and analysis.get("analysis_text"):
-            lines.append(f"### Entrevista: {sid}")
+            lines.append(f"### Áudio: {sid}")
             lines.append(f"Modelo da Análise: {analysis.get('model', '-')}")
             lines.append(analysis["analysis_text"])
             lines.append("\n---\n")
-    return "\n".join(lines) if lines else "Nenhuma análise individual encontrada para as entrevistas."
+    return "\n".join(lines) if lines else "Nenhuma análise individual encontrada para os áudios."
 
 
 def _calculate_acoustic_summary_text(sinc_df: pd.DataFrame) -> str:
@@ -660,8 +659,8 @@ def _calculate_acoustic_summary_text(sinc_df: pd.DataFrame) -> str:
         return "Nenhuma métrica compatível disponível."
         
     agg_sess = sinc_df.groupby("session_id")[available].mean().reset_index()
-    lines = ["### Médias por Entrevista", ""]
-    cols_header = "| Entrevista | " + " | ".join(available) + " |"
+    lines = ["### Médias por Áudio", ""]
+    cols_header = "| Áudio | " + " | ".join(available) + " |"
     cols_sep = "|---| " + " | ".join(["---"] * len(available)) + " |"
     lines.append(cols_header)
     lines.append(cols_sep)
@@ -717,7 +716,7 @@ with h1:
     )
 with h2:
     st.write("")
-    if st.button("Entrevistas", width="stretch"):
+    if st.button("Áudios", width="stretch"):
         st.switch_page("modules/prosodia/entrevistas.py")
 with h3:
     st.write("")
@@ -779,7 +778,7 @@ with h3:
 #     )
 #
 if not audios:
-    st.info("Nenhuma entrevista disponivel para analise geral. Faca uploads primeiro.")
+    st.info("Nenhum áudio disponível para análise geral. Faça uploads primeiro.")
     st.stop()
 
 all_vad, all_tr, all_sinc = _load_project_frames(audios)
@@ -820,7 +819,7 @@ ai_found = int(sum(int(a.get("coverage_ai_found", 0)) for a in audios))
 kw_found = int(sum(int(a.get("coverage_kw_found", 0)) for a in audios))
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("Entrevistas", n_interviews)
+m1.metric("Áudios", n_interviews)
 m2.metric("Locutores", n_speakers)
 m3.metric("Fala total (s)", f"{total_speech:.1f}")
 m4.metric("Mensagens", n_messages)
@@ -839,10 +838,10 @@ if not all_sinc.empty:
     
     col_c1, col_c2 = st.columns(2)
     with col_c1:
-        fig_comp = create_project_acoustic_comparison(all_sinc, title="Média de Indicadores por Entrevista")
+        fig_comp = create_project_acoustic_comparison(all_sinc, title="Média de Indicadores por Áudio")
         st.plotly_chart(fig_comp, use_container_width=True)
     with col_c2:
-        fig_emo = create_project_emotion_distribution(all_sinc, title="Distribuição de Emoções por Entrevista (%)")
+        fig_emo = create_project_emotion_distribution(all_sinc, title="Distribuição de Emoções por Áudio (%)")
         st.plotly_chart(fig_emo, use_container_width=True)
         
 if not all_tr.empty:
@@ -855,7 +854,7 @@ if not all_sinc.empty:
     st.divider()
     st.subheader("Momentos de Maior Ativação Prosódica (Projeto)")
     st.markdown(
-        "Esta seção exibe os momentos das entrevistas com a maior combinação de ativação emocional (Arousal) "
+        "Esta seção exibe os momentos dos áudios com a maior combinação de ativação emocional (Arousal) "
         "e variações de voz (Pitch e Volume). Selecione uma linha e clique no botão para navegar até a timeline detalhada."
     )
     
@@ -864,7 +863,7 @@ if not all_sinc.empty:
         df_show = pd.DataFrame()
         txt_series = top_moments["Text"].fillna("") if "Text" in top_moments.columns else pd.Series([""] * len(top_moments))
         df_show["Tópico"] = [extract_topic_from_text(t) for t in txt_series]
-        df_show["Entrevista"] = top_moments["session_id"]
+        df_show["Áudio"] = top_moments["session_id"]
         
         spk_series = top_moments["SpeakerName"].fillna("Desconhecido") if "SpeakerName" in top_moments.columns else pd.Series(["Desconhecido"] * len(top_moments))
         df_show["Locutor"] = spk_series.astype(str).str.strip().replace("nan", "Desconhecido")
@@ -896,7 +895,7 @@ if not all_sinc.empty:
             elif selection is not None:
                 selected_rows = getattr(selection, "rows", []) or []
                 
-        if st.button("Ir para momento na Timeline da Entrevista"):
+        if st.button("Ir para momento na Timeline do Áudio"):
             if not selected_rows:
                 st.info("Selecione um momento na tabela acima para localizar a timeline correspondente.")
             else:
@@ -921,13 +920,13 @@ if not all_sinc.empty:
                             "text": str(moment_row.get("Text", "")),
                             "source": "Filtro de Ativação Consolidado",
                         }
-                        # Cruza para o nivel da entrevista; ver `app.py`.
+                        # Cruza para o nivel do audio; ver `app.py`.
                         st.session_state["_navigate_to"] = (
                             "modules/prosodia/audio_timeline.py"
                         )
                         st.rerun()
                     else:
-                        st.error("Não foi possível localizar o ID do áudio para esta entrevista.")
+                        st.error("Não foi possível localizar o ID deste áudio.")
                     
         # Tabela de Tópicos Consolidados/Agrupados
         moments_list = []
@@ -951,7 +950,7 @@ if not all_sinc.empty:
             )
             
             df_grouped = pd.DataFrame(grouped_topics)
-            df_grouped.columns = ["Tópico Consolidado", "Ocorrências", "Arousal Médio", "Entrevistas Relacionadas", "Exemplo de Destaque"]
+            df_grouped.columns = ["Tópico Consolidado", "Ocorrências", "Arousal Médio", "Áudios Relacionados", "Exemplo de Destaque"]
             df_grouped["Arousal Médio"] = df_grouped["Arousal Médio"].map(lambda v: f"{v:.2f}")
             
             st.dataframe(
@@ -966,7 +965,7 @@ if not all_sinc.empty:
             st.write("")
             st.subheader("Perguntas com Maior Ativação Prosódica")
             st.markdown(
-                "Análise de quais perguntas do roteiro geraram maior expressividade de voz e arousal emocional nas respostas dos entrevistados."
+                "Análise de quais perguntas do roteiro geraram maior expressividade de voz e arousal emocional nas respostas dos respondentes."
             )
             
             df_q = pd.DataFrame(q_activations)
@@ -1000,7 +999,7 @@ for a in audios:
     quality_counts[status if status in quality_counts else "pending"] += 1
 
 tables_lines = [
-    f"Entrevistas totais: {n_interviews}",
+    f"Áudios totais: {n_interviews}",
     f"Locutores totais: {n_speakers}",
     f"Fala total (s): {total_speech:.1f}",
     f"Mensagens totais: {n_messages}",
@@ -1095,24 +1094,68 @@ if latest_analysis:
             }
         )
 
+    chat_key = f"prj_chat_history_{project_id}"
+    confirm_key = f"prj_an_confirm_{project_id}"
+
     history = get_project_analyses(project_id)
     with st.expander(f"Historico de analises gerais ({len(history)} registros)"):
+        if pode_editar and len(history) > 1:
+            if st.button("Apagar análises anteriores", key=f"prj_an_del_old_{project_id}"):
+                st.session_state[confirm_key] = {
+                    "ids": [an["id"] for an in history[1:]],
+                    "label": f"as {len(history) - 1} análises anteriores (a mais recente será mantida)",
+                }
+                st.rerun()
         for an in history:
-            st.markdown(f"**{an['created_at']} - {an.get('model', '-')}**")
+            col_h, col_del = st.columns([5, 1])
+            with col_h:
+                st.markdown(f"**{an['created_at']} - {an.get('model', '-')}**")
+            with col_del:
+                if pode_editar and st.button("Excluir", key=f"prj_an_del_{an['id']}", width="stretch"):
+                    st.session_state[confirm_key] = {
+                        "ids": [an["id"]],
+                        "label": f"a análise de **{an['created_at']}**",
+                    }
+                    st.rerun()
             text = an.get("analysis_text", "")
             st.markdown(text[:500] + ("..." if len(text) > 500 else ""))
             st.divider()
 
+    pending = st.session_state.get(confirm_key)
+    if pending and pode_editar:
+        st.warning(f"Excluir {pending['label']}? Esta ação não pode ser desfeita.")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("Confirmar exclusão", key=f"prj_an_del_yes_{project_id}", width="stretch"):
+                delete_project_analyses(project_id, pending["ids"])
+                # O chat conversa sobre a analise mais recente: se ela saiu,
+                # a conversa perdeu o contexto.
+                if latest_analysis["id"] in pending["ids"]:
+                    st.session_state.pop(chat_key, None)
+                st.session_state.pop(confirm_key, None)
+                st.rerun()
+        with cc2:
+            if st.button("Cancelar", key=f"prj_an_del_no_{project_id}", width="stretch"):
+                st.session_state.pop(confirm_key, None)
+                st.rerun()
+
     st.divider()
-    st.subheader("Chat com a IA sobre o Projeto")
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+
+    col_t, col_clear = st.columns([5, 1], vertical_alignment="bottom")
+    with col_t:
+        st.subheader("Chat com a IA sobre o Projeto")
+    with col_clear:
+        if st.session_state[chat_key] and st.button(
+            "Limpar conversa", key=f"prj_chat_clear_{project_id}", width="stretch"
+        ):
+            st.session_state[chat_key] = []
+            st.rerun()
     st.markdown(
         "Tire dúvidas ou peça detalhamentos específicos sobre o relatório geral gerado acima."
     )
-    
-    chat_key = f"prj_chat_history_{project_id}"
-    if chat_key not in st.session_state:
-        st.session_state[chat_key] = []
-        
+
     for msg in st.session_state[chat_key]:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
@@ -1229,7 +1272,7 @@ if st.button(btn_label, type="primary"):
             q_activations = _calculate_questions_activation(audios, all_sinc)
             if q_activations:
                 q_lines = [
-                    "\n### Perguntas com Maior Ativação Prosódica (Acumulado de Entrevistas):",
+                    "\n### Perguntas com Maior Ativação Prosódica (Acumulado dos Áudios):",
                     "| Pergunta | Respostas Cobertas | Arousal Médio | Pitch Var Média | Volume Var Média | Resposta Destaque |",
                     "|---|---|---|---|---|---|",
                 ]
@@ -1253,7 +1296,8 @@ if st.button(btn_label, type="primary"):
                 individual_analyses_text=individual_analyses_text,
             )
 
-            prj_sys_prompt = get_prosodia_project_system_prompt(project.get("tipo_projeto", "Entrevista"))
+            tipo_projeto = project.get("tipo_projeto")
+            prj_sys_prompt = get_prosodia_project_system_prompt(tipo_projeto)
             if analysis_mode == "Rapida (1 chamada)":
                 if openai_client:
                     result = ai_create_analysis(
@@ -1279,7 +1323,7 @@ if st.button(btn_label, type="primary"):
             else:
                 if openai_client:
                     stat_result = ai_create_analysis(
-                        system_prompt=PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
+                        system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estatistica"),
                         user_prompt=user_prompt,
                         model=openai_model,
                         vector_store_id=None,
@@ -1292,7 +1336,7 @@ if st.button(btn_label, type="primary"):
                         f"Ranking de palavras:\n{top_words_text}"
                     )
                     strat_result = ai_create_analysis(
-                        system_prompt=PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC,
+                        system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estrategica"),
                         user_prompt=strat_user,
                         model=openai_model,
                         vector_store_id=vs_id,
@@ -1313,7 +1357,7 @@ if st.button(btn_label, type="primary"):
                     resp_stat = groq_client.chat.completions.create(
                         model=groq_model,
                         messages=[
-                            {"role": "system", "content": PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL},
+                            {"role": "system", "content": get_prosodia_project_system_prompt(tipo_projeto, "estatistica")},
                             {"role": "user", "content": user_prompt},
                         ],
                         temperature=0.3,
@@ -1324,7 +1368,7 @@ if st.button(btn_label, type="primary"):
                     resp_strat = groq_client.chat.completions.create(
                         model=groq_model,
                         messages=[
-                            {"role": "system", "content": PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC},
+                            {"role": "system", "content": get_prosodia_project_system_prompt(tipo_projeto, "estrategica")},
                             {"role": "user", "content": strat_user},
                         ],
                         temperature=0.5,

@@ -1168,15 +1168,15 @@ def decide_api_audio_deletion(
         return ApiAudioDeletion(api_audio_id, False, reason)
 
     if api_audio_id is None:
-        return keep("a entrevista não veio da API de WhatsApp.")
+        return keep("este áudio não veio da API de WhatsApp.")
     if interview.get("other_interviews"):
-        return keep("outra entrevista ainda usa este áudio.")
+        return keep("outra importação ainda usa este áudio.")
     if api_audio is None:
         return keep("o áudio já não existe na API.")
 
     other_recording = (
         "o áudio com este número na API é outra gravação "
-        "(entrevista importada de uma instância anterior da API)."
+        "(este foi importado de uma instância anterior da API)."
     )
     local_message = str(interview.get("whatsapp_message_id") or "").strip()
     api_message = str(api_audio.get("whatsapp_message_id") or "").strip()
@@ -1187,7 +1187,7 @@ def decide_api_audio_deletion(
 
     # Upload feito pela API: não há mensagem para comparar.
     if not session_id.startswith("wa_upload_"):
-        return keep("não há como confirmar que o áudio na API é o desta entrevista.")
+        return keep("não há como confirmar que o áudio na API é este mesmo.")
     if api_message or api_audio.get("source") != "upload":
         return keep(other_recording)
     if str(api_audio.get("project_id")) != str(api_project_id):
@@ -1195,7 +1195,7 @@ def decide_api_audio_deletion(
     imported_at = _naive_utc(interview.get("created_at"))
     received_at = _naive_utc(api_audio.get("received_at"))
     if imported_at is None or received_at is None:
-        return keep("não há como confirmar que o áudio na API é o desta entrevista.")
+        return keep("não há como confirmar que o áudio na API é este mesmo.")
     # Uma entrevista não pode ter sido importada antes de a API receber o áudio.
     if imported_at < received_at - _IMPORT_CLOCK_TOLERANCE:
         return keep(other_recording)

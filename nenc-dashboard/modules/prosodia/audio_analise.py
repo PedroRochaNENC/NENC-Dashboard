@@ -41,11 +41,10 @@ from utils.prosodia_quality import (
     merge_coverage,
     compute_overall_status,
     status_badge,
+    thresholds_for_project,
 )
 from utils.prosodia_prompts import (
-    PROSODIA_SYSTEM_PROMPT,
-    PROSODIA_SYSTEM_PROMPT_STATISTICAL,
-    PROSODIA_SYSTEM_PROMPT_STRATEGIC,
+    get_prosodia_system_prompt,
     build_prosodia_user_prompt,
 )
 from utils.ai_provider import (
@@ -372,16 +371,16 @@ audio_id = st.session_state.get("pros_audio_id")
 project_id = st.session_state.get("pros_project_id")
 
 if not audio_id:
-    st.warning("Nenhuma entrevista selecionada.")
-    if st.button("← Entrevistas"):
+    st.warning("Nenhum áudio selecionado.")
+    if st.button("← Áudios"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
 audio = get_audio(audio_id)
 if not audio:
     st.session_state.pop("pros_audio_id", None)
-    st.error("Entrevista não encontrada no banco.")
-    if st.button("← Entrevistas"):
+    st.error("Áudio não encontrado no banco.")
+    if st.button("← Áudios"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
@@ -389,20 +388,15 @@ project = get_project(project_id) if project_id else None
 if not project or audio.get("project_id") != project.get("id"):
     st.session_state.pop("pros_project_id", None)
     st.session_state.pop("pros_audio_id", None)
-    st.error("A entrevista selecionada não pertence ao projeto ativo.")
-    if st.button("← Entrevistas"):
+    st.error("O áudio selecionado não pertence ao projeto ativo.")
+    if st.button("← Áudios"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 sid = audio["session_id"]
 
-# Parse thresholds customizados se existirem
-thresholds = None
-if project and project.get("quality_thresholds"):
-    try:
-        import json
-        thresholds = json.loads(project["quality_thresholds"])
-    except Exception:
-        pass
+# O tipo do projeto escolhe o prompt da IA e os limiares padrão de qualidade.
+tipo_projeto = project.get("tipo_projeto")
+thresholds = thresholds_for_project(project)
 
 # ------------------------------------------------------------------
 # Helper: reconstruir DataFrames
@@ -463,10 +457,10 @@ ui.inject_theme()
 ui.breadcrumb(
     "NencBoost",
     project.get("name", "") if project else "",
-    "Entrevistas",
+    "Áudios",
     sid,
 )
-# Timeline e Entrevistas estao no menu do projeto aberto; so o
+# Timeline e Áudios estao no menu do projeto aberto; so o
 # reprocessamento, que e uma acao e nao navegacao, continua aqui.
 if is_wa:
     h1, h2 = st.columns([6, 1.5])
@@ -522,7 +516,7 @@ tables_text = "\n\n".join(tables_lines)
 
 if high_activations_list:
     lines = [
-        "Momentos de Maior Ativação Prosódica na Entrevista:",
+        "Momentos de Maior Ativação Prosódica no Áudio:",
         "| Tópico | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -631,7 +625,7 @@ if is_wa and h2 is not None:
                         
                         # 7. Atualizar Qualidade
                         status_container.info("Atualizando verificação de qualidade...")
-                        new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds)
+                        new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds, tipo_projeto=tipo_projeto)
                         cov_kw = check_question_coverage_keywords(new_tr_df, questions)
                         cov_ai = []
                         if ai_client and questions and new_transcript_text:
@@ -685,7 +679,7 @@ if is_wa and h2 is not None:
                         
                         if new_high_activations:
                             lines = [
-                                "Momentos de Maior Ativação Prosódica na Entrevista:",
+                                "Momentos de Maior Ativação Prosódica no Áudio:",
                                 "| Tópico | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |",
                                 "|---|---|---|---|---|---|---|",
                             ]
@@ -704,7 +698,7 @@ if is_wa and h2 is not None:
                         
                         if openai_client:
                             result_ai = ai_create_analysis(
-                                system_prompt=PROSODIA_SYSTEM_PROMPT,
+                                system_prompt=get_prosodia_system_prompt(tipo_projeto),
                                 user_prompt=user_prompt,
                                 model=openai_model,
                                 vector_store_id=vs_id,
@@ -716,7 +710,7 @@ if is_wa and h2 is not None:
                             resp = groq_client.chat.completions.create(
                                 model=groq_model,
                                 messages=[
-                                    {"role": "system", "content": PROSODIA_SYSTEM_PROMPT},
+                                    {"role": "system", "content": get_prosodia_system_prompt(tipo_projeto)},
                                     {"role": "user", "content": user_prompt},
                                 ],
                                 temperature=0.5,
@@ -797,9 +791,9 @@ with analysis_section:
                 st.divider()
 
         st.divider()
-        st.subheader("Chat com a IA sobre esta Entrevista")
+        st.subheader("Chat com a IA sobre este Áudio")
         st.markdown(
-            "Pergunte detalhes, peça sugestões de abordagem ou tire dúvidas sobre a análise desta entrevista."
+            "Pergunte detalhes, peça sugestões de abordagem ou tire dúvidas sobre a análise deste áudio."
         )
         
         chat_key = f"ind_chat_history_{audio_id}"
@@ -810,7 +804,7 @@ with analysis_section:
             with st.chat_message(msg["role"]):
                 st.write(msg["content"])
                 
-        if prompt := st.chat_input("Pergunte algo sobre a entrevista...", key=f"ind_chat_input_{audio_id}"):
+        if prompt := st.chat_input("Pergunte algo sobre o áudio...", key=f"ind_chat_input_{audio_id}"):
             with st.chat_message("user"):
                 st.write(prompt)
             st.session_state[chat_key].append({"role": "user", "content": prompt})
@@ -833,9 +827,9 @@ with analysis_section:
                             report_context = latest_analysis.get("analysis_text", "")
                             sys_msg = (
                                 "Você é um consultor analítico especialista em prosódia e comportamento humano. "
-                                "O usuário deseja fazer perguntas sobre a Análise de IA desta entrevista específica. "
+                                "O usuário deseja fazer perguntas sobre a Análise de IA deste áudio específico. "
                                 "Responda de forma concisa, objetiva e baseada nas informações do relatório.\n\n"
-                                f"--- RELATÓRIO DA ENTREVISTA ---\n{report_context}\n-----------------------------"
+                                f"--- RELATÓRIO DO ÁUDIO ---\n{report_context}\n-----------------------------"
                             )
                             messages = [{"role": "system", "content": sys_msg}]
                             for h in st.session_state[chat_key][:-1]:
@@ -914,7 +908,7 @@ with analysis_section:
 
                     if openai_client:
                         result = ai_create_analysis(
-                            system_prompt=PROSODIA_SYSTEM_PROMPT,
+                            system_prompt=get_prosodia_system_prompt(tipo_projeto),
                             user_prompt=user_prompt,
                             model=openai_model,
                             vector_store_id=vs_id,
@@ -926,7 +920,7 @@ with analysis_section:
                         resp = groq_client.chat.completions.create(
                             model=groq_model,
                             messages=[
-                                {"role": "system", "content": PROSODIA_SYSTEM_PROMPT},
+                                {"role": "system", "content": get_prosodia_system_prompt(tipo_projeto)},
                                 {"role": "user", "content": user_prompt},
                             ],
                             temperature=0.5,
@@ -939,7 +933,7 @@ with analysis_section:
 
                     if openai_client:
                         stat_result = ai_create_analysis(
-                            system_prompt=PROSODIA_SYSTEM_PROMPT_STATISTICAL,
+                            system_prompt=get_prosodia_system_prompt(tipo_projeto, "estatistica"),
                             user_prompt=user_prompt,
                             model=openai_model,
                             vector_store_id=None,
@@ -951,7 +945,7 @@ with analysis_section:
                             f"Dados originais:\n{tables_text}"
                         )
                         strat_result = ai_create_analysis(
-                            system_prompt=PROSODIA_SYSTEM_PROMPT_STRATEGIC,
+                            system_prompt=get_prosodia_system_prompt(tipo_projeto, "estrategica"),
                             user_prompt=strat_user,
                             model=openai_model,
                             vector_store_id=vs_id,
@@ -968,7 +962,7 @@ with analysis_section:
                         resp_stat = groq_client.chat.completions.create(
                             model=groq_model,
                             messages=[
-                                {"role": "system", "content": PROSODIA_SYSTEM_PROMPT_STATISTICAL},
+                                {"role": "system", "content": get_prosodia_system_prompt(tipo_projeto, "estatistica")},
                                 {"role": "user", "content": user_prompt},
                             ],
                             temperature=0.3, max_tokens=2000,
@@ -978,7 +972,7 @@ with analysis_section:
                         resp_strat = groq_client.chat.completions.create(
                             model=groq_model,
                             messages=[
-                                {"role": "system", "content": PROSODIA_SYSTEM_PROMPT_STRATEGIC},
+                                {"role": "system", "content": get_prosodia_system_prompt(tipo_projeto, "estrategica")},
                                 {"role": "user", "content": strat_user},
                             ],
                             temperature=0.5, max_tokens=2000,
@@ -1024,7 +1018,7 @@ with analysis_section:
 # ------------------------------------------------------------------
 with quality_section:
     st.divider()
-    st.subheader("Verificação de Qualidade da Entrevista")
+    st.subheader("Verificação de Qualidade do Áudio")
 
     quality = get_latest_quality_check(audio_id)
     questions = get_project_questions(project_id) if project_id else []
@@ -1064,7 +1058,7 @@ with quality_section:
         st.download_button(
             "Download Verificação de Qualidade (.md)",
             data=quality_md,
-            file_name=f"qualidade_entrevista_{_slugify(sid)}.md",
+            file_name=f"qualidade_audio_{_slugify(sid)}.md",
             mime="text/markdown",
             key="download_latest_quality_check",
         )
@@ -1132,7 +1126,7 @@ with quality_section:
 
                 if st.button("Ir para momento na Timeline", key=f"go_timeline_moment_{audio_id}"):
                     if not selected_rows:
-                        st.info("Selecione uma pergunta na tabela de cobertura para localizar o momento na entrevista.")
+                        st.info("Selecione uma pergunta na tabela de cobertura para localizar o momento no áudio.")
                     else:
                         idx = int(selected_rows[0])
                         if idx < 0 or idx >= len(coverage_records):
@@ -1168,7 +1162,7 @@ with quality_section:
             st.write("")
             st.subheader("Momentos de Maior Ativação Prosódica")
             st.markdown(
-                "Os momentos da entrevista com maior combinação de intensidade (volume), "
+                "Os momentos do áudio com maior combinação de intensidade (volume), "
                 "expressividade (pitch) e ativação emocional (arousal). Selecione uma linha e clique no botão para navegar até a timeline."
             )
             
@@ -1245,7 +1239,7 @@ with quality_section:
 
         with st.spinner("Reverificando qualidade…"):
             try:
-                new_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None, thresholds)
+                new_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None, thresholds, tipo_projeto=tipo_projeto)
                 cov_kw = check_question_coverage_keywords(tr_df, questions)
                 cov_ai = []
                 if ai_client and questions and transcript_text:

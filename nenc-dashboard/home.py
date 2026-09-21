@@ -72,7 +72,7 @@ MODULE_CARDS = (
         "Prosódia e transcrições, com análise por IA.",
         (
             ("folders", "Projetos"),
-            ("file-audio", "Entrevistas"),
+            ("file-audio", "Áudios"),
             ("sparkle", "Análise e qualidade"),
         ),
         "modules/prosodia/projetos.py",
@@ -114,7 +114,7 @@ def _module_status(module_key: str) -> tuple[str, bool]:
                 return ("Nenhum projeto criado", False)
             audios = sum(project.get("n_audios", 0) for project in projects)
             return (
-                "{} projetos · {} entrevistas".format(len(projects), audios),
+                "{} projetos · {} áudios".format(len(projects), audios),
                 True,
             )
         except Exception as error:

@@ -87,8 +87,8 @@ audio_id = st.session_state.get("pros_audio_id")
 project_id = st.session_state.get("pros_project_id")
 
 if not audio_id:
-    st.warning("Nenhuma entrevista selecionada.")
-    if st.button("← Entrevistas"):
+    st.warning("Nenhum áudio selecionado.")
+    if st.button("← Áudios"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
@@ -96,8 +96,8 @@ audio = get_audio(audio_id)
 if not audio:
     st.session_state.pop("pros_audio_id", None)
     st.session_state.pop("pros_timeline_focus", None)
-    st.error("Entrevista não encontrada no banco.")
-    if st.button("← Entrevistas"):
+    st.error("Áudio não encontrado no banco.")
+    if st.button("← Áudios"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 
@@ -106,8 +106,8 @@ if not project or audio.get("project_id") != project.get("id"):
     st.session_state.pop("pros_project_id", None)
     st.session_state.pop("pros_audio_id", None)
     st.session_state.pop("pros_timeline_focus", None)
-    st.error("A entrevista selecionada não pertence ao projeto ativo.")
-    if st.button("← Entrevistas"):
+    st.error("O áudio selecionado não pertence ao projeto ativo.")
+    if st.button("← Áudios"):
         st.switch_page("modules/prosodia/entrevistas.py")
     st.stop()
 sid = audio["session_id"]
@@ -121,7 +121,7 @@ focus_active = bool(
 
 # Cabecalho — a navegacao de volta vive no menu lateral e na trilha.
 ui.inject_theme()
-ui.breadcrumb("NencBoost", project.get("name", ""), "Entrevistas", sid)
+ui.breadcrumb("NencBoost", project.get("name", ""), "Áudios", sid)
 _duracao = audio.get("duration_str")
 page_title(
     "chart-line",

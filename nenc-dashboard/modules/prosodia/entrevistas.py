@@ -1,9 +1,9 @@
 """
-Prosódia — Entrevistas.
+Prosódia — Áudios.
 
-Tela principal de consulta das entrevistas de um projeto:
+Tela principal de consulta dos áudios de um projeto:
 - tabela robusta com busca e filtros
-- métricas de qualidade e cobertura por entrevista
+- métricas de qualidade e cobertura por áudio
 - ações de timeline, análise, download e exclusão
 """
 
@@ -25,6 +25,7 @@ from utils.prosodia_db import (
     delete_audio,
 )
 from utils.organization_data import claim_external_resource, list_external_resources
+from utils.prosodia_quality import thresholds_for_project
 
 init_db()
 
@@ -84,19 +85,14 @@ if not project:
         st.switch_page("modules/prosodia/projetos.py")
     st.stop()
 
-# Parse thresholds customizados se existirem
-thresholds = None
-if project and project.get("quality_thresholds"):
-    try:
-        import json
-        thresholds = json.loads(project["quality_thresholds"])
-    except Exception:
-        pass
+# O tipo do projeto escolhe o prompt da IA e os limiares padrão de qualidade.
+tipo_projeto = project.get("tipo_projeto")
+thresholds = thresholds_for_project(project)
 
 # ------------------------------------------------------------------
 # Cabecalho
 # ------------------------------------------------------------------
-ui.breadcrumb("NencBoost", project["name"], "Entrevistas")
+ui.breadcrumb("NencBoost", project["name"], "Áudios")
 
 # Os dois saltos que mais se usam a partir daqui. Ambos os destinos ja estao
 # no menu do projeto aberto, entao `switch_page` direto basta — nao ha
@@ -107,7 +103,7 @@ titulo, ir_analise, voltar = st.columns(
 with titulo:
     page_title(
         "list-bullets",
-        "Entrevistas",
+        "Áudios",
         "{} no projeto".format(len(get_audios_for_interviews(project_id))),
     )
 with ir_analise:
@@ -295,7 +291,7 @@ if wa_configured():
                     compute_overall_status,
                 )
                 from utils.prosodia_prompts import (
-                    PROSODIA_SYSTEM_PROMPT,
+                    get_prosodia_system_prompt,
                     build_prosodia_user_prompt,
                 )
                 from utils.ai_provider import (
@@ -469,7 +465,7 @@ if wa_configured():
                                 tables_text, proj_ctx, transcript_sample
                             )
                             analysis_result = ai_create_analysis(
-                                system_prompt=PROSODIA_SYSTEM_PROMPT,
+                                system_prompt=get_prosodia_system_prompt(tipo_projeto),
                                 user_prompt=user_prompt,
                                 model="gpt-4.1-mini",
                                 vector_store_id=vs_id,
@@ -489,7 +485,9 @@ if wa_configured():
                         )
 
                     # -- Verificação de qualidade --
-                    quality_checks = run_quality_checks(vad_df, tr_df, sinc_df, thresholds)
+                    quality_checks = run_quality_checks(
+                        vad_df, tr_df, sinc_df, thresholds, tipo_projeto=tipo_projeto
+                    )
                     coverage_kw = check_question_coverage_keywords(tr_df, questions)
                     coverage_ai = []
                     if openai_client and questions and transcript_sample:
@@ -533,7 +531,7 @@ if wa_configured():
 audios = get_audios_for_interviews(project_id)
 
 if not audios:
-    st.info("Nenhuma entrevista carregada ainda. Faça upload dos arquivos para começar.")
+    st.info("Nenhum áudio carregado ainda. Faça upload dos arquivos para começar.")
     if pode_editar and st.button("Ir para Uploads", type="primary"):
         st.switch_page("modules/prosodia/audios.py")
     st.stop()
@@ -612,7 +610,7 @@ for audio in audios:
 
     filtered.append(audio)
 
-st.caption(f"{len(filtered)} entrevista(s) encontrada(s) de {len(audios)} no projeto.")
+st.caption(f"{len(filtered)} áudio(s) encontrado(s) de {len(audios)} no projeto.")
 
 # ------------------------------------------------------------------
 # Tabela
@@ -620,7 +618,7 @@ st.caption(f"{len(filtered)} entrevista(s) encontrada(s) de {len(audios)} no pro
 selected_audio = None
 
 if not filtered:
-    st.warning("Nenhuma entrevista atende aos filtros selecionados.")
+    st.warning("Nenhum áudio atende aos filtros selecionados.")
 else:
     rows = []
     for a in filtered:
@@ -723,12 +721,12 @@ else:
 st.markdown("")
 
 if not selected_audio:
-    st.info("Selecione uma linha na tabela para abrir ou excluir a entrevista.")
+    st.info("Selecione uma linha na tabela para abrir ou excluir o áudio.")
 else:
     selected_id = selected_audio["id"]
 
     st.caption(
-        f"Entrevista selecionada: {selected_audio.get('session_id', '')} "
+        f"Áudio selecionado: {selected_audio.get('session_id', '')} "
         f"({str(selected_audio.get('created_at', ''))[:10]})"
     )
 
@@ -843,7 +841,7 @@ else:
                                 status_container.info("Atualizando verificação de qualidade...")
                                 from utils.prosodia_db import get_project_questions, save_quality_check, save_analysis
                                 from utils.prosodia_quality import run_quality_checks, check_question_coverage_keywords, check_question_coverage_ai, merge_coverage, compute_overall_status
-                                from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
+                                from utils.prosodia_prompts import get_prosodia_system_prompt, build_prosodia_user_prompt
                                 from utils.ai_provider import (
                                     add_document_to_vector_store,
                                     get_openai_client,
@@ -859,7 +857,7 @@ else:
                                 openai_client = get_openai_client()
                                 vs_id = get_prosodia_vector_store_id()
                                 
-                                new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds)
+                                new_checks = run_quality_checks(new_vad_df, new_tr_df, new_sinc_df if not new_sinc_df.empty else None, thresholds, tipo_projeto=tipo_projeto)
                                 cov_kw = check_question_coverage_keywords(new_tr_df, questions)
                                 cov_ai = []
                                 if openai_client and questions and new_transcript_text:
@@ -922,7 +920,7 @@ else:
                                 
                                 # Chamar IA
                                 result_ai = ai_create_analysis(
-                                    system_prompt=PROSODIA_SYSTEM_PROMPT,
+                                    system_prompt=get_prosodia_system_prompt(tipo_projeto),
                                     user_prompt=user_prompt,
                                     model="gpt-4.1-mini",
                                     vector_store_id=vs_id,
@@ -998,17 +996,17 @@ else:
         if erro_api is not None:
             st.error(
                 f"Não foi possível consultar o áudio na API ({erro_api}). "
-                "A entrevista não será excluída sem saber se o áudio sai junto; tente de novo."
+                "O áudio não será excluído daqui sem saber se a gravação na API sai junto; tente de novo."
             )
         elif plano.delete_in_api:
             st.warning(
-                f"Excluir a entrevista **{sessao}** e o áudio dela na API "
+                f"Excluir o áudio **{sessao}** daqui e também da API "
                 "(gravação, transcrição e resultado da análise)? Esta ação não pode ser desfeita."
             )
         else:
-            aviso = f"Excluir a entrevista **{sessao}**? Esta ação não pode ser desfeita."
+            aviso = f"Excluir o áudio **{sessao}**? Esta ação não pode ser desfeita."
             if plano.api_audio_id is not None:
-                aviso += f"\n\nO áudio na API não será excluído: {plano.reason}"
+                aviso += f"\n\nA gravação na API não será excluída: {plano.reason}"
             st.warning(aviso)
         dc1, dc2 = st.columns(2)
         with dc1:
@@ -1019,7 +1017,7 @@ else:
                     if plano.delete_in_api:
                         delete_api_audio(plano.api_audio_id)
                 except Exception as e:
-                    st.error(f"Falha ao excluir o áudio na API ({e}). A entrevista não foi excluída.")
+                    st.error(f"Falha ao excluir a gravação na API ({e}). O áudio não foi excluído.")
                 else:
                     delete_audio(selected_id)
                     st.session_state.pop(f"confirm_del_interview_{selected_id}", None)

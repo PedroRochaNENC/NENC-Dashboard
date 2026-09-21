@@ -40,9 +40,10 @@ from utils.prosodia_quality import (
     check_question_coverage_ai,
     merge_coverage,
     compute_overall_status,
+    thresholds_for_project,
 )
 from utils.prosodia_prompts import (
-    PROSODIA_SYSTEM_PROMPT,
+    get_prosodia_system_prompt,
     build_prosodia_user_prompt,
 )
 from utils.ai_provider import (
@@ -424,14 +425,10 @@ with tab_audios:
                             openai_client = get_openai_client()
                             vs_id = get_prosodia_vector_store_id()
                             questions = get_project_questions(project_id)
-                            thresholds = None
-                            if project and project.get("quality_thresholds"):
-                                try:
-                                    import json
-                                    thresholds = json.loads(project["quality_thresholds"])
-                                except Exception:
-                                    pass
-                            
+                            # O tipo do projeto de destino escolhe o prompt e os limiares padrão.
+                            tipo_projeto = project.get("tipo_projeto")
+                            thresholds = thresholds_for_project(project)
+
                             # A linha da tabela so carrega ID, telefone e mensagem; o QR
                             # vem do registro completo da API, buscado junto com o escopo.
                             api_audio_por_id = {
@@ -581,7 +578,7 @@ with tab_audios:
                                     transcript_sample = " ".join(tr_df["Text"].fillna("").astype(str).tolist())[:3000]
                                     
                                     # Criar prompt e chamar IA
-                                    system_prompt = PROSODIA_SYSTEM_PROMPT
+                                    system_prompt = get_prosodia_system_prompt(tipo_projeto)
                                     user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_sample)
                                     
                                     with st.spinner(f"[{session_id}] Gerando análise de IA..."):
@@ -600,7 +597,9 @@ with tab_audios:
                                     )
                                     
                                     # 7. Quality Checks & Coverage
-                                    checks = run_quality_checks(vad_df, tr_df, sinc_df, thresholds)
+                                    checks = run_quality_checks(
+                                        vad_df, tr_df, sinc_df, thresholds, tipo_projeto=tipo_projeto
+                                    )
                                     kw_cov = check_question_coverage_keywords(tr_df, questions)
                                     
                                     ai_cov = []

@@ -22,20 +22,36 @@ from utils.prosodia_db import (
     user_can_modify_project,
 )
 from utils.organization_data import claim_external_resource
+from utils.prosodia_project_types import (
+    ENTREVISTA_QUALITATIVA,
+    PESQUISA_OPINIAO,
+    normalize_project_type,
+)
 
 # Garantir que o banco está inicializado
 init_db()
+
+_TYPE_FILTER_LABELS = {
+    "todos": "Todos",
+    ENTREVISTA_QUALITATIVA: "Entrevistas Qualitativas",
+    PESQUISA_OPINIAO: "Pesquisas de Opinião",
+}
+# Selo do card: ícone, rótulo curto e tom.
+_TYPE_CHIPS = {
+    ENTREVISTA_QUALITATIVA: ("users-three", "Entrevista Qualitativa", "muted"),
+    PESQUISA_OPINIAO: ("file-audio", "Pesquisa de Opinião", "accent"),
+}
 
 ui.inject_theme()
 ui.breadcrumb("NencBoost", "Projetos")
 page_title(
     "folders",
     "Projetos",
-    "Cada projeto agrupa entrevistas, áudios e análises.",
+    "Cada projeto agrupa áudios e análises.",
 )
 st.markdown(
     "Organize suas análises do NencBoost em **projetos** (campanhas). "
-    "Cada projeto agrupa entrevistas com contexto compartilhado e "
+    "Cada projeto agrupa áudios com contexto compartilhado e "
     "base de conhecimento unificada."
 )
 
@@ -82,6 +98,22 @@ if not projects:
         "Clique em **Novo Projeto** para começar."
     )
 else:
+    type_filter = st.segmented_control(
+        "Tipo de projeto",
+        list(_TYPE_FILTER_LABELS),
+        format_func=_TYPE_FILTER_LABELS.get,
+        default="todos",
+        key="pros_type_filter",
+        label_visibility="collapsed",
+    ) or "todos"
+    if type_filter != "todos":
+        projects = [
+            proj for proj in projects
+            if normalize_project_type(proj.get("tipo_projeto")) == type_filter
+        ]
+        if not projects:
+            st.info("Nenhum projeto deste tipo.")
+
     for proj in projects:
         with st.container(border=True):
             c1, c2, c3 = st.columns([6, 1, 1])
@@ -106,16 +138,23 @@ else:
                     if api_proj_id
                     else ""
                 )
+                type_icon, type_label, type_tone = _TYPE_CHIPS[
+                    normalize_project_type(proj.get("tipo_projeto"))
+                ]
+                type_badge = ui.status_chip(type_icon, type_label, tone=type_tone)
                 st.markdown(
                     "<span style=\"display:inline-flex;align-items:center;"
                     "gap:.45rem;flex-wrap:wrap\"><strong>{name}</strong>"
-                    "{org}{api}</span>".format(
-                        name=proj["name"], org=org_badge, api=api_badge
+                    "{tipo}{org}{api}</span>".format(
+                        name=proj["name"],
+                        tipo=type_badge,
+                        org=org_badge,
+                        api=api_badge,
                     ),
                     unsafe_allow_html=True,
                 )
                 st.caption(
-                    f"{n} entrevista(s) • {proj['created_at'][:10]}"
+                    f"{n} áudio(s) • {proj['created_at'][:10]}"
                     + (f"  •  _{proj['especialidade'][:60]}…_" if proj.get("especialidade") else "")
                 )
 
@@ -505,7 +544,7 @@ else:
             if st.session_state.get(f"confirm_del_{proj['id']}"):
                 st.warning(
                     f"Tem certeza que deseja excluir **{proj['name']}**? "
-                    "Todas as entrevistas e análises serão removidas permanentemente."
+                    "Todos os áudios e análises serão removidos permanentemente."
                 )
 
                 excluir_na_api = False

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
 from utils import auth
+from utils.prosodia_project_types import DEFAULT_PROJECT_TYPE, PROJECT_TYPE_LABELS
 
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "prosodia.db"
 
@@ -264,6 +265,7 @@ def init_db() -> None:
                 whatsapp_campaign_id INTEGER,
                 api_project_id INTEGER,
                 quality_thresholds TEXT,
+                tipo_projeto TEXT    NOT NULL DEFAULT 'entrevista_qualitativa',
                 created_by_user_id INTEGER
                              REFERENCES users(id) ON DELETE SET NULL,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
@@ -352,6 +354,13 @@ def init_db() -> None:
                 "ALTER TABLE projects ADD COLUMN created_by_user_id INTEGER "
                 "REFERENCES users(id) ON DELETE SET NULL"
             )
+        if "tipo_projeto" not in cols:
+            # O default preenche os projetos existentes, que sempre foram
+            # tratados como entrevista.
+            conn.execute(
+                "ALTER TABLE projects ADD COLUMN tipo_projeto TEXT NOT NULL "
+                "DEFAULT 'entrevista_qualitativa'"
+            )
 
         audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -391,6 +400,12 @@ def init_db() -> None:
 # CRUD — Projects
 # ---------------------------------------------------------------------------
 
+def _require_known_project_type(tipo_projeto: str) -> None:
+    """O tipo escolhe prompt e limiares: um valor desconhecido não entra no banco."""
+    if tipo_projeto not in PROJECT_TYPE_LABELS:
+        raise ValueError("Tipo de projeto desconhecido: {!r}".format(tipo_projeto))
+
+
 def create_project(
     name: str,
     especialidade: str = "",
@@ -404,8 +419,10 @@ def create_project(
     quality_thresholds: Optional[str] = None,
     api_project_id: Optional[int] = None,
     qr_verification_text: Optional[str] = None,
+    tipo_projeto: str = DEFAULT_PROJECT_TYPE,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
+    _require_known_project_type(tipo_projeto)
     actor = _require_write()
     organization_id = _active_organization_id()
     if not organization_id:
@@ -427,8 +444,9 @@ def create_project(
                     whatsapp_campaign_id,
                     quality_thresholds,
                     api_project_id,
-                    qr_verification_text
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    qr_verification_text,
+                    tipo_projeto
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 organization_id,
                 _actor_user_id(actor),
@@ -444,6 +462,7 @@ def create_project(
                 quality_thresholds,
                 api_project_id,
                 qr_verification_text,
+                tipo_projeto,
             ),
         )
         project_id = cur.lastrowid
@@ -551,8 +570,16 @@ def update_project(
     quality_thresholds: Optional[str] = None,
     api_project_id: Optional[int] = None,
     qr_verification_text: Optional[str] = None,
+    tipo_projeto: Optional[str] = None,
 ) -> None:
-    """Atualiza os campos de um projeto existente."""
+    """Atualiza os campos de um projeto existente.
+
+    `tipo_projeto=None` mantém o tipo salvo: as telas que regravam o projeto
+    repassando os próprios campos (texto do QR, vínculo com a API, campanha)
+    não conhecem o tipo, e sem isso o apagariam.
+    """
+    if tipo_projeto is not None:
+        _require_known_project_type(tipo_projeto)
     actor = _require_write()
     # A autoria e conferida antes do claim: uma recusa nao pode deixar para
     # tras a posse de um recurso externo que nunca chegou a ser vinculado.
@@ -574,7 +601,8 @@ def update_project(
                        whatsapp_campaign_id=?,
                        quality_thresholds=?,
                        api_project_id=?,
-                       qr_verification_text=?
+                       qr_verification_text=?,
+                       tipo_projeto=COALESCE(?, tipo_projeto)
                    WHERE id=?""",
                 (
                     name,
@@ -589,6 +617,7 @@ def update_project(
                     quality_thresholds,
                     api_project_id,
                     qr_verification_text,
+                    tipo_projeto,
                     project_id,
                 ),
             )
@@ -606,7 +635,8 @@ def update_project(
                        whatsapp_campaign_id=?,
                        quality_thresholds=?,
                        api_project_id=?,
-                       qr_verification_text=?
+                       qr_verification_text=?,
+                       tipo_projeto=COALESCE(?, tipo_projeto)
                    WHERE id=? AND organization_id=?""",
                 (
                     name,
@@ -621,6 +651,7 @@ def update_project(
                     quality_thresholds,
                     api_project_id,
                     qr_verification_text,
+                    tipo_projeto,
                     project_id,
                     organization_id,
                 ),
@@ -1281,6 +1312,32 @@ def save_project_analysis(
         analysis_id = cur.lastrowid
     _audit("prosodia.project_analysis.create", "project_analysis", analysis_id, actual_org_id, write=True)
     return analysis_id
+
+
+def delete_project_analyses(project_id: int, analysis_ids: List[int]) -> int:
+    """Remove análises gerais do projeto. Retorna quantas foram apagadas."""
+    _require_write()
+    if not analysis_ids:
+        return 0
+    organization_id = _active_organization_id()
+    ids = [int(i) for i in analysis_ids]
+    placeholders = ",".join("?" * len(ids))
+    with _connect() as conn:
+        if not organization_id:
+            result = conn.execute(
+                f"DELETE FROM project_analyses WHERE project_id = ? AND id IN ({placeholders})",
+                (project_id, *ids),
+            )
+        else:
+            result = conn.execute(
+                f"""DELETE FROM project_analyses
+                    WHERE project_id = ? AND organization_id = ? AND id IN ({placeholders})""",
+                (project_id, organization_id, *ids),
+            )
+        deleted = result.rowcount
+    if deleted:
+        _audit("prosodia.project_analysis.delete", "project", project_id, organization_id or 0, write=True)
+    return deleted
 
 
 def get_latest_project_analysis(project_id: int) -> Optional[Dict]:

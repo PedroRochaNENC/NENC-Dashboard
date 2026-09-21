@@ -10,8 +10,8 @@ O NencBoost tem três níveis. Sem projeto aberto, o menu mostra a lista de
 projetos, a base de conhecimento e a coleta via WhatsApp. Com um projeto
 aberto, a seção passa a levar o nome dele e reúne as páginas do projeto —
 é assim que o contexto ativo fica visível, já que o `st.navigation` desenha
-o menu sempre no topo da barra lateral e nada pode ficar acima dele. Com uma
-entrevista aberta, Timeline e Análise entram nessa mesma seção.
+o menu sempre no topo da barra lateral e nada pode ficar acima dele. Com um
+áudio aberto, Timeline e Análise entram nessa mesma seção.
 """
 
 import streamlit as st
@@ -139,7 +139,7 @@ def _prosodia_pages(user: auth.User) -> dict[str, list]:
         # cabe, acima das páginas dele.
         project_pages = [
             _page("modules/prosodia/entrevistas.py",
-                  "Entrevistas", "list-bullets"),
+                  "Áudios", "list-bullets"),
             _page("modules/prosodia/analise_geral.py",
                   "Análise Geral", "chart-bar"),
             _page("modules/prosodia/audios.py",
@@ -147,8 +147,8 @@ def _prosodia_pages(user: auth.User) -> dict[str, list]:
             _page("modules/prosodia/preparacao.py",
                   "Dados do Projeto", "note-pencil"),
         ]
-        # Nível 3: Timeline e Análise pertencem a uma entrevista, e são
-        # abertas pelas ações da linha na tabela de Entrevistas.
+        # Nível 3: Timeline e Análise pertencem a um áudio, e são
+        # abertas pelas ações da linha na tabela de Áudios.
         if st.session_state.get("pros_audio_id"):
             project_pages.extend([
                 _page("modules/prosodia/audio_timeline.py",

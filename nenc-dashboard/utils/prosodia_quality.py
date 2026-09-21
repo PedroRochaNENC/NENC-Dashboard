@@ -21,6 +21,8 @@ import json
 from typing import Dict, List, Optional
 import pandas as pd
 
+from utils.prosodia_project_types import PESQUISA_OPINIAO, normalize_project_type
+
 
 def _parse_json_response(raw: str) -> list:
     """
@@ -125,9 +127,30 @@ DEFAULT_THRESHOLDS = {
 # Mantido para retrocompatibilidade
 THRESHOLDS = DEFAULT_THRESHOLDS
 
+# Pesquisa de opinião: áudio curto de um único respondente, como o recado de
+# WhatsApp enviado pelo QR Code. Só os mínimos de fala mudam; o equilíbrio
+# entre locutores nem é checado nesse tipo (ver run_quality_checks).
+DEFAULT_THRESHOLDS_PESQUISA_OPINIAO = {
+    **DEFAULT_THRESHOLDS,
+    "duration_fail_s": 5.0,
+    "duration_warn_s": 10.0,
+    "words_fail": 5,
+    "words_warn": 15,
+    "min_vad_segments_warn": 1,
+}
 
-def get_merged_thresholds(custom_thresholds: Optional[Dict] = None) -> Dict:
-    merged = DEFAULT_THRESHOLDS.copy()
+
+def default_thresholds(tipo_projeto: Optional[str] = None) -> Dict:
+    """Limiares padrão do tipo de projeto."""
+    if normalize_project_type(tipo_projeto) == PESQUISA_OPINIAO:
+        return DEFAULT_THRESHOLDS_PESQUISA_OPINIAO.copy()
+    return DEFAULT_THRESHOLDS.copy()
+
+
+def get_merged_thresholds(
+    custom_thresholds: Optional[Dict] = None, base: Optional[Dict] = None
+) -> Dict:
+    merged = (base or DEFAULT_THRESHOLDS).copy()
     if custom_thresholds:
         for k, v in custom_thresholds.items():
             if k in merged:
@@ -141,6 +164,26 @@ def get_merged_thresholds(custom_thresholds: Optional[Dict] = None) -> Dict:
                 except (ValueError, TypeError):
                     pass
     return merged
+
+
+def thresholds_for_project(project: Optional[Dict]) -> Dict:
+    """Limiares efetivos: os personalizados do projeto sobre os padrões do tipo.
+
+    "Usar valores padrão" grava NULL em quality_thresholds, então o padrão só
+    se resolve aqui, na hora da checagem, e depende do tipo do projeto.
+    """
+    project = project or {}
+    custom = None
+    if project.get("quality_thresholds"):
+        try:
+            custom = json.loads(project["quality_thresholds"])
+        except (TypeError, ValueError):
+            custom = None
+    if not isinstance(custom, dict):
+        custom = None
+    return get_merged_thresholds(
+        custom, base=default_thresholds(project.get("tipo_projeto"))
+    )
 
 
 _UNINTELLIGIBLE_RE = re.compile(
@@ -595,6 +638,7 @@ def run_quality_checks(
     transcricao_df: pd.DataFrame,
     sinc_df: Optional[pd.DataFrame] = None,
     thresholds: Optional[Dict] = None,
+    tipo_projeto: Optional[str] = None,
 ) -> List[Dict]:
     """
     Executa todos os checks objetivos e retorna lista de resultados.
@@ -604,10 +648,15 @@ def run_quality_checks(
         check_word_count(transcricao_df, thresholds),
         check_intelligibility(transcricao_df, thresholds),
         check_silence_ratio(vad_df, thresholds),
-        check_speaker_balance(transcricao_df, thresholds),
+    ]
+    # Na pesquisa de opinião fala um só respondente: um locutor com 100% das
+    # palavras é o esperado, não sinal de gravação mono.
+    if normalize_project_type(tipo_projeto) != PESQUISA_OPINIAO:
+        checks.append(check_speaker_balance(transcricao_df, thresholds))
+    checks.extend([
         check_segment_count(vad_df, thresholds),
         check_speaking_rate(transcricao_df, vad_df, thresholds),
-    ]
+    ])
 
     if sinc_df is not None and not sinc_df.empty:
         checks.extend(check_acoustic_anomalies(sinc_df, thresholds))

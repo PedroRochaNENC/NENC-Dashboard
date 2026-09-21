@@ -1,17 +1,16 @@
 """
 Prosódia — Uploads do Projeto.
 
-Upload e processamento em lote de entrevistas (JSON/CSV), com geração
+Upload e processamento em lote de áudios (JSON/CSV), com geração
 automática de análise e verificação de qualidade.
 """
 
 import io
-import json
 import streamlit as st
 from utils import auth, ui
 from utils.icons import page_title
 
-# A pagina existe apenas para ingerir entrevistas: nao ha nada aqui que uma
+# A pagina existe apenas para ingerir audios: nao ha nada aqui que uma
 # conta somente leitura possa fazer.
 auth.require_module_write("prosodia")
 
@@ -37,8 +36,9 @@ from utils.prosodia_quality import (
     check_question_coverage_ai,
     merge_coverage,
     compute_overall_status,
+    thresholds_for_project,
 )
-from utils.prosodia_prompts import PROSODIA_SYSTEM_PROMPT, build_prosodia_user_prompt
+from utils.prosodia_prompts import get_prosodia_system_prompt, build_prosodia_user_prompt
 from utils.ai_provider import (
     add_document_to_vector_store,
     get_openai_client,
@@ -79,7 +79,7 @@ page_title("upload-simple", "Uploads", project["name"])
 # Upload em lote
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("Adicionar Entrevistas")
+st.subheader("Adicionar Áudios")
 st.markdown(
     "O matching entre JSON e CSV é feito automaticamente pelo ID de sessão "
     "extraído do nome do arquivo "
@@ -131,12 +131,10 @@ with st.expander("Configurações de análise automática", expanded=False):
 if json_files or csv_files or sinc_files:
     if st.button("Processar e Salvar Uploads", type="primary"):
         questions = get_project_questions(project_id)
-        thresholds = None
-        if project.get("quality_thresholds"):
-            try:
-                thresholds = json.loads(project["quality_thresholds"])
-            except Exception:
-                pass
+        # O tipo do projeto escolhe o prompt da IA e os limiares padrão de qualidade.
+        tipo_projeto = project.get("tipo_projeto")
+        system_prompt = get_prosodia_system_prompt(tipo_projeto)
+        thresholds = thresholds_for_project(project)
         openai_client = get_openai_client()
         groq_client = None
 
@@ -266,7 +264,7 @@ if json_files or csv_files or sinc_files:
                         tables_text, proj_ctx, transcript_sample
                     )
                     analysis_result = ai_create_analysis(
-                        system_prompt=PROSODIA_SYSTEM_PROMPT,
+                        system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         model="gpt-4.1-mini",
                         vector_store_id=vs_id,
@@ -281,7 +279,7 @@ if json_files or csv_files or sinc_files:
                     resp = ai_client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": PROSODIA_SYSTEM_PROMPT},
+                            {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
                         temperature=0.5,
@@ -300,7 +298,10 @@ if json_files or csv_files or sinc_files:
                 )
 
             # -- Verificação de qualidade --
-            quality_checks = run_quality_checks(vad_df, tr_df, sinc_df if not sinc_df.empty else None, thresholds)
+            quality_checks = run_quality_checks(
+                vad_df, tr_df, sinc_df if not sinc_df.empty else None, thresholds,
+                tipo_projeto=tipo_projeto,
+            )
             coverage_kw = check_question_coverage_keywords(tr_df, questions)
             coverage_ai = []
             if ai_client and questions and transcript_sample:
@@ -324,7 +325,7 @@ if json_files or csv_files or sinc_files:
 
             progress.progress((i + 1) / total, text=f"{sid} concluído.")
 
-        st.success(f"{total} entrevista(s) processada(s) com sucesso!")
+        st.success(f"{total} áudio(s) processado(s) com sucesso!")
         st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
@@ -368,7 +369,7 @@ if api_project_id:
             audio_label = st.text_input(
                 "Identificador / Marcador (Label)",
                 value=default_label,
-                placeholder="Ex: Entrevistado A, Sessão 1",
+                placeholder="Ex: Respondente A, Sessão 1",
                 key="api_audio_label"
             )
             
@@ -403,12 +404,12 @@ if api_project_id:
         st.caption("API de WhatsApp não configurada.")
 
 # ------------------------------------------------------------------
-# Acesso às entrevistas
+# Acesso aos áudios
 # ------------------------------------------------------------------
 st.divider()
-st.subheader("Entrevistas do Projeto")
-st.caption("A listagem completa, busca, filtros e ações de cada entrevista ficam na tela Entrevistas.")
-if st.button("Ir para Entrevistas", type="primary"):
+st.subheader("Áudios do Projeto")
+st.caption("A listagem completa, busca, filtros e ações de cada áudio ficam na tela Áudios.")
+if st.button("Ir para Áudios", type="primary"):
     st.switch_page("modules/prosodia/entrevistas.py")
 
 # ------------------------------------------------------------------
