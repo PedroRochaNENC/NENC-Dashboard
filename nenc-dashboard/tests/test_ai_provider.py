@@ -367,5 +367,111 @@ class ListVectorStoreDocumentsTests(unittest.TestCase):
         self.assertEqual(documents[0]["size_kb"], 0.0)
 
 
+class _Recorder:
+    """Guarda os argumentos da chamada e devolve uma resposta pronta."""
+
+    def __init__(self, response):
+        self._response = response
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        return self._response
+
+
+class _TextBlock:
+    def __init__(self, text, kind="text"):
+        self.type = kind
+        self.text = text
+
+
+class _AnthropicClient:
+    def __init__(self, blocks):
+        self.messages = _Recorder(type("Resp", (), {"content": blocks})())
+
+
+class _ChatClient:
+    def __init__(self, text):
+        message = type("Msg", (), {"content": text})()
+        choice = type("Choice", (), {"message": message})()
+        completions = _Recorder(type("Resp", (), {"choices": [choice]})())
+        self.chat = type("Chat", (), {"completions": completions})()
+
+
+class ChatCompletionTests(unittest.TestCase):
+    def test_claude_receives_the_system_prompt_apart_and_no_temperature(self):
+        client = _AnthropicClient([_TextBlock("Olá, "), _TextBlock("mundo")])
+        history = [{"role": "user", "content": "Pergunta"}]
+
+        with patch.object(ai_provider, "get_anthropic_client", return_value=client):
+            text = ai_provider.chat_completion(
+                ai_provider.PROVIDER_ANTHROPIC,
+                "claude-sonnet-5-5",
+                "Sistema",
+                history,
+                temperature=0.7,
+                max_tokens=100,
+            )
+
+        self.assertEqual(text, "Olá, mundo")
+        kwargs = client.messages.kwargs
+        self.assertEqual(kwargs["system"], "Sistema")
+        self.assertEqual(kwargs["messages"], history)
+        self.assertEqual(kwargs["max_tokens"], 100)
+        self.assertNotIn("temperature", kwargs)
+
+    def test_groq_gets_the_system_prompt_as_first_message(self):
+        client = _ChatClient("resposta")
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            text = ai_provider.chat_completion(
+                ai_provider.PROVIDER_GROQ,
+                "llama-3.3-70b-versatile",
+                "Sistema",
+                [{"role": "user", "content": "Pergunta"}],
+            )
+
+        self.assertEqual(text, "resposta")
+        messages = client.chat.completions.kwargs["messages"]
+        self.assertEqual(messages[0], {"role": "system", "content": "Sistema"})
+        self.assertEqual(messages[1]["content"], "Pergunta")
+
+    def test_a_provider_without_key_says_which_variable_is_missing(self):
+        with patch.object(ai_provider, "get_anthropic_client", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY"):
+                ai_provider.chat_completion(
+                    ai_provider.PROVIDER_ANTHROPIC, "claude-sonnet-5-5", "s", []
+                )
+
+
+class AvailableModelsTests(unittest.TestCase):
+    def test_only_providers_with_a_key_reach_the_selector(self):
+        clients = {
+            ai_provider.PROVIDER_OPENAI: None,
+            ai_provider.PROVIDER_GROQ: object(),
+            ai_provider.PROVIDER_ANTHROPIC: object(),
+        }
+
+        with patch.object(ai_provider, "get_provider_client", side_effect=clients.get):
+            options = ai_provider.available_models()
+            missing = ai_provider.unavailable_providers()
+
+        providers = {provider for provider, _ in options}
+        self.assertEqual(
+            providers, {ai_provider.PROVIDER_GROQ, ai_provider.PROVIDER_ANTHROPIC}
+        )
+        self.assertEqual(missing, [ai_provider.PROVIDER_OPENAI])
+        self.assertEqual(
+            ai_provider.format_model_option(("anthropic", "claude-sonnet-5-5")),
+            "Claude · claude-sonnet-5-5",
+        )
+
+    def test_the_example_placeholder_does_not_count_as_a_key(self):
+        with patch.dict("os.environ", {"GROQ_API_KEY": "your_groq_api_key_here"}):
+            self.assertEqual(ai_provider._configured_key("GROQ_API_KEY"), "")
+        with patch.dict("os.environ", {"GROQ_API_KEY": " gsk_real "}):
+            self.assertEqual(ai_provider._configured_key("GROQ_API_KEY"), "gsk_real")
+
+
 if __name__ == "__main__":
     unittest.main()
