@@ -11,6 +11,7 @@ from utils.icons import page_title
 
 user = auth.require_module("prosodia")
 
+from utils import kb_cleanup
 from utils.ai_provider import (
     add_document_to_vector_store,
     get_openai_client,
@@ -198,12 +199,7 @@ if file_list:
             ):
                 try:
                     auth.assert_module_write("prosodia")
-                    client.vector_stores.files.delete(
-                        vector_store_id=vs_id,
-                        file_id=document["id"],
-                    )
-                    client.files.delete(document["id"])
-                    list_vector_store_documents.clear()
+                    kb_cleanup.remove_document(vs_id, document["id"])
                     st.rerun()
                 except auth.AuthorizationError as error:
                     st.error(str(error))

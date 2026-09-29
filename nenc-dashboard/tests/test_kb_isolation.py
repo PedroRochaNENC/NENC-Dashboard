@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
+from openai import NotFoundError
+
 from utils import ai_provider, auth, kb_cleanup, prosodia_db, ui
 from utils.kb_attributes import (
     ESCOPO_ANALISE,
@@ -15,6 +18,17 @@ from utils.kb_attributes import (
 )
 
 
+def _not_found(file_id):
+    """O 404 que a OpenAI devolve quando o arquivo ja saiu da conta."""
+
+    request = httpx.Request("DELETE", f"https://api.openai.com/v1/files/{file_id}")
+    return NotFoundError(
+        f"No such File object: {file_id}",
+        response=httpx.Response(404, request=request),
+        body=None,
+    )
+
+
 class _VectorStoreFile:
     def __init__(self, file_id, attributes=None):
         self.id = file_id
@@ -22,28 +36,34 @@ class _VectorStoreFile:
 
 
 class _VectorStoreFiles:
-    def __init__(self, files):
+    def __init__(self, files, missing=()):
         self._files = files
+        self._missing = set(missing)
         self.deleted = []
 
     def list(self, vector_store_id):
         return list(self._files)
 
     def delete(self, vector_store_id, file_id):
+        if file_id in self._missing:
+            raise _not_found(file_id)
         self.deleted.append(file_id)
 
 
 class _Files:
-    def __init__(self):
+    def __init__(self, missing=()):
+        self._missing = set(missing)
         self.deleted = []
 
     def delete(self, file_id):
+        if file_id in self._missing:
+            raise _not_found(file_id)
         self.deleted.append(file_id)
 
 
 class _VectorStores:
-    def __init__(self, files):
-        self.files = _VectorStoreFiles(files)
+    def __init__(self, files, missing=()):
+        self.files = _VectorStoreFiles(files, missing)
         self.deleted = []
 
     def delete(self, vector_store_id):
@@ -51,9 +71,9 @@ class _VectorStores:
 
 
 class _Client:
-    def __init__(self, files):
-        self.files = _Files()
-        self.vector_stores = _VectorStores(files)
+    def __init__(self, files, missing_files=(), missing_entries=()):
+        self.files = _Files(missing_files)
+        self.vector_stores = _VectorStores(files, missing_entries)
 
 
 class AttributeContractTests(unittest.TestCase):
@@ -202,6 +222,65 @@ class CleanupTests(unittest.TestCase):
         with patch.object(kb_cleanup, "get_openai_client", lambda: self.client):
             self.assertTrue(kb_cleanup.delete_vector_store("vs_projeto"))
         self.assertEqual(self.client.vector_stores.deleted, ["vs_projeto"])
+
+
+class DocumentRemovalTests(unittest.TestCase):
+    """O botao "Remover" da tela de Base de Conhecimento.
+
+    Ele some com o documento nos tres modulos pelo mesmo caminho, e nenhum
+    deles pode parar num erro por causa de um arquivo que ja nao existe.
+    """
+
+    class _Listing:
+        def __init__(self):
+            self.cleared = 0
+
+        def clear(self):
+            self.cleared += 1
+
+    def _patched(self, client, listing=None):
+        return patch.multiple(
+            kb_cleanup,
+            get_openai_client=lambda: client,
+            list_vector_store_documents=listing or self._Listing(),
+        )
+
+    def test_a_file_that_openai_no_longer_has_is_removed_without_error(self):
+        # O caso do "No such File object": o documento continuava listado, e o
+        # 404 do arquivo aparecia na tela como se nada tivesse saido.
+        client = _Client(
+            [], missing_files=["file-sumido"], missing_entries=["file-sumido"]
+        )
+        listing = self._Listing()
+
+        with self._patched(client, listing):
+            kb_cleanup.remove_document("vs_1", "file-sumido")
+
+        self.assertEqual(listing.cleared, 1)
+
+    def test_the_file_still_goes_when_it_had_already_left_the_vector_store(self):
+        # Sem isto o arquivo ficaria na conta, invisivel e cobrado.
+        client = _Client([], missing_entries=["file-solto"])
+
+        with self._patched(client):
+            kb_cleanup.remove_document("vs_1", "file-solto")
+
+        self.assertEqual(client.files.deleted, ["file-solto"])
+
+    def test_a_failure_that_is_not_a_404_reaches_who_clicked(self):
+        def explode(file_id):
+            raise RuntimeError("erro da OpenAI")
+
+        client = _Client([])
+        client.files.delete = explode
+        listing = self._Listing()
+
+        with self._patched(client, listing):
+            with self.assertRaises(RuntimeError):
+                kb_cleanup.remove_document("vs_1", "file-x")
+
+        # A remocao parou no meio: a listagem em cache nao vale mais.
+        self.assertEqual(listing.cleared, 1)
 
 
 class ReferenceRenderingTests(unittest.TestCase):
