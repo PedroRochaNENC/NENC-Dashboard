@@ -57,20 +57,30 @@ def project_document(
     return attributes
 
 
-def build_kb_filter(project_id: Optional[int]) -> Optional[dict]:
+def build_kb_filter(project_id: Optional[int], modulo: Optional[str] = None) -> Optional[dict]:
     """Filtro "literatura da organizacao, ou material deste projeto".
 
     Sem projeto aberto devolve None, e a busca segue alcancando a base inteira:
     a tela que nao sabe de qual projeto esta falando nao tem o que isolar.
+
+    Com `modulo`, o material de projeto tambem precisa ser daquele modulo: os
+    ids de projeto da Prosodia e da Jornada vem de tabelas diferentes e podem
+    coincidir, e uma base compartilhada por engano misturaria os dois.
     """
 
     if not project_id:
         return None
+    project_clause: dict = {"type": "eq", "key": "project_id", "value": int(project_id)}
+    if modulo:
+        project_clause = {
+            "type": "and",
+            "filters": [project_clause, {"type": "eq", "key": "modulo", "value": modulo}],
+        }
     return {
         "type": "or",
         "filters": [
             {"type": "eq", "key": "escopo", "value": ESCOPO_REFERENCIA},
-            {"type": "eq", "key": "project_id", "value": int(project_id)},
+            project_clause,
         ],
     }
 

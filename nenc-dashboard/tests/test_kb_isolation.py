@@ -69,6 +69,20 @@ class AttributeContractTests(unittest.TestCase):
             },
         )
 
+    def test_a_module_also_has_to_match_for_project_material(self):
+        kb_filter = build_kb_filter(7, modulo="jornada_compra")
+        self.assertEqual(kb_filter["filters"][0], {"type": "eq", "key": "escopo", "value": ESCOPO_REFERENCIA})
+        self.assertEqual(
+            kb_filter["filters"][1],
+            {
+                "type": "and",
+                "filters": [
+                    {"type": "eq", "key": "project_id", "value": 7},
+                    {"type": "eq", "key": "modulo", "value": "jornada_compra"},
+                ],
+            },
+        )
+
     def test_without_a_project_there_is_nothing_to_isolate(self):
         self.assertIsNone(build_kb_filter(None))
         self.assertIsNone(build_kb_filter(0))
