@@ -1,7 +1,9 @@
 """
 Jornada de Compra — Entrevistas Qualitativas.
 
-Gerenciamento e síntese das transcrições de entrevistas do ponto de venda.
+Transcrições das conversas com os participantes. Não entram nas métricas de
+atenção; vão para o contexto da análise de IA, que as trata como evidência
+para triangular com o eye tracking.
 """
 
 import streamlit as st
@@ -9,111 +11,74 @@ from utils import auth, ui
 from utils.icons import page_title
 
 user = auth.require_module("jornada_compra")
+pode_editar = auth.can_write(user)
 
 from utils import jornada_db
-from utils.ai_provider import get_openai_client
+from utils.jornada_ui import active_project
 
 jornada_db.init_db()
+project = active_project()
 
 ui.inject_theme()
-ui.breadcrumb("Jornada de Compra", "Entrevistas")
+ui.breadcrumb("Jornada de Compra", project["name"], "Entrevistas")
 page_title(
     "list-bullets",
     "Entrevistas Qualitativas",
-    "Transcrições que entram na análise do projeto.",
+    "Transcrições que entram no contexto da análise de IA.",
 )
 
-project_id = st.session_state.get("jc_project_id")
+if pode_editar:
+    with st.expander("Cadastrar entrevista", expanded=False):
+        with st.form("jc_form_entrevista", clear_on_submit=True):
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                titulo = st.text_input(
+                    "Título / identificação", placeholder="Ex: Entrevista pós-jornada — loja 1"
+                )
+            with c2:
+                participante = st.text_input("Participante", placeholder="Ex: Pt04")
+            texto = st.text_area(
+                "Transcrição", height=160, placeholder="Cole aqui a fala do participante..."
+            )
+            if st.form_submit_button("Salvar entrevista", type="primary"):
+                try:
+                    jornada_db.add_interview(project["id"], titulo, texto, participante)
+                except (auth.AuthorizationError, ValueError) as error:
+                    st.error(str(error))
+                else:
+                    st.toast("Entrevista salva.")
+                    st.rerun()
 
-if not project_id:
-    st.warning("Nenhum projeto selecionado.")
-    if st.button("Selecionar Projeto", type="primary"):
-        st.switch_page("modules/jornada_compra/projetos.py")
-    st.stop()
-
-project = jornada_db.get_project(project_id)
-if not project:
-    st.error("Projeto não encontrado.")
-    st.stop()
-
-st.caption(f"Projeto Ativo: **{project['name']}**")
-
-# ------------------------------------------------------------------
-# Adicionar Nova Entrevista
-# ------------------------------------------------------------------
-with st.expander("Cadastrar Nova Entrevista Qualitativa", expanded=False):
-    with st.form("form_nova_entrevista", clear_on_submit=True):
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            tit = st.text_input("Título / Identificação da Entrevista", placeholder="Ex: Entrevista Consumidor 04 - PDV Loja 01")
-        with c2:
-            part_id = st.text_input("ID do Participante", placeholder="Ex: P_04")
-        txt = st.text_area("Transcrição do Relato / Entrevista", height=150, placeholder="Cole a transcrição da fala do consumidor aqui...")
-        
-        if st.form_submit_button("Salvar Entrevista", type="primary"):
-            if tit.strip() and txt.strip():
-                jornada_db.save_interview(project_id, titulo=tit, texto=txt, participante_id=part_id)
-                st.success("Entrevista salva com sucesso!")
-                st.rerun()
-            else:
-                st.error("Preencha o título e a transcrição.")
-
-st.divider()
-
-# ------------------------------------------------------------------
-# Lista de Entrevistas
-# ------------------------------------------------------------------
-interviews = jornada_db.get_interviews(project_id)
-
-st.subheader(f"Entrevistas Cadastradas ({len(interviews)})")
+interviews = jornada_db.list_interviews(project["id"])
+st.subheader("Entrevistas cadastradas ({})".format(len(interviews)))
 
 if not interviews:
-    st.info("Nenhuma entrevista cadastrada para este projeto. Adicione acima ou faça o upload de planilhas na tela de Dados do Projeto.")
-else:
-    # Botão para Síntese por IA das Entrevistas
-    if st.button("Gerar Resumo Qualitativo de Todas as Entrevistas", type="primary"):
-        with st.spinner("Analisando falas dos consumidores com IA..."):
+    st.info("Nenhuma entrevista cadastrada para este projeto.")
+
+confirm_key = "jc_interview_confirm_{}".format(project["id"])
+for item in interviews:
+    header = "{} — {} ({})".format(
+        item["titulo"], item.get("participante_id") or "sem participante", item["created_at"]
+    )
+    with st.expander(header):
+        st.markdown(item["texto"])
+        if pode_editar and st.button("Excluir", key="jc_int_del_{}".format(item["id"])):
+            st.session_state[confirm_key] = item["id"]
+            st.rerun()
+
+pending = st.session_state.get(confirm_key)
+if pending and pode_editar:
+    st.warning("Excluir a entrevista selecionada? Esta ação não pode ser desfeita.")
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        if st.button("Confirmar exclusão", key="jc_int_del_yes", width="stretch"):
             try:
-                client = get_openai_client()
-                if client:
-                    all_text = []
-                    for i in interviews[:10]: # Limitar até 10 para o prompt
-                        all_text.append(f"**{i['titulo']} ({i['participante_id']}):**\n{i['texto']}")
-                    joined = "\n\n---\n\n".join(all_text)
-
-                    prompt_sys = (
-                        "Você é um especialista em pesquisa de neuromarketing e comportamento do consumidor no PDV. "
-                        "Sintetize os pontos principais das entrevistas fornecidas, destacando padrões comportamentais, "
-                        "drivers de escolha da marca, gatilhos visuais e barreiras de compra citadas."
-                    )
-                    prompt_usr = f"Sintetize estas entrevistas do ponto de venda:\n\n{joined}"
-
-                    resp = client.responses.create(
-                        model="gpt-4.1-mini",
-                        instructions=prompt_sys,
-                        input=prompt_usr,
-                        temperature=0.3,
-                        max_output_tokens=1000,
-                    )
-                    st.session_state[f"jc_interview_summary_{project_id}"] = resp.output_text
-                    st.success("Resumo gerado com sucesso!")
-                else:
-                    st.error("Cliente OpenAI não configurado.")
-            except Exception as e:
-                st.error(f"Erro ao gerar resumo: {e}")
-
-    summary = st.session_state.get(f"jc_interview_summary_{project_id}")
-    if summary:
-        with st.container(border=True):
-            st.markdown("### Síntese Qualitativa (IA)")
-            st.markdown(summary)
-
-    st.divider()
-
-    for item in interviews:
-        with st.expander(f"{item['titulo']} — Participante `{item['participante_id'] or 'N/A'}` ({item['created_at']})"):
-            st.markdown(item["texto"])
-            if st.button("Excluir Entrevista", key=f"del_ent_{item['id']}"):
-                jornada_db.delete_interview(item["id"])
-                st.success("Entrevista excluída.")
-                st.rerun()
+                jornada_db.delete_interview(project["id"], pending)
+            except auth.AuthorizationError as error:
+                st.error(str(error))
+            st.session_state.pop(confirm_key, None)
+            st.rerun()
+    with cc2:
+        if st.button("Cancelar", key="jc_int_del_no", width="stretch"):
+            st.session_state.pop(confirm_key, None)
+            st.rerun()

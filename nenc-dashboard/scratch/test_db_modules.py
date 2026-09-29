@@ -17,7 +17,7 @@ def test_jornada_db():
 
     # Create project
     pid = jornada_db.create_project(
-        name="Projeto Teste Gôndola Cafe",
+        "Projeto Teste Gôndola Cafe",
         categoria="Alimentos e Bebidas",
         historico="Histórico do projeto de teste",
         problemas="Quais marcas atritam mais atenção?",
@@ -30,28 +30,27 @@ def test_jornada_db():
     assert proj["name"] == "Projeto Teste Gôndola Cafe"
     print("Retrieved project details successfully.")
 
-    # Save dataset
-    df_tabelas = pd.DataFrame({"Participante": ["P1", "P2"], "AOI": ["Gondola_A", "Gondola_B"], "FixationCount": [12, 18]})
-    df_por_marca = pd.DataFrame({"Marca": ["Marca A", "Marca B"], "TotalGazeDuration": [1.45, 2.30]})
-    jornada_db.save_dataset(pid, tabelas=df_tabelas, por_marca=df_por_marca)
-    print("Saved dataset successfully.")
-
-    retrieved_data = jornada_db.get_dataset(pid)
-    assert "tabelas" in retrieved_data
-    assert "por_marca" in retrieved_data
-    assert len(retrieved_data["tabelas"]) == 2
-    print("Retrieved dataset DataFrames successfully with matching row count.")
+    # Save a raw data file (the model reads the files; datasets are legacy)
+    frames = b"frame,timestamp,x,y\n0,0.0,10,10\n1,0.04,11,10\n"
+    result = jornada_db.add_files(
+        pid, [{"filename": "Pt01-JLivre-DSP1.csv", "kind": "gaze_frames", "content": frames}]
+    )
+    assert len(result["added"]) == 1
+    assert jornada_db.list_files(pid)[0]["filename"] == "Pt01-JLivre-DSP1.csv"
+    print("Saved and listed a data file successfully.")
 
     # Save interview
-    iid = jornada_db.save_interview(pid, titulo="Entrevista P1", texto="Achei o café muito visível.", participante_id="P1")
+    iid = jornada_db.add_interview(pid, "Entrevista P1", "Achei o café muito visível.", "P1")
     print(f"Saved interview with ID: {iid}")
-    interviews = jornada_db.get_interviews(pid)
+    interviews = jornada_db.list_interviews(pid)
     assert len(interviews) == 1
 
     # Save analysis
-    aid = jornada_db.save_analysis(pid, analysis_text="Relatório de IA gerado com sucesso.", model="gpt-4.1-mini")
+    aid = jornada_db.save_analysis(
+        pid, model="gpt-4.1-mini", mode="rapida", analysis_text="Relatório de IA gerado com sucesso."
+    )
     print(f"Saved analysis with ID: {aid}")
-    analyses = jornada_db.get_analyses(pid)
+    analyses = jornada_db.list_analyses(pid)
     assert len(analyses) == 1
 
     # Delete project

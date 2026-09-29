@@ -12,7 +12,13 @@ aberto, a seção passa a levar o nome dele e reúne as páginas do projeto —
 é assim que o contexto ativo fica visível, já que o `st.navigation` desenha
 o menu sempre no topo da barra lateral e nada pode ficar acima dele. Com um
 áudio aberto, Timeline e Análise entram nessa mesma seção.
+
+A Jornada de Compra segue o mesmo desenho: lista de projetos e base de
+conhecimento sem projeto aberto; Análise Geral, Participantes, Uploads,
+Dados do Projeto e Entrevistas na seção do projeto.
 """
+
+import importlib
 
 import streamlit as st
 
@@ -34,7 +40,7 @@ MODULES = (
     ("teste_sensorial", "Teste Sensorial", "waveform",
      "modules/teste_sensorial/preparacao.py"),
     ("jornada_compra", "Jornada de Compra", "eye",
-     "modules/jornada_compra/preparacao.py"),
+     "modules/jornada_compra/projetos.py"),
     ("prosodia", "NencBoost", "microphone-stage",
      "modules/prosodia/projetos.py"),
 )
@@ -94,16 +100,7 @@ def _module_pages(module_key: str, user: auth.User) -> dict[str, list]:
         }
 
     if module_key == "jornada_compra":
-        return {
-            "Jornada de Compra": [
-                _page("modules/jornada_compra/preparacao.py",
-                      "Preparação de Dados", "folder-open"),
-                _page("modules/jornada_compra/analise.py",
-                      "Análise", "chart-bar"),
-                _page("modules/jornada_compra/base_conhecimento.py",
-                      "Base de Conhecimento", "books"),
-            ],
-        }
+        return _jornada_pages(user)
 
     if module_key == "prosodia":
         return _prosodia_pages(user)
@@ -111,28 +108,107 @@ def _module_pages(module_key: str, user: auth.User) -> dict[str, list]:
     return {}
 
 
-def _active_project() -> dict | None:
-    """Projeto aberto, ou None. Limpa o estado se ele apontar para o vazio."""
-    project_id = st.session_state.get("pros_project_id")
+# Modulos organizados em projetos: onde fica o projeto aberto, o que depende
+# dele (e cai junto quando ele muda) e como ler a lista. A camada de dados e
+# importada so quando o modulo esta aberto.
+_PROJECT_CONTEXTS = {
+    "prosodia": {
+        "state_key": "pros_project_id",
+        "child_keys": ("pros_audio_id",),
+        "data_module": "utils.prosodia_db",
+        "list_function": "get_projects",
+        "meta": lambda record: (
+            ("file-audio", str(record.get("n_audios", 0))),
+            ("plug", "API #{}".format(record["api_project_id"]))
+            if record.get("api_project_id")
+            else ("plug", "sem API"),
+        ),
+    },
+    "jornada_compra": {
+        "state_key": "jc_project_id",
+        "child_keys": ("jc_media_focus",),
+        "data_module": "utils.jornada_db",
+        "list_function": "list_projects",
+        "meta": lambda record: (
+            ("users-three", str(record.get("n_participants", 0))),
+            ("database", "{} arq.".format(record.get("n_files", 0))),
+        ),
+    },
+}
+
+
+def _active_project(module_key: str = "prosodia") -> dict | None:
+    """Projeto aberto no modulo, ou None. Limpa o estado se ele apontar para o vazio."""
+    spec = _PROJECT_CONTEXTS[module_key]
+    project_id = st.session_state.get(spec["state_key"])
     if not project_id:
         return None
     try:
-        from utils.prosodia_db import get_project
-
-        project = get_project(project_id)
+        data_module = importlib.import_module(spec["data_module"])
+        project = data_module.get_project(project_id)
     except Exception:
         return None
     if not project:
-        st.session_state.pop("pros_project_id", None)
-        st.session_state.pop("pros_audio_id", None)
+        for key in (spec["state_key"],) + spec["child_keys"]:
+            st.session_state.pop(key, None)
         return None
     return project
+
+
+def _jornada_pages(user: auth.User) -> dict[str, list]:
+    """Menu da Jornada de Compra, no mesmo desenho de três níveis do NencBoost.
+
+    Uploads e Novo projeto só entram para quem escreve: a conta de leitura
+    não ganha uma página que o servidor recusaria.
+    """
+    sections: dict[str, list] = {}
+    project = _active_project("jornada_compra")
+    pode_editar = auth.can_write(user)
+
+    if project:
+        project_pages = [
+            _page("modules/jornada_compra/analise_geral.py",
+                  "Análise Geral", "chart-bar"),
+            _page("modules/jornada_compra/participantes.py",
+                  "Participantes", "users-three"),
+        ]
+        if pode_editar:
+            project_pages.append(
+                _page("modules/jornada_compra/uploads.py",
+                      "Uploads", "upload-simple")
+            )
+        project_pages.extend([
+            _page("modules/jornada_compra/preparacao.py",
+                  "Dados do Projeto", "note-pencil"),
+            _page("modules/jornada_compra/entrevistas.py",
+                  "Entrevistas", "list-bullets"),
+        ])
+        section_name = str(project["name"])
+        if section_name == "Jornada de Compra":
+            # Mesmo nome da seção do módulo: o dict juntaria as duas.
+            section_name += " (projeto)"
+        sections[section_name] = project_pages
+
+    module_pages = [
+        _page("modules/jornada_compra/projetos.py",
+              "Todos os projetos" if project else "Projetos", "folders"),
+    ]
+    if not project and pode_editar:
+        module_pages.append(
+            _page("modules/jornada_compra/preparacao.py", "Novo projeto", "plus")
+        )
+    module_pages.append(
+        _page("modules/jornada_compra/base_conhecimento.py",
+              "Base de Conhecimento", "books")
+    )
+    sections["Jornada de Compra"] = module_pages
+    return sections
 
 
 def _prosodia_pages(user: auth.User) -> dict[str, list]:
     """Menu do NencBoost, em três níveis conforme o contexto aberto."""
     sections: dict[str, list] = {}
-    project = _active_project()
+    project = _active_project("prosodia")
 
     if project:
         # Nível 2: a seção leva o nome do projeto — é onde o contexto ativo
@@ -230,45 +306,42 @@ def _build_pages(user: auth.User) -> dict[str, list]:
     return pages
 
 
-def _reset_audio_selection() -> None:
-    st.session_state.pop("pros_audio_id", None)
-
-
 def _render_project_context(user: auth.User) -> None:
     """Seletor do projeto aberto, no topo da barra lateral.
 
     Antes vivia só em `entrevistas.py`; com o menu permanente o contexto
     precisa valer em todas as páginas do projeto. Só aparece quando já há um
-    projeto aberto — na lista de projetos não há contexto a trocar.
+    projeto aberto — na lista de projetos não há contexto a trocar. Vale para
+    todo módulo organizado em projetos (`_PROJECT_CONTEXTS`).
     """
-    if st.session_state.get("modulo") != "prosodia":
+    module_key = st.session_state.get("modulo")
+    spec = _PROJECT_CONTEXTS.get(module_key)
+    if spec is None:
         return
-    if not st.session_state.get("pros_project_id"):
+    if not st.session_state.get(spec["state_key"]):
         return
-    if not auth.can_access_module(user, "prosodia"):
+    if not auth.can_access_module(user, module_key):
         return
     try:
-        from utils.prosodia_db import get_projects
-
-        projects = get_projects()
+        data_module = importlib.import_module(spec["data_module"])
+        projects = getattr(data_module, spec["list_function"])()
     except Exception:
         return
     if not projects:
         return
+
+    def _reset_children(child_keys=spec["child_keys"]) -> None:
+        for key in child_keys:
+            st.session_state.pop(key, None)
 
     ui.context_selector(
         kicker="Projeto ativo",
         options=projects,
         id_key="id",
         label_key="name",
-        state_key="pros_project_id",
-        meta=lambda record: (
-            ("file-audio", str(record.get("n_audios", 0))),
-            ("plug", "API #{}".format(record["api_project_id"]))
-            if record.get("api_project_id")
-            else ("plug", "sem API"),
-        ),
-        on_change=_reset_audio_selection,
+        state_key=spec["state_key"],
+        meta=spec["meta"],
+        on_change=_reset_children,
     )
 
 
@@ -321,6 +394,13 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
             "_ctx_pros_audio_id",
             "_ctx_pros_audio_id_shadow",
         ):
+            st.session_state.pop(session_key, None)
+        # A Jornada guarda por projeto filtros, exportações e confirmações sob
+        # o prefixo `jc_`: nada disso pode atravessar para a outra organização.
+        for session_key in [
+            key for key in st.session_state.keys()
+            if str(key).startswith(("jc_", "_ctx_jc_"))
+        ]:
             st.session_state.pop(session_key, None)
     st.session_state[state_key] = active_organization_id
 

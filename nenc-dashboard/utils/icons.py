@@ -264,6 +264,13 @@ MATERIAL: dict[str, str] = {
     "buildings": ":material/apartment:",
     "upload-simple": ":material/upload:",
     "list-bullets": ":material/list:",
+    "plus": ":material/add:",
+    "database": ":material/database:",
+    "download-simple": ":material/download:",
+    "trash": ":material/delete:",
+    "sliders-horizontal": ":material/tune:",
+    "shield-check": ":material/verified_user:",
+    "play": ":material/play_arrow:",
 }
 
 

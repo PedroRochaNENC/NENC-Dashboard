@@ -11,11 +11,6 @@ from datetime import datetime
 import streamlit as st
 
 from utils import auth, ui
-from utils.ai_provider import (
-    get_openai_client,
-    get_vector_store_id,
-    list_vector_store_documents,
-)
 from utils.icons import icon
 from utils.organization_data import load_module_state
 
@@ -57,13 +52,13 @@ MODULE_CARDS = (
         "jornada_compra",
         "Jornada de Compra",
         "eye",
-        "Eye-tracking: fixações, sacadas e AOIs.",
+        "Eye tracking no PDV: atenção por marca, produto e embalagem.",
         (
-            ("folder-open", "Preparação de Dados"),
-            ("chart-bar", "Análise"),
-            ("books", "Base de Conhecimento"),
+            ("folders", "Projetos"),
+            ("users-three", "Participantes e vídeos"),
+            ("chart-bar", "Análise Geral"),
         ),
-        "modules/jornada_compra/preparacao.py",
+        "modules/jornada_compra/projetos.py",
     ),
     (
         "prosodia",
@@ -90,19 +85,19 @@ def _module_status(module_key: str) -> tuple[str, bool]:
         return ("Dados carregados" if loaded else "Sem dados", loaded)
 
     if module_key == "jornada_compra":
-        data = load_module_state("jornada_compra")
-        loaded = bool(data and any(key for key in data if key != "_errors"))
-        text = "Dados carregados" if loaded else "Sem dados"
-        vector_store_id = get_vector_store_id()
-        if vector_store_id:
-            client = get_openai_client()
-            if client:
-                try:
-                    documents = list_vector_store_documents(vector_store_id)
-                    text += " · {} docs".format(len(documents))
-                except Exception:
-                    text += " · base configurada"
-        return (text, loaded)
+        # So o banco: a contagem de documentos da base chamava a OpenAI a cada
+        # render da Visao geral.
+        from utils.jornada_db import summary_counts
+
+        counts = summary_counts()
+        if not counts["projects"]:
+            return ("Nenhum projeto criado", False)
+        return (
+            "{} projetos · {} participantes".format(
+                counts["projects"], counts["participants"]
+            ),
+            True,
+        )
 
     if module_key == "prosodia":
         try:

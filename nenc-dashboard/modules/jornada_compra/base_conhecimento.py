@@ -24,7 +24,7 @@ ui.breadcrumb("Jornada de Compra", "Base de Conhecimento")
 page_title(
     "books",
     "Base de Conhecimento",
-    "Documentos usados como contexto pela IA.",
+    "Literatura de referência: vale para todos os projetos da Jornada.",
 )
 
 client = get_openai_client()
@@ -262,9 +262,12 @@ st.divider()
 col_nav1, col_nav2 = st.columns(2)
 
 with col_nav1:
-    if st.button("Voltar para Preparação", width='stretch'):
-        st.switch_page("modules/jornada_compra/preparacao.py")
+    if st.button("Projetos", width="stretch"):
+        st.switch_page("modules/jornada_compra/projetos.py")
 
 with col_nav2:
-    if st.button("Avançar para Análise", width='stretch', type="primary"):
-        st.switch_page("modules/jornada_compra/analise.py")
+    # A Análise Geral só está no menu com um projeto aberto.
+    if st.session_state.get("jc_project_id") and st.button(
+        "Ir para a Análise Geral", width="stretch", type="primary"
+    ):
+        st.switch_page("modules/jornada_compra/analise_geral.py")
