@@ -136,10 +136,47 @@ if wa_configured():
     else:
         sync_label += " (associe uma campanha ou projeto API)"
 
-    if st.button(sync_label, type="secondary", key="wa_sync_btn"):
+    col_sync, col_refresh = st.columns([3, 2])
+    with col_sync:
+        sync_clicked = st.button(sync_label, type="secondary", key="wa_sync_btn")
+    with col_refresh:
+        refresh_clicked = pode_editar and st.button(
+            "Atualizar dados da API (sem nova análise)",
+            key="wa_refresh_btn",
+            help=(
+                "Baixa de novo o resultado dos áudios já importados e refaz os CSVs: "
+                "alinhamento da fala pelo tempo e sentimento do texto calculado pela API. "
+                "Não reprocessa na API, não gera análise de IA nem refaz a verificação "
+                "de qualidade."
+            ),
+        )
+
+    if refresh_clicked:
+        from utils.prosodia_db import get_audios
+        from utils.whatsapp_api_client import atualizar_conteudo_audios_importados
+
+        with st.spinner("Atualizando os áudios importados da API…"):
+            resumo = atualizar_conteudo_audios_importados(get_audios(project_id))
+        st.cache_data.clear()
+        st.success(
+            f"{resumo['atualizados']} áudio(s) atualizado(s); "
+            f"{resumo['ignorados']} sem resultado novo na API ou fora da sincronização."
+        )
+        if resumo["falhas"]:
+            st.warning(
+                "Não foi possível atualizar:\n"
+                + "\n".join(f"- {sid}: {erro}" for sid, erro in resumo["falhas"])
+            )
+        st.caption(
+            "As verificações de qualidade e as análises de IA já salvas não mudam; "
+            "use Reverificar ou Regenerar na análise do áudio para refazê-las."
+        )
+
+    if sync_clicked:
         from utils.whatsapp_api_client import (
             get_audio_result,
             map_api_result_to_all_formats,
+            transcricao_para_base_conhecimento,
         )
 
         try:
@@ -378,10 +415,11 @@ if wa_configured():
                                 file_id_prosodia = documento.id
                             if csv_bytes:
                                 # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
+                                # Sem as colunas de sentimento: a base cita a fala, nao a inferencia sobre ela.
                                 documento = add_document_to_vector_store(
                                     vs_id,
                                     f"Transcricao-{session_id}.txt",
-                                    csv_bytes,
+                                    transcricao_para_base_conhecimento(csv_bytes),
                                     project_document(
                                         "prosodia",
                                         project_id,
@@ -407,7 +445,8 @@ if wa_configured():
                         def seek(self, pos):
                             return self._buf.seek(pos)
 
-                    from utils.prosodia_loader import load_prosodia_from_uploads
+                    from utils.prosodia_loader import load_prosodia_from_uploads, normalizar_sincronizado
+                    from utils.prosodia_signals import montar_evidencias_audio
                     json_files = [_BytesFile(json_bytes, f"Prosodia-{session_id}.json")] if json_bytes else []
                     csv_files = [_BytesFile(csv_bytes, f"Transcricao-{session_id}.csv")] if csv_bytes else []
                     sinc_files = [_BytesFile(sinc_bytes, f"Sincronizado-{session_id}.csv")] if sinc_bytes else []
@@ -423,7 +462,7 @@ if wa_configured():
                     sinc_df = pd.DataFrame()
                     if sinc_bytes:
                         try:
-                            sinc_df = pd.read_csv(_io.BytesIO(sinc_bytes))
+                            sinc_df = normalizar_sincronizado(pd.read_csv(_io.BytesIO(sinc_bytes)), session_id)
                         except Exception:
                             pass
 
@@ -435,24 +474,7 @@ if wa_configured():
                         "problemas": project.get("problemas", ""),
                     }
 
-                    tables_lines = []
-                    if not vad_df.empty and "duration" in vad_df.columns:
-                        total_s = vad_df["duration"].sum()
-                        n_segs = len(vad_df)
-                        tables_lines.append(
-                            f"VAD: {n_segs} segmentos, {total_s:.1f}s de fala total."
-                        )
-                    if not tr_df.empty and "SpeakerName" in tr_df.columns:
-                        by_spk = (
-                            tr_df.groupby("SpeakerName")
-                            .agg(msgs=("Text", "count"), words=("word_count", "sum"))
-                            .reset_index()
-                        )
-                        tables_lines.append(
-                            "Participação por locutor:\n" + by_spk.to_string(index=False)
-                        )
-
-                    tables_text = "\n\n".join(tables_lines)
+                    evidencias = montar_evidencias_audio(vad_df, tr_df, sinc_df)
                     transcript_sample = (
                         " ".join(tr_df["Text"].fillna("").astype(str).tolist())[:3000]
                         if not tr_df.empty and "Text" in tr_df.columns
@@ -463,7 +485,11 @@ if wa_configured():
                     try:
                         if openai_client:
                             user_prompt = build_prosodia_user_prompt(
-                                tables_text, proj_ctx, transcript_sample
+                                evidencias.tabelas,
+                                proj_ctx,
+                                transcript_sample,
+                                sentimento_texto=evidencias.sentimento_texto,
+                                divergencias=evidencias.divergencias,
                             )
                             analysis_result = ai_create_analysis(
                                 system_prompt=get_prosodia_system_prompt(tipo_projeto),
@@ -814,7 +840,8 @@ else:
                                 # 6. Recarregar dados locais
                                 import pandas as pd
                                 import io
-                                from utils.prosodia_loader import load_prosodia_from_uploads
+                                from utils.prosodia_loader import load_prosodia_from_uploads, normalizar_sincronizado
+                                from utils.prosodia_signals import montar_evidencias_audio
                                 class _BF:
                                     def __init__(self, data, name):
                                         self._buf = io.BytesIO(data)
@@ -832,7 +859,9 @@ else:
                                 new_sinc_df = pd.DataFrame()
                                 if sinc_bytes:
                                     try:
-                                        new_sinc_df = pd.read_csv(io.BytesIO(sinc_bytes))
+                                        new_sinc_df = normalizar_sincronizado(
+                                            pd.read_csv(io.BytesIO(sinc_bytes)), selected_audio["session_id"]
+                                        )
                                     except Exception:
                                         pass
                                 
@@ -901,15 +930,9 @@ else:
                                 
                                 # 8. Atualizar Análise de IA
                                 status_container.info("Atualizando análise de IA...")
-                                new_tables_lines = []
-                                if not new_vad_df.empty and "duration" in new_vad_df.columns:
-                                    new_total_s = new_vad_df["duration"].sum()
-                                    new_tables_lines.append(f"VAD: {len(new_vad_df)} segmentos, {new_total_s:.1f}s de fala total.")
-                                if not new_tr_df.empty and "SpeakerName" in new_tr_df.columns:
-                                    new_by_spk = new_tr_df.groupby("SpeakerName").agg(msgs=("Text", "count"), words=("word_count", "sum")).reset_index()
-                                    new_tables_text = "Participação por locutor:\n" + new_by_spk.to_string(index=False)
-                                else:
-                                    new_tables_text = ""
+                                # Antes o texto de participação sobrescrevia o do VAD e a
+                                # IA recebia só uma das tabelas.
+                                new_evidencias = montar_evidencias_audio(new_vad_df, new_tr_df, new_sinc_df)
                                 
                                 proj_ctx = {
                                     "nome": project.get("name", ""),
@@ -917,7 +940,13 @@ else:
                                     "historico": project.get("historico", ""),
                                     "problemas": project.get("problemas", ""),
                                 }
-                                user_prompt = build_prosodia_user_prompt(new_tables_text, proj_ctx, new_transcript_text[:3000])
+                                user_prompt = build_prosodia_user_prompt(
+                                    new_evidencias.tabelas,
+                                    proj_ctx,
+                                    new_transcript_text[:3000],
+                                    sentimento_texto=new_evidencias.sentimento_texto,
+                                    divergencias=new_evidencias.divergencias,
+                                )
                                 
                                 # Chamar IA
                                 result_ai = ai_create_analysis(

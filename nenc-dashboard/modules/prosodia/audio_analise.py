@@ -33,8 +33,18 @@ from utils.prosodia_db import (
     save_high_activations,
     get_latest_high_activations,
 )
-from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
-from utils.prosodia_signals import signals_block
+from utils.prosodia_loader import (
+    extract_topic_from_text,
+    load_prosodia_from_uploads,
+    normalizar_sincronizado,
+)
+from utils.prosodia_signals import (
+    detectar_divergencias,
+    formatar_tempo,
+    momentos_alta_ativacao,
+    montar_evidencias_audio,
+    tem_sentimento_texto,
+)
 from utils.prosodia_quality import (
     run_quality_checks,
     check_question_coverage_keywords,
@@ -47,6 +57,7 @@ from utils.prosodia_quality import (
 from utils.prosodia_prompts import (
     get_prosodia_system_prompt,
     build_prosodia_user_prompt,
+    secoes_sentimento,
 )
 from utils.ai_provider import (
     add_document_to_vector_store,
@@ -210,47 +221,6 @@ def _find_question_moment(
 def _slugify(text: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text or ""))
     return safe.strip("_")[:80] or "audio"
-
-
-def _calculate_audio_high_activations(sinc_df: pd.DataFrame, top_n: int = 10) -> list:
-    if sinc_df.empty:
-        return []
-        
-    work = sinc_df.copy()
-    
-    if "dim_arousal" in work.columns:
-        work["dim_arousal"] = pd.to_numeric(work["dim_arousal"], errors="coerce").fillna(0.0)
-        high_ar = work[work["dim_arousal"] > 0.4]
-        if len(high_ar) < 3:
-            q = work["dim_arousal"].quantile(0.85)
-            high_ar = work[work["dim_arousal"] >= q]
-        work = high_ar.copy()
-        
-    if work.empty:
-        return []
-        
-    rank_f0 = work["f0_variacao"].rank(pct=True) if "f0_variacao" in work.columns else 0.0
-    rank_ld = work["loudness_variacao"].rank(pct=True) if "loudness_variacao" in work.columns else 0.0
-    rank_ar = work["dim_arousal"].rank(pct=True) if "dim_arousal" in work.columns else 0.0
-    
-    work["activation_score"] = rank_f0 + rank_ld + rank_ar
-    top_moments = work.sort_values(by="activation_score", ascending=False).head(top_n)
-    
-    moments_list = []
-    for _, row in top_moments.iterrows():
-        moments_list.append({
-            "session_id": str(row.get("session_id", "")),
-            "SpeakerName": str(row.get("SpeakerName", "")),
-            "Timestamp": str(row.get("Timestamp", "")),
-            "Text": str(row.get("Text", "")),
-            "seconds": float(row.get("seconds", row.get("start_s", 0.0))),
-            "dim_arousal": float(row.get("dim_arousal", 0.0)),
-            "f0_variacao": float(row.get("f0_variacao", 0.0)),
-            "loudness_variacao": float(row.get("loudness_variacao", 0.0)),
-            "topic": extract_topic_from_text(str(row.get("Text", ""))),
-        })
-        
-    return moments_list
 
 
 def _build_analysis_markdown(
@@ -424,28 +394,13 @@ tr_df: pd.DataFrame = data.get("transcricao", pd.DataFrame())
 sinc_df = pd.DataFrame()
 if audio.get("sincronizado_csv"):
     try:
-        sinc_df = pd.read_csv(io.BytesIO(audio["sincronizado_csv"]))
-        if not sinc_df.empty:
-            sinc_df.columns = [c.strip() for c in sinc_df.columns]
-            col_map = {
-                "speakers": "SpeakerName",
-                "timestamp_inicio": "Timestamp",
-                "texto_transcricao": "Text",
-            }
-            sinc_df = sinc_df.rename(columns=col_map)
-            
-            if "seconds" not in sinc_df.columns:
-                if "Timestamp" in sinc_df.columns:
-                    from utils.prosodia_loader import _timestamp_to_seconds
-                    sinc_df["seconds"] = sinc_df["Timestamp"].apply(_timestamp_to_seconds)
-                elif "start_s" in sinc_df.columns:
-                    sinc_df["seconds"] = sinc_df["start_s"]
+        sinc_df = normalizar_sincronizado(pd.read_csv(io.BytesIO(audio["sincronizado_csv"])), sid)
     except Exception:
         pass
 
 high_activations_list = get_latest_high_activations(audio_id)
 if high_activations_list is None and not sinc_df.empty:
-    high_activations_list = _calculate_audio_high_activations(sinc_df)
+    high_activations_list = momentos_alta_ativacao(sinc_df)
     save_high_activations(audio_id, high_activations_list)
 
 transcript_text = " ".join(tr_df["Text"].fillna("").astype(str).tolist()) if not tr_df.empty and "Text" in tr_df.columns else ""
@@ -502,40 +457,9 @@ proj_ctx = {
     "briefing": project.get("briefing_text", ""),
 }
 
-tables_lines = []
-if not vad_df.empty and "duration" in vad_df.columns:
-    total_s = vad_df["duration"].sum()
-    tables_lines.append(f"VAD: {len(vad_df)} segmentos, {total_s:.1f}s de fala total.")
-if not tr_df.empty and "SpeakerName" in tr_df.columns:
-    by_spk = (
-        tr_df.groupby("SpeakerName")
-        .agg(msgs=("Text", "count"), words=("word_count", "sum"))
-        .reset_index()
-    )
-    tables_lines.append("Participação por locutor:\n" + by_spk.to_string(index=False))
-
-# Sem este bloco a análise individual recebia só contagem de segmentos e de
-# palavras, enquanto o prompt estatístico pedia médias de F0, loudness e
-# distribuição de emoções.
-if not sinc_df.empty:
-    tables_lines.append(signals_block(sinc_df))
-
-tables_text = "\n\n".join(tables_lines)
-
-if high_activations_list:
-    lines = [
-        "Momentos de Maior Ativação Prosódica no Áudio:",
-        "| Tópico | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for m in high_activations_list:
-        lines.append(
-            f"| {m.get('topic') or extract_topic_from_text(m.get('Text',''))} | "
-            f"{m.get('SpeakerName','Desconhecido')} | {m.get('Timestamp','')} | "
-            f"\"{m.get('Text','').replace('|','/')}\" | {m.get('dim_arousal',0.0):.2f} | "
-            f"{m.get('f0_variacao',0.0):.2f} | {m.get('loudness_variacao',0.0):.2f} |"
-        )
-    tables_text += "\n\n" + "\n".join(lines)
+evidencias = montar_evidencias_audio(vad_df, tr_df, sinc_df, high_activations_list)
+tables_text = evidencias.tabelas
+divergencias_df = detectar_divergencias(sinc_df)
 
 openai_client = get_openai_client()
 vs_id = get_prosodia_vector_store_id() if use_kb else None
@@ -615,7 +539,7 @@ if is_wa and h2 is not None:
                         new_sinc_df = pd.DataFrame()
                         if sinc_bytes:
                             try:
-                                new_sinc_df = pd.read_csv(io.BytesIO(sinc_bytes))
+                                new_sinc_df = normalizar_sincronizado(pd.read_csv(io.BytesIO(sinc_bytes)), sid)
                             except Exception:
                                 pass
                         
@@ -646,20 +570,7 @@ if is_wa and h2 is not None:
                         # Salvar momentos de maior ativação
                         new_high_activations = []
                         if not new_sinc_df.empty:
-                            new_sinc_df.columns = [c.strip() for c in new_sinc_df.columns]
-                            col_map = {
-                                "speakers": "SpeakerName",
-                                "timestamp_inicio": "Timestamp",
-                                "texto_transcricao": "Text",
-                            }
-                            new_sinc_df = new_sinc_df.rename(columns=col_map)
-                            if "seconds" not in new_sinc_df.columns and "Timestamp" in new_sinc_df.columns:
-                                from utils.prosodia_loader import _timestamp_to_seconds
-                                new_sinc_df["seconds"] = new_sinc_df["Timestamp"].apply(_timestamp_to_seconds)
-                            elif "seconds" not in new_sinc_df.columns and "start_s" in new_sinc_df.columns:
-                                new_sinc_df["seconds"] = new_sinc_df["start_s"]
-                            
-                            new_high_activations = _calculate_audio_high_activations(new_sinc_df)
+                            new_high_activations = momentos_alta_ativacao(new_sinc_df)
                             save_high_activations(audio_id, new_high_activations)
                         
                         # Enviar nova qualidade para Vector Store KB
@@ -676,31 +587,16 @@ if is_wa and h2 is not None:
                         
                         # 8. Atualizar Análise de IA
                         status_container.info("Atualizando análise de IA...")
-                        new_tables_lines = []
-                        if not new_vad_df.empty and "duration" in new_vad_df.columns:
-                            new_total_s = new_vad_df["duration"].sum()
-                            new_tables_lines.append(f"VAD: {len(new_vad_df)} segmentos, {new_total_s:.1f}s de fala total.")
-                        if not new_tr_df.empty and "SpeakerName" in new_tr_df.columns:
-                            new_by_spk = new_tr_df.groupby("SpeakerName").agg(msgs=("Text", "count"), words=("word_count", "sum")).reset_index()
-                            new_tables_lines.append("Participação por locutor:\n" + new_by_spk.to_string(index=False))
-                        new_tables_text = "\n\n".join(new_tables_lines)
-                        
-                        if new_high_activations:
-                            lines = [
-                                "Momentos de Maior Ativação Prosódica no Áudio:",
-                                "| Tópico | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |",
-                                "|---|---|---|---|---|---|---|",
-                            ]
-                            for m in new_high_activations:
-                                lines.append(
-                                    f"| {m.get('topic') or extract_topic_from_text(m.get('Text',''))} | "
-                                    f"{m.get('SpeakerName','Desconhecido')} | {m.get('Timestamp','')} | "
-                                    f"\"{m.get('Text','').replace('|','/')}\" | {m.get('dim_arousal',0.0):.2f} | "
-                                    f"{m.get('f0_variacao',0.0):.2f} | {m.get('loudness_variacao',0.0):.2f} |"
-                                )
-                            new_tables_text += "\n\n" + "\n".join(lines)
-                        
-                        user_prompt = build_prosodia_user_prompt(new_tables_text, proj_ctx, new_transcript_text[:3000])
+                        new_evidencias = montar_evidencias_audio(
+                            new_vad_df, new_tr_df, new_sinc_df, new_high_activations
+                        )
+                        user_prompt = build_prosodia_user_prompt(
+                            new_evidencias.tabelas,
+                            proj_ctx,
+                            new_transcript_text[:3000],
+                            sentimento_texto=new_evidencias.sentimento_texto,
+                            divergencias=new_evidencias.divergencias,
+                        )
                         
                         used_model = openai_model if openai_client else groq_model
                         
@@ -912,7 +808,13 @@ with analysis_section:
                 result = {"text": "", "citations": []}
 
                 if analysis_mode == "Rápida (1 chamada)":
-                    user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_text[:3000])
+                    user_prompt = build_prosodia_user_prompt(
+                        tables_text,
+                        proj_ctx,
+                        transcript_text[:3000],
+                        sentimento_texto=evidencias.sentimento_texto,
+                        divergencias=evidencias.divergencias,
+                    )
 
                     if openai_client:
                         result = ai_create_analysis(
@@ -937,7 +839,13 @@ with analysis_section:
                         result = {"text": resp.choices[0].message.content, "citations": []}
 
                 else:  # Aprofundada
-                    user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_text[:3000])
+                    user_prompt = build_prosodia_user_prompt(
+                        tables_text,
+                        proj_ctx,
+                        transcript_text[:3000],
+                        sentimento_texto=evidencias.sentimento_texto,
+                        divergencias=evidencias.divergencias,
+                    )
 
                     if openai_client:
                         stat_result = ai_create_analysis(
@@ -950,7 +858,8 @@ with analysis_section:
                         )
                         strat_user = (
                             f"Análise estatística prévia:\n{stat_result['text']}\n\n"
-                            f"Dados originais:\n{tables_text}"
+                            f"Dados originais:\n{tables_text}\n\n"
+                            + secoes_sentimento(evidencias.sentimento_texto, evidencias.divergencias)
                         )
                         strat_result = ai_create_analysis(
                             system_prompt=get_prosodia_system_prompt(tipo_projeto, "estrategica"),
@@ -976,7 +885,10 @@ with analysis_section:
                             temperature=0.3, max_tokens=2000,
                         )
                         stat_text = resp_stat.choices[0].message.content
-                        strat_user = f"Análise prévia:\n{stat_text}\n\nDados:\n{tables_text}"
+                        strat_user = (
+                            f"Análise prévia:\n{stat_text}\n\nDados:\n{tables_text}\n\n"
+                            + secoes_sentimento(evidencias.sentimento_texto, evidencias.divergencias)
+                        )
                         resp_strat = groq_client.chat.completions.create(
                             model=groq_model,
                             messages=[
@@ -1231,6 +1143,80 @@ with quality_section:
     else:
         st.info("Verificação de qualidade ainda não realizada para este áudio.")
 
+    # Divergências voz × texto: saem do sincronizado com o sentimento do texto,
+    # sem depender da verificação de qualidade.
+    if tem_sentimento_texto(sinc_df):
+        st.write("")
+        st.subheader("Momentos de Divergência Voz × Texto")
+        st.markdown(
+            "Trechos em que o que foi dito e o tom de voz apontam em sentidos opostos: texto "
+            "claramente positivo com a valência vocal bem abaixo do habitual do locutor, ou o "
+            "contrário. São candidatos a leitura qualitativa (ironia, cortesia protocolar, "
+            "insatisfação normalizada), não prova. Selecione uma linha e clique no botão para "
+            "navegar até a timeline."
+        )
+        if divergencias_df.empty:
+            st.caption("Nenhuma divergência acima dos limiares neste áudio.")
+        else:
+            df_div = pd.DataFrame({
+                "Tempo": [
+                    formatar_tempo(inicio) or ts
+                    for inicio, ts in zip(divergencias_df["start_s"], divergencias_df["Timestamp"])
+                ],
+                "Locutor": divergencias_df["SpeakerName"].replace("", "Desconhecido"),
+                "Fala (Transcrição)": divergencias_df["Text"],
+                "Texto (nota)": divergencias_df["sentimento_texto"].map(lambda v: f"{v:+.2f}"),
+                "Justificativa": divergencias_df["sentimento_justificativa"],
+                "Voz (valência)": [
+                    f"{v:+.2f} (z {z:+.1f})"
+                    for v, z in zip(divergencias_df["valencia_voz"], divergencias_df["z_valencia"])
+                ],
+                "Leitura": divergencias_df["tipo"],
+            })
+            div_table_event = st.dataframe(
+                df_div,
+                width='stretch',
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=f"an_div_select_{audio_id}",
+            )
+
+            selected_rows = []
+            if div_table_event:
+                selection = getattr(div_table_event, "selection", None)
+                if isinstance(selection, dict):
+                    selected_rows = selection.get("rows", [])
+                elif selection is not None:
+                    selected_rows = getattr(selection, "rows", []) or []
+
+            if st.button("Ir para momento na Timeline", key=f"go_div_moment_{audio_id}"):
+                if not selected_rows:
+                    st.info("Selecione uma divergência na tabela acima para localizar a timeline correspondente.")
+                else:
+                    idx = int(selected_rows[0])
+                    if idx < 0 or idx >= len(divergencias_df):
+                        st.warning("Não foi possível identificar a divergência selecionada.")
+                    else:
+                        moment = divergencias_df.iloc[idx]
+                        inicio = moment.get("start_s")
+                        st.session_state["pros_timeline_focus"] = {
+                            "audio_id": audio_id,
+                            "session_id": sid,
+                            "question": "Divergência voz × texto",
+                            "seconds": float(inicio) if pd.notna(inicio) else None,
+                            "timestamp": str(moment.get("Timestamp", "")),
+                            "speaker": str(moment.get("SpeakerName", "")),
+                            "text": str(moment.get("Text", "")),
+                            "source": moment.get("tipo", "Divergência voz × texto"),
+                        }
+                        st.switch_page("modules/prosodia/audio_timeline.py")
+    elif is_wa and not sinc_df.empty:
+        st.caption(
+            "O sentimento do texto deste áudio ainda não está disponível. Quando a API o "
+            "calcular, use **Atualizar dados da API** na página Áudios."
+        )
+
     # Botão Reverificar
     if st.button("Reverificar Qualidade"):
         questions = get_project_questions(project_id) if project_id else []
@@ -1259,7 +1245,7 @@ with quality_section:
                 
                 # Salvar momentos de maior ativação
                 if not sinc_df.empty:
-                    new_moments = _calculate_audio_high_activations(sinc_df)
+                    new_moments = momentos_alta_ativacao(sinc_df)
                     save_high_activations(audio_id, new_moments)
 
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

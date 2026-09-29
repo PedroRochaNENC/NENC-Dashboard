@@ -29,18 +29,32 @@ from utils.prosodia_db import (
     save_project_analysis,
     delete_project_analyses,
 )
-from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
-from utils.prosodia_signals import emotion_distribution_text
+from utils.prosodia_loader import (
+    extract_topic_from_text,
+    load_prosodia_from_uploads,
+    normalizar_sincronizado,
+)
+from utils.prosodia_signals import (
+    detectar_divergencias,
+    divergencias_texto,
+    emotion_distribution_text,
+    formatar_tempo,
+    selecionar_momentos_ativacao,
+    tem_sentimento_texto,
+    texto_sentimento_resumo,
+)
 # from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
 from utils.prosodia_charts import (
     create_speaker_stats,
     create_project_acoustic_comparison,
     create_project_emotion_distribution,
+    create_project_text_sentiment_distribution,
     create_project_word_ranking,
 )
 from utils.prosodia_prompts import (
     get_prosodia_project_system_prompt,
     build_project_user_prompt,
+    secoes_sentimento,
 )
 from utils.ai_provider import (
     add_document_to_vector_store,
@@ -293,27 +307,7 @@ def _load_project_frames(
             try:
                 sinc_df = pd.read_csv(io.BytesIO(audio["sincronizado_csv"]))
                 if not sinc_df.empty:
-                    sinc_df.columns = [c.strip() for c in sinc_df.columns]
-                    col_map = {
-                        "speakers": "SpeakerName",
-                        "timestamp_inicio": "Timestamp",
-                        "texto_transcricao": "Text",
-                    }
-                    sinc_df = sinc_df.rename(columns=col_map)
-                    if "session_id" not in sinc_df.columns:
-                        sinc_df = sinc_df.copy()
-                        sinc_df["session_id"] = sid
-                    
-                    if "seconds" not in sinc_df.columns:
-                        if "Timestamp" in sinc_df.columns:
-                            from utils.prosodia_loader import _timestamp_to_seconds
-                            sinc_df = sinc_df.copy()
-                            sinc_df["seconds"] = sinc_df["Timestamp"].apply(_timestamp_to_seconds)
-                        elif "start_s" in sinc_df.columns:
-                            sinc_df = sinc_df.copy()
-                            sinc_df["seconds"] = sinc_df["start_s"]
-                            
-                    sinc_parts.append(sinc_df)
+                    sinc_parts.append(normalizar_sincronizado(sinc_df, sid))
             except Exception:
                 pass
 
@@ -408,30 +402,17 @@ def _calculate_top_words_text(tr_df: pd.DataFrame, top_n: int = 30) -> str:
 
 
 def _extract_high_activation_moments(sinc_df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
-    if sinc_df.empty:
-        return pd.DataFrame()
-        
-    work = sinc_df.copy()
-    
-    if "dim_arousal" in work.columns:
-        work["dim_arousal"] = pd.to_numeric(work["dim_arousal"], errors="coerce").fillna(0.0)
-        high_ar = work[work["dim_arousal"] > 0.4]
-        if len(high_ar) < 5:
-            q = work["dim_arousal"].quantile(0.85)
-            high_ar = work[work["dim_arousal"] >= q]
-        work = high_ar.copy()
-        
-    if work.empty:
-        return pd.DataFrame()
-        
-    rank_f0 = work["f0_variacao"].rank(pct=True) if "f0_variacao" in work.columns else 0.0
-    rank_ld = work["loudness_variacao"].rank(pct=True) if "loudness_variacao" in work.columns else 0.0
-    rank_ar = work["dim_arousal"].rank(pct=True) if "dim_arousal" in work.columns else 0.0
-    
-    work["activation_score"] = rank_f0 + rank_ld + rank_ar
-    top_moments = work.sort_values(by="activation_score", ascending=False).head(top_n)
-    
-    return top_moments
+    # Mesma regra da análise do áudio; o mesmo trecho de fala conta uma vez.
+    return selecionar_momentos_ativacao(sinc_df, top_n=top_n, min_altos=5)
+
+
+def _limpo(valor) -> str:
+    return "" if valor is None or (isinstance(valor, float) and pd.isna(valor)) else str(valor).strip()
+
+
+def _tempo_do_momento(row) -> str:
+    """O início do segmento do VAD, onde a ativação foi medida."""
+    return formatar_tempo(row.get("seconds", row.get("start_s"))) or _limpo(row.get("Timestamp", ""))
 
 
 def _group_similar_topics(moments: list) -> list:
@@ -517,9 +498,9 @@ def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
     moments_list = []
     for _, row in top_moments.iterrows():
         sid = row.get("session_id", "")
-        speaker = row.get("SpeakerName", "")
-        ts = row.get("Timestamp", "")
-        text = str(row.get("Text", "")).replace("\n", " ").strip()
+        speaker = _limpo(row.get("SpeakerName", ""))
+        ts = _tempo_do_momento(row)
+        text = _limpo(row.get("Text", "")).replace("\n", " ")
         topic = extract_topic_from_text(text)
         arousal = f"{row.get('dim_arousal', 0.0):.2f}" if pd.notna(row.get('dim_arousal')) else "-"
         valence = f"{row.get('dim_valence', 0.0):.2f}" if pd.notna(row.get('dim_valence')) else "-"
@@ -862,7 +843,9 @@ if not all_sinc.empty:
     
     col_c1, col_c2 = st.columns(2)
     with col_c1:
-        fig_comp = create_project_acoustic_comparison(all_sinc, title="Média de Indicadores por Áudio")
+        fig_comp = create_project_acoustic_comparison(
+            all_sinc, title="Média de Indicadores por Áudio", tr_df=all_tr
+        )
         st.plotly_chart(fig_comp, use_container_width=True)
     with col_c2:
         fig_emo = create_project_emotion_distribution(all_sinc, title="Distribuição de Emoções por Áudio (%)")
@@ -873,6 +856,115 @@ if not all_tr.empty:
     st.subheader("Ranking de Palavras Mais Frequentes (Projeto)")
     fig_words = create_project_word_ranking(all_tr, title="Palavras Mais Mencionadas nas Transcrições", top_n=15)
     st.plotly_chart(fig_words, use_container_width=True)
+
+# ------------------------------------------------------------------
+# Sentimento do texto × voz
+# ------------------------------------------------------------------
+fonte_sentimento = all_tr if tem_sentimento_texto(all_tr) else all_sinc
+project_divergences = detectar_divergencias(all_sinc)
+if tem_sentimento_texto(fonte_sentimento):
+    st.divider()
+    st.subheader("Sentimento do Texto × Voz")
+    st.markdown(
+        "Cada trecho transcrito recebe uma nota de -1 a +1 pelo sentimento do que foi dito "
+        "(inferência automática de um modelo de linguagem, não verdade sobre o que o "
+        "respondente sente). À esquerda, quanto do tempo de fala de cada áudio foi positivo, "
+        "neutro ou negativo; à direita, o sentimento do texto ao lado da valência da voz."
+    )
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        st.plotly_chart(
+            create_project_text_sentiment_distribution(
+                fonte_sentimento, title="Sentimento do Texto por Áudio (% do tempo de fala)"
+            ),
+            use_container_width=True,
+        )
+    with col_s2:
+        st.plotly_chart(
+            create_project_acoustic_comparison(
+                all_sinc,
+                title="Texto × Voz: Sentimento e Valência por Áudio",
+                tr_df=fonte_sentimento,
+                metrics=["dim_valence"],
+            ),
+            use_container_width=True,
+        )
+
+    st.write("")
+    st.subheader("Momentos de Divergência Voz × Texto")
+    st.markdown(
+        "Trechos em que texto e voz apontam em sentidos opostos: texto claramente positivo com "
+        "a valência vocal bem abaixo do habitual do locutor, ou o contrário. São candidatos a "
+        "leitura qualitativa (ironia, cortesia protocolar, insatisfação normalizada), não prova. "
+        "Selecione uma linha e clique no botão para navegar até a timeline do áudio."
+    )
+    if project_divergences.empty:
+        st.caption("Nenhuma divergência acima dos limiares nos áudios do projeto.")
+    else:
+        df_div = pd.DataFrame({
+            "Áudio": project_divergences["session_id"],
+            "Tempo": [
+                formatar_tempo(inicio) or ts
+                for inicio, ts in zip(project_divergences["start_s"], project_divergences["Timestamp"])
+            ],
+            "Locutor": project_divergences["SpeakerName"].replace("", "Desconhecido"),
+            "Fala (Transcrição)": project_divergences["Text"],
+            "Texto (nota)": project_divergences["sentimento_texto"].map(lambda v: f"{v:+.2f}"),
+            "Justificativa": project_divergences["sentimento_justificativa"],
+            "Voz (valência)": [
+                f"{v:+.2f} (z {z:+.1f})"
+                for v, z in zip(project_divergences["valencia_voz"], project_divergences["z_valencia"])
+            ],
+            "Leitura": project_divergences["tipo"],
+        })
+        div_event = st.dataframe(
+            df_div,
+            width="stretch",
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="prj_div_select",
+        )
+
+        div_rows = []
+        if div_event:
+            selection = getattr(div_event, "selection", None)
+            if isinstance(selection, dict):
+                div_rows = selection.get("rows", [])
+            elif selection is not None:
+                div_rows = getattr(selection, "rows", []) or []
+
+        if st.button("Ir para divergência na Timeline do Áudio"):
+            if not div_rows:
+                st.info("Selecione uma divergência na tabela acima para localizar a timeline correspondente.")
+            else:
+                idx = int(div_rows[0])
+                if idx < 0 or idx >= len(project_divergences):
+                    st.warning("Não foi possível identificar a divergência selecionada.")
+                else:
+                    div_row = project_divergences.iloc[idx]
+                    target_sess = div_row.get("session_id")
+                    target_audio = next((a for a in audios if a.get("session_id") == target_sess), None)
+                    if target_audio:
+                        inicio = div_row.get("start_s")
+                        st.session_state["pros_audio_id"] = target_audio["id"]
+                        st.session_state["pros_timeline_focus"] = {
+                            "audio_id": target_audio["id"],
+                            "session_id": target_sess,
+                            "question": "Divergência voz × texto",
+                            "seconds": float(inicio) if pd.notna(inicio) else None,
+                            "timestamp": str(div_row.get("Timestamp", "")),
+                            "speaker": str(div_row.get("SpeakerName", "")),
+                            "text": str(div_row.get("Text", "")),
+                            "source": div_row.get("tipo", "Divergência voz × texto"),
+                        }
+                        # Cruza para o nivel do audio; ver `app.py`.
+                        st.session_state["_navigate_to"] = (
+                            "modules/prosodia/audio_timeline.py"
+                        )
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível localizar o ID deste áudio.")
 
 if not all_sinc.empty:
     st.divider()
@@ -892,8 +984,7 @@ if not all_sinc.empty:
         spk_series = top_moments["SpeakerName"].fillna("Desconhecido") if "SpeakerName" in top_moments.columns else pd.Series(["Desconhecido"] * len(top_moments))
         df_show["Locutor"] = spk_series.astype(str).str.strip().replace("nan", "Desconhecido")
         
-        ts_series = top_moments["Timestamp"].fillna("") if "Timestamp" in top_moments.columns else pd.Series([""] * len(top_moments))
-        df_show["Tempo"] = ts_series.astype(str).str.strip().replace("nan", "")
+        df_show["Tempo"] = [_tempo_do_momento(row) for _, row in top_moments.iterrows()]
         
         df_show["Fala (Transcrição)"] = txt_series.astype(str).str.strip().replace("nan", "")
         
@@ -939,7 +1030,7 @@ if not all_sinc.empty:
                             "session_id": target_sess,
                             "question": "Momento de Alta Ativação Geral",
                             "seconds": float(moment_row.get("seconds", moment_row.get("start_s", 0.0))),
-                            "timestamp": str(moment_row.get("Timestamp", "")),
+                            "timestamp": _tempo_do_momento(moment_row),
                             "speaker": str(moment_row.get("SpeakerName", "")),
                             "text": str(moment_row.get("Text", "")),
                             "source": "Filtro de Ativação Consolidado",
@@ -957,11 +1048,11 @@ if not all_sinc.empty:
         for _, row in top_moments.iterrows():
             moments_list.append({
                 "session_id": str(row.get("session_id", "")),
-                "SpeakerName": str(row.get("SpeakerName", "Desconhecido")),
-                "Timestamp": str(row.get("Timestamp", "")),
-                "Text": str(row.get("Text", "")),
+                "SpeakerName": _limpo(row.get("SpeakerName")) or "Desconhecido",
+                "Timestamp": _tempo_do_momento(row),
+                "Text": _limpo(row.get("Text", "")),
                 "dim_arousal": float(row.get("dim_arousal", 0.0)) if pd.notna(row.get("dim_arousal")) else 0.0,
-                "topic": extract_topic_from_text(str(row.get("Text", ""))),
+                "topic": extract_topic_from_text(_limpo(row.get("Text", ""))),
             })
             
         grouped_topics = _group_similar_topics(moments_list)
@@ -1319,13 +1410,23 @@ if st.button(btn_label, type="primary"):
             high_activation_text = _format_high_activation_text(top_moments)
             
             individual_analyses_text = _load_individual_analyses(audios)
-            
+
+            sentimento_texto = texto_sentimento_resumo(fonte_sentimento, "session_id", "Áudio")
+            divergencias = (
+                divergencias_texto(project_divergences, incluir_audio=True)
+                if tem_sentimento_texto(all_sinc)
+                else ""
+            )
+            secao_sentimento = secoes_sentimento(sentimento_texto, divergencias)
+
             user_prompt = build_project_user_prompt(
                 project_context=proj_ctx,
                 acoustic_stats_text=acoustic_stats_text,
                 top_words_text=top_words_text,
                 high_activation_text=high_activation_text,
                 individual_analyses_text=individual_analyses_text,
+                sentimento_texto=sentimento_texto,
+                divergencias=divergencias,
             )
 
             tipo_projeto = project.get("tipo_projeto")
@@ -1365,7 +1466,8 @@ if st.button(btn_label, type="primary"):
                     strat_user = (
                         f"Analise estatistica previa:\n{stat_result['text']}\n\n"
                         f"Dados consolidados do projeto:\n{acoustic_stats_text}\n\n"
-                        f"Ranking de palavras:\n{top_words_text}"
+                        f"Ranking de palavras:\n{top_words_text}\n\n"
+                        + secao_sentimento
                     )
                     strat_result = ai_create_analysis(
                         system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estrategica"),
@@ -1396,7 +1498,10 @@ if st.button(btn_label, type="primary"):
                         max_tokens=2200,
                     )
                     stat_text = resp_stat.choices[0].message.content
-                    strat_user = f"Analise previa:\n{stat_text}\n\nDados consolidados:\n{acoustic_stats_text}"
+                    strat_user = (
+                        f"Analise previa:\n{stat_text}\n\nDados consolidados:\n{acoustic_stats_text}\n\n"
+                        + secao_sentimento
+                    )
                     resp_strat = groq_client.chat.completions.create(
                         model=groq_model,
                         messages=[

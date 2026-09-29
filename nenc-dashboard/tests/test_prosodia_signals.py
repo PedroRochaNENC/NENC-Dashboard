@@ -13,17 +13,26 @@ import unittest
 
 import pandas as pd
 
+from utils import prosodia_prompts
 from utils.prosodia_prompts import (
     PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
     PROSODIA_SYSTEM_PROMPT_STATISTICAL,
+    build_project_user_prompt,
+    build_prosodia_user_prompt,
 )
 from utils.prosodia_signals import (
     ACUSTICAS,
     DIMENSOES,
     EMOCOES,
+    MIN_LINHAS_POR_LOCUTOR,
+    detectar_divergencias,
+    divergencias_texto,
     emotion_distribution_text,
+    momentos_alta_ativacao,
+    montar_evidencias_audio,
     signals_block,
     speaker_acoustics_text,
+    texto_sentimento_resumo,
 )
 
 
@@ -137,6 +146,222 @@ class PromptAsksOnlyForWhatWeSendTests(unittest.TestCase):
             with self.subTest(prompt=prompt[:40]):
                 self.assertIn("dominância", prompt.lower())
         self.assertIn("Dominância", signals_block(frame()))
+
+
+    def test_the_prompts_that_read_the_sentiment_sections_get_them(self):
+        """<sentimento_texto> e <divergencias> saem dos builders quando há dado."""
+        prompt = build_prosodia_user_prompt(
+            "tabelas", {}, "", sentimento_texto="resumo", divergencias="tabela"
+        )
+        self.assertIn("<sentimento_texto>\nresumo\n</sentimento_texto>", prompt)
+        self.assertIn("<divergencias>\ntabela\n</divergencias>", prompt)
+
+        projeto = build_project_user_prompt(
+            {}, "metricas", "", "", "", sentimento_texto="resumo", divergencias="tabela"
+        )
+        self.assertIn("<sentimento_texto>", projeto)
+        self.assertIn("<divergencias>", projeto)
+
+    def test_without_sentiment_the_sections_disappear(self):
+        for prompt in (
+            build_prosodia_user_prompt("tabelas", {}, "amostra"),
+            build_project_user_prompt({}, "metricas", "palavras", "momentos", "analises"),
+        ):
+            self.assertNotIn("<sentimento_texto>", prompt)
+            self.assertNotIn("<divergencias>", prompt)
+
+    def test_every_system_prompt_explains_the_sections_and_not_to_invent_them(self):
+        for tipo in (None, "pesquisa_opiniao"):
+            for modo in ("rapida", "estatistica", "estrategica"):
+                for obter in (
+                    prosodia_prompts.get_prosodia_system_prompt,
+                    prosodia_prompts.get_prosodia_project_system_prompt,
+                ):
+                    with self.subTest(tipo=tipo, modo=modo, obter=obter.__name__):
+                        prompt = obter(tipo, modo)
+                        self.assertIn("<divergencias>", prompt)
+                        self.assertIn("não as invente", prompt)
+
+
+# ---------------------------------------------------------------------------
+# Sentimento do texto e divergência voz × texto
+# ---------------------------------------------------------------------------
+
+def transcricao(**overrides) -> pd.DataFrame:
+    base = {
+        "session_id": ["a", "a", "a", "b"],
+        "SpeakerName": ["A", "A", "B", "A"],
+        "Text": ["adorei tudo", "ok", "que demora horrível", "bom"],
+        "Timestamp": ["00:00:01", "00:00:05", "00:00:09", "00:00:02"],
+        "start_s": [1.0, 5.0, 9.0, 2.0],
+        "end_s": [4.0, 6.0, 12.0, 3.0],
+        "sentimento_texto": [0.8, 0.0, -0.9, 0.3],
+        "sentimento_rotulo": ["positivo", "neutro", "negativo", "positivo"],
+        "sentimento_justificativa": ["elogio claro", "", "reclama do prazo", "aprova"],
+    }
+    base.update(overrides)
+    return pd.DataFrame(base)
+
+
+def sincronizado(valencias, notas, speaker="A", session="s1", cortado=False, inicio_idx=0):
+    """Uma linha do VAD por valência, cada uma num segmento próprio."""
+    n = len(valencias)
+    return pd.DataFrame({
+        "session_id": [session] * n,
+        "SpeakerName": [speaker] * n if isinstance(speaker, str) else speaker,
+        "start_s": [float(i) for i in range(n)],
+        "end_s": [i + 0.9 for i in range(n)],
+        "duracao_s": [0.9] * n,
+        "Timestamp": ["00:00:{:02d}.00".format(i) for i in range(n)],
+        "Text": ["fala {}".format(i) for i in range(n)],
+        "dim_valence": valencias,
+        "segmento_idx": list(range(inicio_idx, inicio_idx + n)),
+        "sentimento_texto": notas,
+        "sentimento_rotulo": ["positivo" if x > 0.2 else ("negativo" if x < -0.2 else "neutro") for x in notas],
+        "sentimento_justificativa": ["j{}".format(i) for i in range(n)],
+        "audio_cortado": [cortado] * n,
+    })
+
+
+BASE = [0.0, 0.05, -0.05, 0.02, -0.02, 0.0, 0.03, -0.03, 0.01]
+
+
+class TextoSentimentoResumoTests(unittest.TestCase):
+
+    def test_media_ponderada_pela_duracao_e_fatias_por_locutor(self):
+        texto = texto_sentimento_resumo(transcricao(session_id=["a"] * 4))
+
+        linha_a = next(l for l in texto.splitlines() if l.startswith("| A |"))
+        # A: 0.8 por 3s, 0.0 por 1s, 0.3 por 1s -> 0.54; 80% do tempo positivo.
+        self.assertIn("+0.54", linha_a)
+        self.assertIn("80%", linha_a)
+        self.assertIn("Trechos mais positivos", texto)
+        self.assertIn("reclama do prazo", texto)
+        self.assertIn("inferência automática", texto)
+
+    def test_por_audio_marca_o_audio_de_cada_trecho(self):
+        texto = texto_sentimento_resumo(transcricao(), "session_id", "Áudio")
+
+        self.assertIn("| Áudio |", texto)
+        self.assertIn("[a]", texto)
+
+    def test_sem_nota_nenhuma_nao_ha_secao(self):
+        self.assertEqual(texto_sentimento_resumo(transcricao(sentimento_texto=[None] * 4)), "")
+        self.assertEqual(texto_sentimento_resumo(frame()), "")
+
+
+class DetectarDivergenciasTests(unittest.TestCase):
+
+    def test_texto_positivo_com_voz_bem_abaixo_do_habitual(self):
+        df = sincronizado(BASE + [-0.6], [0.0] * 9 + [0.8])
+
+        div = detectar_divergencias(df)
+
+        self.assertEqual(div["segmento_idx"].tolist(), [9])
+        self.assertEqual(div.loc[0, "tipo"], "texto positivo × voz negativa")
+        self.assertLessEqual(div.loc[0, "z_valencia"], -1.0)
+        self.assertEqual(div.loc[0, "start_s"], 9.0)
+
+    def test_texto_negativo_com_voz_bem_acima(self):
+        div = detectar_divergencias(sincronizado(BASE + [0.6], [0.0] * 9 + [-0.7]))
+
+        self.assertEqual(div.loc[0, "tipo"], "texto negativo × voz positiva")
+
+    def test_limiares(self):
+        # Texto morno (|nota| < 0,5) e voz só um pouco abaixo do habitual.
+        self.assertTrue(detectar_divergencias(sincronizado(BASE + [-0.6], [0.0] * 9 + [0.4])).empty)
+        # BASE tem desvio de ~0,03: -0,015 fica a meio desvio do habitual.
+        self.assertTrue(detectar_divergencias(sincronizado(BASE + [-0.015], [0.0] * 9 + [0.9])).empty)
+        # Mesmo sentido não é divergência.
+        self.assertTrue(detectar_divergencias(sincronizado(BASE + [0.6], [0.0] * 9 + [0.9])).empty)
+
+    def test_locutor_com_poucas_linhas_fica_sem_z(self):
+        poucas = BASE[: MIN_LINHAS_POR_LOCUTOR - 2] + [-0.6]
+
+        self.assertTrue(detectar_divergencias(sincronizado(poucas, [0.0] * (len(poucas) - 1) + [0.8])).empty)
+
+    def test_z_por_locutor_e_pelo_audio_inteiro_quando_cortado(self):
+        valencias_a = [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.47, 0.50, 0.51, 0.49, 0.50]
+        valencias_b = [-0.50, -0.52, -0.48, -0.51, -0.49, -0.50, -0.53, -0.47]
+        notas = [0.0] * 12 + [0.8] + [0.0] * 7
+
+        def audio(cortado):
+            return sincronizado(valencias_a + valencias_b, notas, speaker=["A"] * 12 + ["B"] * 8, cortado=cortado)
+
+        # Para B, -0,50 é o habitual: sem divergência.
+        self.assertTrue(detectar_divergencias(audio(False)).empty)
+        # Com o áudio cortado os rótulos não valem e a referência é o áudio.
+        self.assertEqual(detectar_divergencias(audio(True))["segmento_idx"].tolist(), [12])
+
+    def test_cada_audio_e_sua_propria_referencia(self):
+        s1 = sincronizado([0.5 + d for d in BASE] + [0.5], [0.0] * 10)
+        s2 = sincronizado([-0.5 + d for d in BASE] + [-0.5], [0.0] * 9 + [0.8], session="s2", inicio_idx=0)
+
+        self.assertTrue(detectar_divergencias(pd.concat([s1, s2], ignore_index=True)).empty)
+
+    def test_varias_linhas_do_vad_no_mesmo_segmento_contam_uma_vez(self):
+        df = sincronizado(BASE + [-0.6, -0.6], [0.0] * 9 + [0.8, 0.8])
+        df.loc[10, "segmento_idx"] = 9
+
+        self.assertEqual(detectar_divergencias(df)["segmento_idx"].tolist(), [9])
+
+    def test_csv_antigo_sem_sentimento(self):
+        self.assertTrue(detectar_divergencias(frame()).empty)
+
+    def test_tabela_para_o_prompt(self):
+        texto = divergencias_texto(detectar_divergencias(sincronizado(BASE + [-0.6], [0.0] * 9 + [0.8])))
+
+        self.assertIn("texto positivo × voz negativa", texto)
+        self.assertIn("j9", texto)
+        self.assertIn("não prova", texto)
+        self.assertIn("Nenhuma divergência", divergencias_texto(pd.DataFrame()))
+
+
+class MomentosEEvidenciasTests(unittest.TestCase):
+
+    def test_momentos_usam_o_inicio_do_vad_e_nao_repetem_o_segmento(self):
+        df = sincronizado([0.0] * 6, [0.0] * 6)
+        df["dim_arousal"] = [0.9, 0.8, 0.7, 0.1, 0.1, 0.1]
+        df["f0_variacao"] = [30.0, 20.0, 10.0, 1.0, 1.0, 1.0]
+        df["loudness_variacao"] = [0.3, 0.2, 0.1, 0.0, 0.0, 0.0]
+        df["segmento_idx"] = [4, 4, 5, 6, 7, 8]
+        df["start_s"] = [12.5, 14.0, 20.0, 30.0, 40.0, 50.0]
+
+        momentos = momentos_alta_ativacao(df)
+
+        self.assertEqual([m["segmento_idx"] for m in momentos][:2], [4, 5])
+        self.assertEqual(momentos[0]["seconds"], 12.5)
+        self.assertEqual(momentos[0]["Timestamp"], "00:00:12")
+
+    def test_evidencias_com_csv_antigo_nao_inventam_sentimento(self):
+        tr = pd.DataFrame({"SpeakerName": ["A"], "Text": ["ola"], "word_count": [1]})
+        vad = pd.DataFrame({"duration": [1.5, 2.0]})
+
+        evidencias = montar_evidencias_audio(vad, tr, frame())
+
+        self.assertIn("VAD: 2 segmentos", evidencias.tabelas)
+        self.assertIn("Participação por locutor", evidencias.tabelas)
+        self.assertIn("Perfil Acústico", evidencias.tabelas)
+        self.assertEqual(evidencias.sentimento_texto, "")
+        self.assertEqual(evidencias.divergencias, "")
+
+    def test_evidencias_com_sentimento(self):
+        sinc = sincronizado(BASE + [-0.6], [0.0] * 9 + [0.8])
+        tr = sinc.rename(columns={}).drop(columns=["dim_valence"])
+
+        evidencias = montar_evidencias_audio(pd.DataFrame(), tr, sinc, momentos=[{"Text": "x", "dim_arousal": 0.9}])
+
+        self.assertIn("| A |", evidencias.sentimento_texto)
+        self.assertIn("texto positivo × voz negativa", evidencias.divergencias)
+        self.assertIn("Momentos de Maior Ativação", evidencias.tabelas)
+
+    def test_audio_cortado_nao_resume_por_locutor(self):
+        sinc = sincronizado(BASE + [-0.6], [0.0] * 9 + [0.8], cortado=True)
+
+        evidencias = montar_evidencias_audio(pd.DataFrame(), sinc, sinc)
+
+        self.assertIn("| Todos |", evidencias.sentimento_texto)
+        self.assertIn("rótulos de locutor", evidencias.sentimento_texto)
 
 
 if __name__ == "__main__":

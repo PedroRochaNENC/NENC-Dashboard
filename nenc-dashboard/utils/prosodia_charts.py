@@ -14,6 +14,7 @@ from typing import List, Optional
 
 # Importado pelo efeito de registrar o template "nenc" usado abaixo.
 from utils.charts import NENC_HEATMAP, NENC_SEQUENCE
+from utils.prosodia_signals import ROTULOS_SENTIMENTO, sentimento_por_grupo, tem_sentimento_texto
 
 # ---------------------------------------------------------------------------
 # Paleta de locutores
@@ -526,9 +527,15 @@ def create_transcription_markers(
 def create_project_acoustic_comparison(
     sinc_df: pd.DataFrame,
     title: str = "",
+    tr_df: Optional[pd.DataFrame] = None,
+    metrics: Optional[List[str]] = None,
 ) -> go.Figure:
     """
     Gráfico de barras agrupadas comparando médias de Arousal, Valence, Loudness e Speaking Rate por áudio.
+
+    Com `tr_df` trazendo o sentimento do texto, ganha a barra "Sentimento do
+    texto (média)", ponderada pela duração dos trechos. `metrics` restringe as
+    colunas do Sincronizado mostradas.
     """
     if sinc_df.empty:
         fig = go.Figure()
@@ -542,7 +549,7 @@ def create_project_acoustic_comparison(
         fig.update_layout(template="nenc")
         return fig
         
-    metrics = ["dim_arousal", "dim_valence", "loudness_media", "speaking_rate"]
+    metrics = metrics or ["dim_arousal", "dim_valence", "loudness_media", "speaking_rate"]
     available = [m for m in metrics if m in sinc_df.columns]
     
     if not available:
@@ -572,6 +579,18 @@ def create_project_acoustic_comparison(
                 name=metric_labels.get(m, m),
                 marker_color=colors[i % len(colors)],
                 hovertemplate=f"<b>%{{x}}</b><br>{metric_labels.get(m, m)}: %{{y:.3f}}<extra></extra>"
+            )
+        )
+
+    if tr_df is not None and tem_sentimento_texto(tr_df) and "session_id" in tr_df.columns:
+        sentimento = sentimento_por_grupo(tr_df, "session_id").set_index("grupo")["media"]
+        fig.add_trace(
+            go.Bar(
+                x=agg["session_id"],
+                y=[sentimento.get(str(sid)) for sid in agg["session_id"]],
+                name="Sentimento do texto (média)",
+                marker_color=colors[len(available) % len(colors)],
+                hovertemplate="<b>%{x}</b><br>Sentimento do texto: %{y:+.2f}<extra></extra>",
             )
         )
         
@@ -646,6 +665,53 @@ def create_project_emotion_distribution(
         
     fig.update_layout(
         title=title or "Distribuição de Emoções por Áudio (%)",
+        xaxis_title="Áudio / Sessão",
+        yaxis_title="Proporção (%)",
+        template="nenc",
+        barmode="stack",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+
+# Mesma leitura das emoções: neutro cinza, positivo verde-água, negativo rosa.
+_SENTIMENTO_CORES = {
+    "positivo": "#5fbf9f",
+    "neutro": "#9397ab",
+    "negativo": "#e0748b",
+}
+
+
+def create_project_text_sentiment_distribution(
+    tr_df: pd.DataFrame,
+    title: str = "",
+) -> go.Figure:
+    """
+    Barras empilhadas com a fatia do tempo de fala positiva, neutra e negativa
+    de cada áudio, pelo sentimento do texto transcrito.
+    """
+    if tr_df is None or not tem_sentimento_texto(tr_df) or "session_id" not in tr_df.columns:
+        fig = go.Figure()
+        fig.add_annotation(text="Sem sentimento do texto nos dados", showarrow=False)
+        fig.update_layout(template="nenc")
+        return fig
+
+    tabela = sentimento_por_grupo(tr_df, "session_id")
+    fig = go.Figure()
+    for rotulo, legenda in ROTULOS_SENTIMENTO:
+        fig.add_trace(
+            go.Bar(
+                x=tabela["grupo"],
+                y=tabela[rotulo] * 100,
+                name=legenda,
+                marker_color=_SENTIMENTO_CORES[rotulo],
+                hovertemplate=f"<b>%{{x}}</b><br>{legenda}: %{{y:.1f}}% do tempo de fala<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        title=title or "Sentimento do Texto por Áudio (% do tempo de fala)",
         xaxis_title="Áudio / Sessão",
         yaxis_title="Proporção (%)",
         template="nenc",

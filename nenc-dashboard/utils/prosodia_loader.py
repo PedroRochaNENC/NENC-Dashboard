@@ -119,11 +119,15 @@ def _load_transcricao_from_csv(source, session_id: str) -> Tuple[pd.DataFrame, L
 
     df["session_id"] = session_id
 
-    # Converter Timestamp para segundos
+    # Converter Timestamp para segundos. O CSV gerado da API traz também o
+    # início exato do segmento (start_s); o Timestamp dele é arredondado ao segundo.
     if "Timestamp" in df.columns:
         df["seconds"] = df["Timestamp"].apply(_timestamp_to_seconds)
     else:
         df["seconds"] = 0.0
+    if "start_s" in df.columns:
+        inicio = pd.to_numeric(df["start_s"], errors="coerce")
+        df["seconds"] = inicio.where(inicio.notna(), df["seconds"])
 
     # Contagem de palavras por linha
     if "Text" in df.columns:
@@ -186,9 +190,58 @@ def _load_sincronizado_csv(source, session_id: str) -> Tuple[pd.DataFrame, pd.Da
         extra_cols = [c for c in df.columns if c not in {"session_id"} | set(col_map.keys())]
         for col in extra_cols:
             tr_rows[col] = df[col].values
-        tr_df = tr_rows.reset_index(drop=True)
+        tr_df = _uma_linha_por_fala(tr_rows).reset_index(drop=True)
 
     return vad_df, tr_df, errors
+
+
+def _uma_linha_por_fala(tr_rows: pd.DataFrame) -> pd.DataFrame:
+    """Transcrição tirada do Sincronizado, com cada fala uma vez só.
+
+    No Sincronizado gerado da API cada linha é um segmento do VAD, e vários
+    deles podem cair no mesmo segmento do Whisper (segmento_idx): como
+    transcrição, a fala repetida inflaria mensagens e palavras. Linha sem
+    segmento e sem texto é pausa, não fala. Arquivos sem segmento_idx (os
+    antigos e os de upload manual) ficam como estão.
+    """
+    if "segmento_idx" not in tr_rows.columns:
+        return tr_rows
+    indice = pd.to_numeric(tr_rows["segmento_idx"], errors="coerce")
+    tem_texto = tr_rows["Text"].fillna("").astype(str).str.strip() != ""
+    primeira_do_segmento = indice.notna() & ~indice.duplicated(keep="first")
+    return tr_rows[primeira_do_segmento | (indice.isna() & tem_texto)]
+
+
+def normalizar_sincronizado(sinc_df: pd.DataFrame, session_id: str) -> pd.DataFrame:
+    """O CSV Sincronizado com os nomes de coluna que as análises usam.
+
+    speakers/timestamp_inicio/texto_transcricao viram SpeakerName/Timestamp/
+    Text, o session_id é garantido e `seconds` é o início do segmento do VAD
+    (start_s) — onde a métrica acústica foi medida. Sem start_s, vale o
+    Timestamp da fala.
+    """
+    if sinc_df is None or sinc_df.empty:
+        return pd.DataFrame() if sinc_df is None else sinc_df
+    df = sinc_df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.rename(columns={
+        "speakers": "SpeakerName",
+        "timestamp_inicio": "Timestamp",
+        "texto_transcricao": "Text",
+    })
+    if "session_id" not in df.columns:
+        df["session_id"] = session_id
+    if "seconds" not in df.columns:
+        segundos = pd.Series([float("nan")] * len(df), index=df.index)
+        if "start_s" in df.columns:
+            segundos = pd.to_numeric(df["start_s"], errors="coerce")
+        if "Timestamp" in df.columns:
+            do_timestamp = df["Timestamp"].apply(
+                lambda ts: _timestamp_to_seconds(ts) if pd.notna(ts) and str(ts).strip() else float("nan")
+            )
+            segundos = segundos.where(segundos.notna(), do_timestamp)
+        df["seconds"] = segundos
+    return df
 
 
 # ------------------------------------------------------------------
