@@ -16,13 +16,17 @@ from typing import Iterable, Optional
 from utils.ai_provider import (
     get_openai_client,
     get_prosodia_vector_store_id,
+    get_vector_store_id,
     list_vector_store_documents,
 )
 from utils.kb_attributes import belongs_to_project
 
 
-def _prosodia_store():
-    """Cliente e base da organizacao ativa, ou (None, None) se nao houver.
+def _store(module_key: str = "prosodia"):
+    """Cliente e base do modulo na organizacao ativa, ou (None, None).
+
+    Cada modulo tem o proprio vector store; limpar o projeto da Jornada na base
+    do NencBoost nao acharia nada e deixaria o material do projeto indexado.
 
     O cliente vem primeiro porque nao depende de sessao: sem chave configurada
     nao ha o que limpar, e a funcao volta sem tocar em autorizacao — e assim que
@@ -33,7 +37,10 @@ def _prosodia_store():
     if client is None:
         return None, None
     try:
-        vector_store_id = get_prosodia_vector_store_id()
+        if module_key == "jornada_compra":
+            vector_store_id = get_vector_store_id()
+        else:
+            vector_store_id = get_prosodia_vector_store_id()
     except Exception:
         return None, None
     if not vector_store_id:
@@ -87,11 +94,13 @@ def _project_file_ids(
 
 
 def remove_documents_for_project(
-    project_id: Optional[int], extra_file_ids: Iterable[str] = ()
+    project_id: Optional[int],
+    extra_file_ids: Iterable[str] = (),
+    module_key: str = "prosodia",
 ) -> int:
-    """Remove da base tudo que pertence a um projeto."""
+    """Remove da base do modulo tudo que pertence a um projeto."""
 
-    client, vector_store_id = _prosodia_store()
+    client, vector_store_id = _store(module_key)
     if client is None:
         return 0
     try:
@@ -114,7 +123,7 @@ def remove_documents_for_audio(
     material da sessao (qualidade, analise de IA) so e alcancavel pelo atributo.
     """
 
-    client, vector_store_id = _prosodia_store()
+    client, vector_store_id = _store("prosodia")
     if client is None:
         return 0
     try:
@@ -128,13 +137,13 @@ def remove_documents_for_audio(
         return 0
 
 
-def remove_files(file_ids: Iterable[str]) -> int:
+def remove_files(file_ids: Iterable[str], module_key: str = "prosodia") -> int:
     """Remove arquivos avulsos, pelos ids que o banco guardava."""
 
     file_ids = [file_id for file_id in file_ids if file_id]
     if not file_ids:
         return 0
-    client, vector_store_id = _prosodia_store()
+    client, vector_store_id = _store(module_key)
     if client is None:
         return 0
     try:

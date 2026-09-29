@@ -48,16 +48,36 @@ def _tabelas(database: sqlite3.Connection) -> set:
     }
 
 
-def _projetos_vivos(database: sqlite3.Connection, organization_id: int) -> set:
+# Cada modulo guarda os proprios projetos. Conferir o store da Jornada contra
+# `projects` (NencBoost) apagava o material de projetos vivos da Jornada — ou
+# poupava o de projetos mortos cujo id coincidia com um projeto do NencBoost.
+TABELA_DE_PROJETOS = {"prosodia": "projects", "jornada_compra": "jc_projects"}
+
+
+def _projetos_vivos(
+    database: sqlite3.Connection, organization_id: int, module_key: str, tabelas: set
+) -> set | None:
+    """Ids dos projetos do modulo, ou None se o modulo nao tem tabela conhecida."""
+
+    tabela = TABELA_DE_PROJETOS.get(module_key)
+    if tabela is None or tabela not in tabelas:
+        return None
     return {
         row["id"]
         for row in database.execute(
-            "SELECT id FROM projects WHERE organization_id = ?", (organization_id,)
+            "SELECT id FROM {} WHERE organization_id = ?".format(tabela),
+            (organization_id,),
         )
     }
 
 
-def _sessoes_vivas(database: sqlite3.Connection, organization_id: int) -> set:
+def _sessoes_vivas(
+    database: sqlite3.Connection, organization_id: int, module_key: str, tabelas: set
+) -> set | None:
+    """Sessoes de entrevista vivas; so o NencBoost manda material por sessao."""
+
+    if module_key != "prosodia" or not {"audios", "projects"} <= tabelas:
+        return None
     return {
         (row["project_id"], str(row["session_id"]))
         for row in database.execute(
@@ -75,13 +95,15 @@ def _sessoes_vivas(database: sqlite3.Connection, organization_id: int) -> set:
 def _orfaos_do_store(
     client: OpenAI,
     vector_store_id: str,
-    projetos: set,
-    sessoes: set,
+    projetos: set | None,
+    sessoes: set | None,
 ) -> list:
     """Documentos de projeto cujo projeto ou sessao nao existe mais.
 
     Literatura nunca entra nesta lista: ela nao pertence a projeto nenhum, e
-    apagar por falta de dono tiraria referencia de quem nao pediu.
+    apagar por falta de dono tiraria referencia de quem nao pediu. Com
+    `projetos` None o modulo nao tem tabela conhecida, e nada de projeto e
+    apagado: sem saber quem esta vivo, qualquer exclusao seria um palpite.
     """
 
     orfaos = []
@@ -92,6 +114,11 @@ def _orfaos_do_store(
             orfaos.append((arquivo.id, "sem atributo (rode o backfill primeiro)", False))
             continue
         if escopo == "referencia":
+            continue
+        if projetos is None:
+            orfaos.append(
+                (arquivo.id, "modulo sem tabela de projetos conhecida", False)
+            )
             continue
 
         project_id = atributos.get("project_id")
@@ -109,7 +136,7 @@ def _orfaos_do_store(
             continue
 
         session_id = atributos.get("session_id")
-        if session_id and (project_id, str(session_id)) not in sessoes:
+        if sessoes is not None and session_id and (project_id, str(session_id)) not in sessoes:
             orfaos.append(
                 (arquivo.id, "sessao {} nao existe mais".format(session_id), True)
             )
@@ -196,8 +223,9 @@ def main() -> int:
                     organization_id, row["module_key"], vector_store_id
                 )
             )
-            projetos = _projetos_vivos(database, organization_id)
-            sessoes = _sessoes_vivas(database, organization_id)
+            module_key = row["module_key"]
+            projetos = _projetos_vivos(database, organization_id, module_key, tabelas)
+            sessoes = _sessoes_vivas(database, organization_id, module_key, tabelas)
             try:
                 orfaos = _orfaos_do_store(client, vector_store_id, projetos, sessoes)
             except Exception as error:

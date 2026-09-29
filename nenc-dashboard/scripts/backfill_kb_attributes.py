@@ -34,6 +34,11 @@ PREFIXOS_DE_PROJETO = (
     ("analise_geral_", "analise_geral", "analise"),
     ("briefing_", "briefing", "projeto"),
 )
+# A Jornada de Compra acrescenta "jc_" aos nomes que manda para a base.
+PREFIXOS_DE_PROJETO_JORNADA = (
+    ("analise_geral_jc_", "analise_geral", "analise"),
+    ("briefing_jc_", "briefing", "projeto"),
+)
 
 
 def _slug(text: object) -> str:
@@ -74,12 +79,42 @@ def _vector_stores(database: sqlite3.Connection) -> list[sqlite3.Row]:
     )
 
 
-def _project_index(database: sqlite3.Connection, organization_id: int) -> dict:
+def _tabelas(database: sqlite3.Connection) -> set:
+    return {
+        row[0]
+        for row in database.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+
+
+def _project_index(
+    database: sqlite3.Connection, organization_id: int, module_key: str = "prosodia"
+) -> dict:
     """Mapas para reconhecer a quem pertence cada arquivo ja indexado."""
 
     por_file_id: dict[str, dict] = {}
     por_sessao: dict[str, int] = {}
     por_slug_de_projeto: dict[str, int] = {}
+    tabelas = _tabelas(database)
+
+    if module_key == "jornada_compra":
+        if "jc_projects" in tabelas:
+            for row in database.execute(
+                "SELECT id, name FROM jc_projects WHERE organization_id = ?",
+                (organization_id,),
+            ):
+                por_slug_de_projeto[_slug(row["name"])] = row["id"]
+        return {
+            "por_file_id": por_file_id,
+            "por_sessao": por_sessao,
+            "por_slug_de_projeto": por_slug_de_projeto,
+        }
+
+    if not {"audios", "projects"} <= tabelas:
+        return {
+            "por_file_id": por_file_id,
+            "por_sessao": por_sessao,
+            "por_slug_de_projeto": por_slug_de_projeto,
+        }
 
     for row in database.execute(
         """
@@ -125,8 +160,24 @@ def _classificar(file_id: str, filename: str, indice: dict, module_key: str) -> 
     arquivo e o que sobra para o material que a aplicacao nunca registrou.
     """
 
+    if module_key == "jornada_compra":
+        nome = filename or ""
+        for prefixo, tipo, escopo in PREFIXOS_DE_PROJETO_JORNADA:
+            if nome.startswith(prefixo):
+                resto = _slug(nome[len(prefixo) :])
+                for projeto_slug, project_id in indice["por_slug_de_projeto"].items():
+                    if projeto_slug and resto.startswith(projeto_slug):
+                        return {
+                            "escopo": escopo,
+                            "modulo": module_key,
+                            "project_id": project_id,
+                            "tipo": tipo,
+                        }
+                return {"escopo": escopo, "modulo": module_key, "tipo": tipo}
+        return {"escopo": "referencia", "modulo": module_key}
+
     if module_key != "prosodia":
-        # Fora da Prosodia so existe literatura: nenhuma tela manda dado de
+        # Nos demais modulos so existe literatura: nenhuma tela manda dado de
         # projeto para a base da organizacao.
         return {"escopo": "referencia", "modulo": module_key}
 
@@ -198,7 +249,7 @@ def _processar_store(
         )
     )
 
-    indice = _project_index(database, organization_id)
+    indice = _project_index(database, organization_id, module_key)
     nomes: dict[str, str] = {}
     try:
         nomes = {
@@ -217,6 +268,13 @@ def _processar_store(
 
     for arquivo in arquivos:
         atributos_atuais = getattr(arquivo, "attributes", None) or {}
+        if atributos_atuais.get("project_id"):
+            # Quem carimbou foi a propria aplicacao, no envio: e a evidencia mais
+            # forte que existe. Recarimbar pelo nome do arquivo, mesmo com
+            # --refazer, so poderia perder o dono e expor o material do projeto
+            # como literatura para todos os outros.
+            contagem["ja_de_projeto"] += 1
+            continue
         if atributos_atuais.get("escopo") and not refazer:
             contagem["ja_carimbado"] += 1
             continue
@@ -262,7 +320,10 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--refazer",
         action="store_true",
-        help="Recarimba tambem os documentos que ja tem escopo.",
+        help=(
+            "Recarimba tambem os documentos que ja tem escopo "
+            "(nunca os que ja tem project_id)."
+        ),
     )
     parser.add_argument(
         "--apply",

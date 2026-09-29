@@ -203,6 +203,32 @@ class CleanupTests(unittest.TestCase):
             self.assertTrue(kb_cleanup.delete_vector_store("vs_projeto"))
         self.assertEqual(self.client.vector_stores.deleted, ["vs_projeto"])
 
+    def test_the_journey_cleans_its_own_store(self):
+        # A Jornada tem base propria: limpar o projeto dela na base do NencBoost
+        # nao acharia nada e deixaria o material indexado.
+        with patch.multiple(
+            kb_cleanup,
+            get_openai_client=lambda: self.client,
+            get_prosodia_vector_store_id=lambda: self.fail("base errada"),
+            get_vector_store_id=lambda: "vs_jornada",
+        ):
+            removed = kb_cleanup.remove_documents_for_project(
+                3, module_key="jornada_compra"
+            )
+            kb_cleanup.remove_files(["file-avulso"], module_key="jornada_compra")
+
+        self.assertEqual(removed, 2)
+        self.assertIn("file-avulso", self.client.files.deleted)
+
+    def test_prosodia_stays_the_default_module(self):
+        with patch.multiple(
+            kb_cleanup,
+            get_openai_client=lambda: self.client,
+            get_prosodia_vector_store_id=lambda: "vs_1",
+            get_vector_store_id=lambda: self.fail("base errada"),
+        ):
+            self.assertEqual(kb_cleanup.remove_documents_for_project(3), 2)
+
 
 class ReferenceRenderingTests(unittest.TestCase):
     def test_the_old_string_citations_still_render(self):
