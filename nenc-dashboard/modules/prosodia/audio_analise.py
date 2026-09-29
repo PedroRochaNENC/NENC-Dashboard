@@ -34,6 +34,7 @@ from utils.prosodia_db import (
     get_latest_high_activations,
 )
 from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
+from utils.prosodia_signals import signals_block
 from utils.prosodia_quality import (
     run_quality_checks,
     check_question_coverage_keywords,
@@ -512,6 +513,13 @@ if not tr_df.empty and "SpeakerName" in tr_df.columns:
         .reset_index()
     )
     tables_lines.append("Participação por locutor:\n" + by_spk.to_string(index=False))
+
+# Sem este bloco a análise individual recebia só contagem de segmentos e de
+# palavras, enquanto o prompt estatístico pedia médias de F0, loudness e
+# distribuição de emoções.
+if not sinc_df.empty:
+    tables_lines.append(signals_block(sinc_df))
+
 tables_text = "\n\n".join(tables_lines)
 
 if high_activations_list:

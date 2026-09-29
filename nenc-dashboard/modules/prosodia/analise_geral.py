@@ -30,6 +30,7 @@ from utils.prosodia_db import (
     delete_project_analyses,
 )
 from utils.prosodia_loader import load_prosodia_from_uploads, extract_topic_from_text
+from utils.prosodia_signals import emotion_distribution_text
 # from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
 from utils.prosodia_charts import (
     create_speaker_stats,
@@ -506,7 +507,13 @@ def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
     if top_moments.empty:
         return "Nenhum momento de alta ativação encontrado."
         
-    lines = ["| Tópico | Áudio | Locutor | Tempo | Fala | Arousal | Variação Pitch | Variação Volume |", "|---|---|---|---|---|---|---|---|"]
+    # Valência e dominância andam junto com a ativação: pico com valência
+    # negativa é fricção, com valência positiva é entusiasmo, e sem elas os
+    # dois chegam ao modelo como o mesmo número.
+    lines = [
+        "| Tópico | Áudio | Locutor | Tempo | Fala | Arousal | Valência | Dominância | Variação Pitch | Variação Volume |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
     moments_list = []
     for _, row in top_moments.iterrows():
         sid = row.get("session_id", "")
@@ -515,9 +522,14 @@ def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
         text = str(row.get("Text", "")).replace("\n", " ").strip()
         topic = extract_topic_from_text(text)
         arousal = f"{row.get('dim_arousal', 0.0):.2f}" if pd.notna(row.get('dim_arousal')) else "-"
+        valence = f"{row.get('dim_valence', 0.0):.2f}" if pd.notna(row.get('dim_valence')) else "-"
+        dominance = f"{row.get('dim_dominance', 0.0):.2f}" if pd.notna(row.get('dim_dominance')) else "-"
         f0_var = f"{row.get('f0_variacao', 0.0):.2f}" if pd.notna(row.get('f0_variacao')) else "-"
         ld_var = f"{row.get('loudness_variacao', 0.0):.2f}" if pd.notna(row.get('loudness_variacao')) else "-"
-        lines.append(f"| {topic} | {sid} | {speaker} | {ts} | \"{text}\" | {arousal} | {f0_var} | {ld_var} |")
+        lines.append(
+            f"| {topic} | {sid} | {speaker} | {ts} | \"{text}\" | {arousal} | {valence} | "
+            f"{dominance} | {f0_var} | {ld_var} |"
+        )
         
         moments_list.append({
             "session_id": sid,
@@ -662,7 +674,9 @@ def _calculate_acoustic_summary_text(sinc_df: pd.DataFrame) -> str:
     if sinc_df.empty:
         return "Nenhuma métrica acústica disponível."
         
-    metrics = ["f0_media", "f0_variacao", "loudness_media", "loudness_variacao", "speaking_rate", "dim_arousal", "dim_valence"]
+    # Dominância entra junto com ativação e valência: é o trio VAD completo, e
+    # sem ela não se separa uma crítica firme de um desabafo hesitante.
+    metrics = ["f0_media", "f0_variacao", "loudness_media", "loudness_variacao", "speaking_rate", "dim_arousal", "dim_valence", "dim_dominance"]
     available = [m for m in metrics if m in sinc_df.columns]
     
     if not available:
@@ -1291,6 +1305,14 @@ if st.button(btn_label, type="primary"):
                         f"| {qa['question']} | {qa['count']} | {qa['avg_arousal']:.2f} | {qa['avg_f0_var']:.2f} | {qa['avg_ld_var']:.2f} | {qa['example']} |"
                     )
                 acoustic_stats_text += "\n" + "\n".join(q_lines)
+
+            # As quatro categorias de emoção existem no CSV desde sempre e nunca
+            # chegavam ao prompt, que por sua vez as pedia.
+            acoustic_stats_text += (
+                "\n\n### Distribuição de Emoções por Áudio\n\n"
+                + emotion_distribution_text(all_sinc, "session_id", "Áudio")
+            )
+
             top_words_text = _calculate_top_words_text(all_tr, top_n=30)
             
             top_moments = _extract_high_activation_moments(all_sinc, top_n=15)
