@@ -38,7 +38,8 @@ estatísticas nem citações; quando faltar dado, declare a lacuna.
 - Eye tracking mede atenção visual: não prova preferência, intenção nem compra.
 - Com menos de 5 participantes numa célula ou grupo, trate a comparação como \
 indício descritivo, nunca como diferença comprovada. Só fale em diferença \
-estatística quando a tabela de comparações trouxer p.
+estatística quando a tabela de comparações trouxer p; sem p, não use \
+"significativo" nem "significativamente" — diga quanto maior ou menor.
 - Quando duas variáveis andam juntas na amostra (ver Limitações), não atribua a \
 diferença a nenhuma delas.
 - Inclua uma seção breve de **Limitações e Próximos Passos**.

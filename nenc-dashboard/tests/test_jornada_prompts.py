@@ -15,6 +15,7 @@ class SystemPromptTests(unittest.TestCase):
             self.assertIn("Glossário das métricas", text)
             self.assertIn("Rigor, Evidência e Limites", text)
             self.assertIn("não têm validade aqui", text)
+            self.assertIn('não use "significativo"', text)
 
     def test_only_the_tasks_present_get_their_addendum(self):
         text = prompts.get_jornada_project_system_prompt("rapida", ["livre", "embalagens"])
