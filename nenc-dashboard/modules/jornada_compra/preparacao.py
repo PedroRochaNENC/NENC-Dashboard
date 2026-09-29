@@ -33,7 +33,7 @@ from utils.ai_provider import (
     get_vector_store_id,
 )
 from utils.briefing import BRIEFING_EXTENSIONS, cap_text, extract_briefing_text
-from utils.jornada_ingest import TASK_LABELS
+from utils.jornada_ingest import TASK_LABELS, legacy_tabelas_csv
 from utils.jornada_quality import DEFAULT_THRESHOLDS, default_thresholds
 from utils.jornada_taxonomy import KIND_LABELS, format_dimensions, parse_dimensions
 from utils.kb_attributes import project_document
@@ -568,20 +568,55 @@ def _render_parameters() -> None:
         )
 
 
+LEGACY_TITLES = {
+    "tabelas": "Banco_Tabelas (participante × AOI)",
+    "por_marca": "Banco_PorMarca",
+    "medias": "Banco_medias",
+    "visual_share": "Banco_TBVisualShare",
+}
+
+
+def _render_legacy(tables: dict) -> None:
+    """Tabelas gravadas pela versão antiga do módulo: só consulta."""
+    st.caption(
+        "Estas tabelas foram gravadas pela versão anterior da Jornada de Compra e ficam só para "
+        "consulta. Para usar os dados na análise nova, baixe o Banco_Tabelas e envie-o em Uploads, "
+        "completando tarefa e loja na prévia."
+    )
+    choice = st.selectbox("Tabela", list(tables), format_func=lambda key: LEGACY_TITLES.get(key, key),
+                          key="jc_legacy_table")
+    frame = tables[choice]
+    st.caption("{} linha(s) · {} coluna(s)".format(len(frame), len(frame.columns)))
+    st.dataframe(frame, hide_index=True, width="stretch")
+    if choice == "tabelas":
+        st.download_button(
+            "Baixar Banco_Tabelas.csv",
+            data=legacy_tabelas_csv(frame),
+            file_name="Banco_Tabelas_{}.csv".format(_slugify(project.get("name"))),
+            mime="text/csv",
+            key="jc_legacy_download",
+        )
+
+
 if not editing:
     _render_context()
 else:
     from utils.jornada_cache import get_project_model
 
-    tab_context, tab_stores, tab_catalog, tab_params = st.tabs(
-        ["Contexto", "Lojas e perfis", "Catálogo de AOIs", "Parâmetros"]
-    )
-    with tab_context:
+    legacy_tables = jornada_db.get_legacy_dataset(project["id"])
+    tab_names = ["Contexto", "Lojas e perfis", "Catálogo de AOIs", "Parâmetros"]
+    if legacy_tables:
+        tab_names.append("Versão anterior")
+    tabs = st.tabs(tab_names)
+    with tabs[0]:
         _render_context()
     project_model = get_project_model(project)
-    with tab_stores:
+    with tabs[1]:
         _render_stores(project_model)
-    with tab_catalog:
+    with tabs[2]:
         _render_catalog(project_model)
-    with tab_params:
+    with tabs[3]:
         _render_parameters()
+    if legacy_tables:
+        with tabs[4]:
+            _render_legacy(legacy_tables)

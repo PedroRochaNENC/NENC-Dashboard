@@ -4,7 +4,9 @@ Dashboard Streamlit para visualização de dados de Neuromarketing do pipeline N
 
 ## Funcionalidades
 
-- **Sinais**: Gráficos de EEG (engagement, atenção, WTP, memória, assimetria) e periféricos (BPM, GSR) alinhados no tempo, por participante ou em média geral, com as médias por etapa no mesmo lugar
+- **Teste Sensorial**: Gráficos de EEG (engagement, atenção, WTP, memória, assimetria) e periféricos (BPM, GSR) alinhados no tempo, por participante ou em média geral, com as médias por etapa no mesmo lugar
+- **Jornada de Compra**: eye tracking no ponto de venda, organizado em projetos — atenção por marca, produto, preço e embalagem, com análise por IA e exportação em PDF, PPTX e Excel/Power BI (ver [Jornada de Compra](#jornada-de-compra))
+- **NencBoost**: prosódia e transcrições de entrevistas, com análise por IA
 - **Dados Brutos**: Explorador interativo dos dados tabulares com filtros e download
 
 ## Instalação
@@ -33,6 +35,107 @@ O dashboard espera os arquivos de saída do pipeline NENC:
 
 1. **Upload**: Envie os arquivos diretamente pelo sidebar
 2. **Pasta**: Aponte para o diretório `2.2.Dados Processados/` do pipeline
+
+## Jornada de Compra
+
+Cada estudo é um projeto: **Projetos → Uploads → Participantes → Análise
+Geral**. Quem só consulta vê projetos, participantes, análises salvas e
+exportações; criar projeto, enviar arquivos, excluir gravações e gerar análise
+de IA exigem conta de administrador.
+
+### Arquivos aceitos em Uploads
+
+O tipo é reconhecido pelo nome e pelo cabeçalho; a prévia mostra o que foi
+entendido (participante, tarefa, loja, unidade) antes de gravar, e o que o nome
+não diz é completado ali.
+
+| Tipo | O que é | Exemplo de nome |
+| --- | --- | --- |
+| Quadros do rastreador | `frame,timestamp,x,y` de uma gravação (Kexxu) | `Pt04-JEstimulada-ASSAI.csv` |
+| Blickshift individual | Gaze Statistics participante × AOI (`;`, decimal com vírgula) | `DSP2250-INDIVIDUAL2.csv` |
+| Blickshift agregado | O mesmo export por grupo | `..._Gaze Statistics_PERFIL 1.csv` |
+| Planilha enriquecida | Colunas do Blickshift mais canal, perfil e tempo até a decisão | `...-todos.xlsx` |
+| Entrevistas | `arquivo, ep, identificacao, texto` | `entrevistas.csv` |
+| Formato antigo | `Banco_Tabelas` da versão anterior do módulo | `Banco_Tabelas.csv` |
+| Imagem | Foto de gôndola, heatmap ou embalagem | `.png`, `.jpg` |
+
+As tabelas `Banco_PorMarca`, `Banco_medias`, `Banco_TBVisualShare`,
+`Banco_ANOVA` e `Banco_Consolidado` da versão anterior são recusadas com
+orientação: o app calcula esses números a partir do `Banco_Tabelas`. Tabelas
+gravadas pela versão anterior aparecem, só para consulta, em **Dados do
+Projeto → Versão anterior**, com o `Banco_Tabelas` pronto para baixar e reenviar.
+
+Vídeos (`.mp4`, `.mov`, até 200 MB) têm seção própria em Uploads e ficam no
+disco do servidor, fora do banco — ver [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+### Unidades e o que entra na análise
+
+- A unidade de tempo é decidida **por gravação**: exports em amostras são
+  convertidos para segundos pelos quadros daquela gravação, e o tempo até o
+  primeiro olhar usa o timestamp do quadro. A unidade pode ser fixada à mão.
+- Só entram as gravações **incluídas**. Gravação com todas as AOIs zeradas é
+  marcada como não codificada e fica fora de qualquer denominador; a exclusão
+  manual exige motivo.
+- Contagem de fixações, sacadas, pupila e medidas em pixels não são usadas: a
+  ~23 Hz o rastreador não separa fixações.
+
+### Análise Geral
+
+Filtros por tarefa, loja e perfil valem para todas as seções. Cada gráfico tem
+a tabela equivalente.
+
+- **Gôndola**: share visual por marca (média por participante; a ponderada
+  pelo tempo fica na tabela), funil notou → examinou → retornou, primeira marca
+  notada, tempo até a primeira olhada (absoluto e relativo à primeira marca
+  vista), índice de presença (share ÷ fração da gôndola) e ranking de produtos.
+- **Navegação e decisão**: atributos das AOIs (ex.: Diurno × Noturno) com a
+  presença de cada valor na gôndola, etiquetas de preço e tempo até a decisão.
+- **Embalagens**: elementos por perfil (dados agregados), com o alcance do logo.
+- **Canal e perfil**: comparações com δ de Cliff e permutação exata quando cada
+  grupo tem 5 ou mais participantes; abaixo disso, descritivo. Variáveis que
+  andam juntas na amostra (ex.: canal = tarefa) são avisadas e não são
+  comparadas como causa.
+- **IA**: relatório rápido ou aprofundado (leitura estatística + estratégica),
+  histórico com aviso quando os dados mudaram, chat sobre a análise e envio à
+  base de conhecimento só por clique. A IA recebe as métricas calculadas, nunca
+  os dados brutos.
+- **Exportar**: PDF (relatório), PPTX (gráficos nativos editáveis) e Excel para
+  Power BI, sempre no recorte da página. Cada download vai para o `audit_log`.
+
+### Excel para Power BI
+
+Uma aba por tabela, em formato longo. As tabelas de dados (`Gravacoes`,
+`Olhar_AOI`, `Olhar_AOI_bruto`, `Catalogo_AOI`, `Agregados_Grupo`) vão
+completas, com a situação de cada gravação; as de métricas seguem o recorte,
+descrito na aba `Projeto`. A aba `Dicionario` explica cada coluna.
+
+```text
+Participantes[participant] ── Gravacoes[participant]
+Lojas[store] ──────────────── Gravacoes[store]
+Gravacoes[recording_key]
+  ├── Olhar_AOI[recording_key]
+  ├── Olhar_AOI_bruto[recording_key]
+  ├── Marca_por_Gravacao[recording_key]
+  ├── Resumo_Gravacao[recording_key]
+  └── Qualidade[recording_key]
+Catalogo_AOI[aoi_key]
+  ├── Olhar_AOI[aoi_key]
+  └── Agregados_Grupo[aoi_key]
+Analises_IA[id] ── Citacoes[analysis_id]
+```
+
+### Recomendações para os próximos estudos
+
+- Exportar sempre em segundos, ou registrar a unidade de cada export.
+- Codificar ou excluir explicitamente cada gravação, sem deixar linhas zeradas.
+- Exportar Embalagens também por participante, e as sequências de AOI.
+- Não editar os agregados `TODOS` à mão.
+- Padronizar nomes: `DSP`/`DGSP`, `JEstimulada`/`Estimulada`, `Assai`/`ASSAI`.
+- Documentar o "Tempo" e o alvo da tarefa estimulada, e registrar os facings
+  por marca e loja (o índice de presença usa o número de AOIs como aproximação).
+- Separar canal e tarefa no desenho: no 1060 eles coincidem e a comparação
+  entre canais não isola nenhum dos dois.
+- Conferir a taxa do rastreador antes de cada sessão (houve gravação a ~13 Hz).
 
 ## Deploy
 
@@ -75,8 +178,8 @@ segredos no ambiente de implantação ou em um `.env` ignorado pelo Git.
 
 ### Banco de dados
 
-Por padrão, autenticação e dados de Prosódia usam `prosodia.db` dentro de
-`nenc-dashboard`. Em produção, configure um caminho persistente e acessível ao
+Por padrão, autenticação e dados de Prosódia e da Jornada de Compra usam
+`prosodia.db` dentro de `nenc-dashboard`. Em produção, configure um caminho persistente e acessível ao
 processo com:
 
 ```text

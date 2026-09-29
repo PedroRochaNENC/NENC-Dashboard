@@ -16,6 +16,7 @@ from utils.jornada_ingest import (
     detect_kind,
     frames_summary,
     frames_timestamps,
+    legacy_tabelas_csv,
     normalize_participant,
     parse_duration_text,
     parse_recording_filename,
@@ -142,6 +143,33 @@ class DetectionTests(unittest.TestCase):
         interviews = "arquivo;ep;identificacao;texto\na.txt;1;Pt01;Vi a marca\n".encode()
         self.assertEqual(detect_kind("entrevistas.csv", interviews), "interviews")
         self.assertIsNone(detect_kind("notas.csv", b"coluna\nvalor\n"))
+
+
+class LegacyTests(unittest.TestCase):
+    def test_tables_derived_from_the_old_format_are_refused_with_a_way_out(self):
+        content = "Marca;Soma de TotalGazeDuration\nA;1,5\n".encode("utf-8")
+        for name in ("Banco_PorMarca.csv", "Banco_Médias.csv", "Banco_TBVisualShare.csv", "Banco_ANOVA.csv"):
+            parsed = parse_upload(name, content)
+            self.assertFalse(parsed.ok, name)
+            self.assertIn("Banco_Tabelas", parsed.issues[0]["message"])
+        consolidated = parse_upload("Banco_Consolidado.xlsx", b"PK")
+        self.assertIn("repete o Banco_Tabelas", consolidated.issues[0]["message"])
+
+    def test_the_old_saved_table_goes_back_through_the_upload(self):
+        # Como a versao antiga gravava: participante renomeado e decimais ja convertidos.
+        saved = pd.DataFrame({
+            "Participante": ["01-P1.csv", "01-P1.csv"],
+            "AOI": ["Marca A p1", "Marca B"],
+            "TotalGazeDuration": [2.5, 1.0],
+            "NormalizedGazeDuration": [0.1, 0.04],
+            "GazeCount": [2, 1],
+            "TimeToFirstFixation": [3.0, 5.0],
+        })
+        parsed = parse_upload("Banco_Tabelas.csv", legacy_tabelas_csv(saved),
+                              {"task": "livre", "store": "1234"})
+        self.assertEqual(parsed.kind, "legacy_tabelas")
+        self.assertEqual(set(parsed.table["participant"]), {normalize_participant("01-P1")})
+        self.assertEqual(parsed.table["TotalGazeDuration"].tolist(), [2.5, 1.0])
 
 
 class ParseTests(unittest.TestCase):

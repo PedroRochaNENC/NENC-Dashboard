@@ -79,6 +79,12 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm", ".avi")
 TABLE_EXTENSIONS = (".csv", ".tsv", ".txt", ".xlsx", ".xls")
 
+# Tabelas que a versao antiga do modulo derivava do Banco_Tabelas. O app agora
+# calcula share, medias e testes a partir do individual; aceitar estas
+# tabelas prontas misturaria duas contas diferentes para o mesmo numero.
+_LEGACY_DERIVED = re.compile(r"banco_(pormarca|medias|tbvisualshare|anova|consolidado)")
+LEGACY_TABELAS_PARTICIPANT = "Nome da Origem"
+
 # Participante: "Pt04", "PT4", "P04", "Participante 4".
 _PARTICIPANT = re.compile(r"(?i)^p(?:t|art(?:icipante)?)?[\s_-]*0*(\d{1,4})$")
 # Nome de gravação: "Pt04-JEstimulada-ASSAI", "Pt01-Emb-DSP2250-out".
@@ -337,12 +343,14 @@ def detect_kind(filename: str, content: bytes) -> Optional[str]:
     folded = {fold(column) for column in columns}
     if {"frame", "timestamp"} <= folded:
         return "gaze_frames"
+    # Antes da regra do Blickshift: o Banco_Tabelas tambem traz AOI e
+    # TotalGazeDuration, e sem participante seria lido como agregado.
+    if "nome da origem" in folded:
+        return "legacy_tabelas"
     if "aoi" in folded and "totalgazeduration" in folded:
         if suffix in (".xlsx", ".xls"):
             return "bs_enriched_xlsx"
         return "bs_individual_or_pooled"
-    if "nome da origem" in folded:
-        return "legacy_tabelas"
     if {"texto"} <= folded and ({"identificacao"} & folded or {"arquivo"} & folded):
         return "interviews"
     return None
@@ -594,6 +602,17 @@ def _parse_interviews(parsed: ParsedFile, frame: pd.DataFrame) -> None:
     parsed.meta.update(n_rows=int(len(table)))
 
 
+def legacy_tabelas_csv(frame: pd.DataFrame) -> bytes:
+    """Banco_Tabelas gravado pela versao antiga, de volta ao formato que o upload le.
+
+    A versao antiga renomeava "Nome da Origem" para "Participante" ao gravar;
+    aqui o nome volta, para o arquivo baixado poder ser enviado em Uploads.
+    """
+
+    out = frame.rename(columns={"Participante": LEGACY_TABELAS_PARTICIPANT})
+    return out.to_csv(index=False).encode("utf-8-sig")
+
+
 def _parse_legacy(parsed: ParsedFile, frame: pd.DataFrame, overrides: Dict) -> None:
     """Banco_Tabelas: "Nome da Origem" e o participante; tarefa e loja vem da previa."""
 
@@ -616,6 +635,15 @@ def parse_upload(filename: str, content: bytes, overrides: Optional[Dict] = None
         return parsed
     if not content:
         parsed.error("Arquivo vazio.")
+        return parsed
+    derived = _LEGACY_DERIVED.search(fold(PurePath(str(filename)).stem).replace(" ", "_"))
+    if derived and not overrides.get("kind"):
+        if derived.group(1) == "consolidado":
+            parsed.error("O Banco_Consolidado repete o Banco_Tabelas em outro formato: envie o "
+                         "Banco_Tabelas.csv.")
+        else:
+            parsed.error("Tabela derivada do formato antigo: o app calcula share, médias e testes "
+                         "a partir do Banco_Tabelas. Envie o Banco_Tabelas.csv.")
         return parsed
     kind = overrides.get("kind") or detect_kind(filename, content)
     try:
