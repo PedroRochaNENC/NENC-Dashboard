@@ -29,6 +29,7 @@ from utils.jornada_ingest import TASK_LABELS
 from utils.jornada_metrics import ALL_STORES
 from utils.jornada_model import RECORDING_STATUS_LABELS
 from utils.jornada_pdf import build_pdf
+from utils.jornada_pptx import build_pptx
 from utils.jornada_quality import run_quality
 from utils.jornada_ui import active_project, fmt_number, fmt_pct, fmt_seconds
 
@@ -492,9 +493,10 @@ else:
     st.subheader("Exportar")
     st.markdown("**Recorte:** {}".format(filters_text(filters, model)))
     st.caption(
-        "As métricas seguem o recorte acima. O PDF é o relatório para leitura; o Excel leva "
-        "também as tabelas completas de gravações, olhar e catálogo, com as chaves para "
-        "relacionar no Power BI e um dicionário das colunas."
+        "As métricas seguem o recorte acima. O PDF é o relatório para leitura; o PPTX traz os "
+        "mesmos números em gráficos editáveis; o Excel leva também as tabelas completas de "
+        "gravações, olhar e catálogo, com as chaves para relacionar no Power BI e um dicionário "
+        "das colunas."
     )
     analyses = jornada_db.list_analyses(project_id)
     chosen_analysis = None
@@ -506,7 +508,7 @@ else:
             index=1,
             format_func=lambda aid: "Nenhuma" if aid is None else _analysis_label(analyses_by_id[aid]),
             key="jc_export_analysis",
-            help="Entra no fim do PDF. O Excel leva todas as análises salvas.",
+            help="Entra no fim do PDF e da apresentação. O Excel leva todas as análises salvas.",
         )
         chosen_analysis = analyses_by_id.get(chosen_id)
     # Arquivos valem para um recorte, uma versao dos dados e as analises da vez.
@@ -524,6 +526,7 @@ else:
                 quality = run_quality(model, project)
                 media = jornada_db.list_media(project_id)
                 pdf, pdf_name = build_pdf(project, model, metrics, analysis=chosen_analysis, quality=quality)
+                pptx, pptx_name = build_pptx(project, model, metrics, analysis=chosen_analysis, quality=quality)
                 excel, excel_name = build_excel(
                     project, model, metrics, quality=quality, analyses=analyses, media=media,
                 )
@@ -536,6 +539,13 @@ else:
                         "data": pdf,
                         "name": pdf_name,
                         "mime": "application/pdf",
+                    },
+                    {
+                        "kind": "pptx",
+                        "label": "Apresentação PPTX",
+                        "data": pptx,
+                        "name": pptx_name,
+                        "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     },
                     {
                         "kind": "excel",

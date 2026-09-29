@@ -23,7 +23,7 @@ INK = (11, 11, 11)
 SECONDARY = (82, 81, 78)
 MUTED = (137, 135, 129)
 RULE = (225, 224, 217)
-ACCENT = (74, 58, 167)  # violeta: marca foco e destaques
+ACCENT = (93, 82, 148)  # violeta NENC (accent-700): marca foco e destaques
 BASE_BAR = (163, 166, 179)  # cinza: as demais barras
 
 PAGE_WIDTH = 210.0
@@ -347,7 +347,7 @@ def simple_table(
     if not rows:
         return
     align = list(align or [
-        "R" if _numeric_column([row[index] for row in rows]) else "L" for index in range(len(headers))
+        "R" if numeric_column([row[index] for row in rows]) else "L" for index in range(len(headers))
     ])
     line_height = row_height * 0.78
 
@@ -392,7 +392,7 @@ def simple_table(
 _NUMBER = re.compile(r"^[-+]?[\d.,]+\s?(%|s|×|x)?$")
 
 
-def _numeric_column(values: Sequence) -> bool:
+def numeric_column(values: Sequence) -> bool:
     """Coluna de números: todos os valores preenchidos parecem número (—, vazio não contam)."""
     filled = [sanitize(value).strip() for value in values]
     filled = [value for value in filled if value not in ("", "—", "-")]

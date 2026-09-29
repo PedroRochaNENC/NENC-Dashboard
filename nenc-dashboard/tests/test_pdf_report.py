@@ -34,9 +34,9 @@ class SanitizeTests(unittest.TestCase):
         self.assertEqual(pdf_report.sanitize(float("nan")), "")
 
     def test_numeric_columns_align_right(self):
-        self.assertTrue(pdf_report._numeric_column(["43%", "1,5", "—", 6, "8,5 s"]))
-        self.assertFalse(pdf_report._numeric_column(["Always", "43%"]))
-        self.assertFalse(pdf_report._numeric_column(["—", ""]))
+        self.assertTrue(pdf_report.numeric_column(["43%", "1,5", "—", 6, "8,5 s"]))
+        self.assertFalse(pdf_report.numeric_column(["Always", "43%"]))
+        self.assertFalse(pdf_report.numeric_column(["—", ""]))
 
 
 class PieceTests(unittest.TestCase):
