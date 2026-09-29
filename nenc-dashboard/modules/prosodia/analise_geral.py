@@ -43,16 +43,12 @@ from utils.prosodia_prompts import (
     build_project_user_prompt,
 )
 from utils.ai_provider import (
-    PROVIDER_ENV_KEYS,
-    PROVIDER_LABELS,
     PROVIDER_OPENAI,
     add_document_to_vector_store,
-    available_models,
     chat_completion,
-    format_model_option,
+    generate_analysis,
     get_openai_client,
     get_prosodia_vector_store_id,
-    unavailable_providers,
     create_analysis as ai_create_analysis,
 )
 from utils.kb_attributes import build_kb_filter, project_document
@@ -822,65 +818,12 @@ with st.sidebar:
     analysis_mode = st.radio("Modo de analise", ["Rapida (1 chamada)", "Aprofundada (2 etapas)"])
     use_kb = st.checkbox("Usar Base de Conhecimento", value=True)
     # Um unico seletor para todos os provedores; as chaves ficam no .env.
-    model_options = available_models()
-    if model_options:
-        ai_provider_id, ai_model = st.selectbox(
-            "Modelo de IA",
-            model_options,
-            format_func=format_model_option,
-            key="prj_ai_model",
-        )
-        if use_kb and ai_provider_id != PROVIDER_OPENAI:
-            st.caption("A Base de Conhecimento só é consultada com modelos OpenAI.")
-    else:
-        ai_provider_id, ai_model = None, None
-        st.warning(
-            "Nenhum provedor de IA configurado. Defina OPENAI_API_KEY, "
-            "GROQ_API_KEY ou ANTHROPIC_API_KEY no .env e reinicie o app."
-        )
-    missing = unavailable_providers()
-    if model_options and missing:
-        st.caption(
-            "Indisponível: "
-            + ", ".join(
-                f"{PROVIDER_LABELS[p]} (defina {PROVIDER_ENV_KEYS[p]} no .env)"
-                for p in missing
-            )
-        )
+    ai_provider_id, ai_model = ui.ai_model_selector("prj_ai_model", use_kb=use_kb)
 
 
-def _run_ai(
-    system_prompt: str,
-    user_prompt: str,
-    temperature: float,
-    max_tokens: int,
-    vector_store_id: str | None = None,
-    kb_filter: dict | None = None,
-) -> dict:
-    """Chama o modelo escolhido no seletor, no formato de `create_analysis`.
-
-    So a OpenAI tem busca na base de conhecimento; nos demais provedores a
-    busca aparece como nao usada, e nao como "o modelo ignorou a base".
-    """
-    if ai_provider_id == PROVIDER_OPENAI:
-        return ai_create_analysis(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            model=ai_model,
-            vector_store_id=vector_store_id,
-            kb_filter=kb_filter,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-    text = chat_completion(
-        ai_provider_id,
-        ai_model,
-        system_prompt,
-        [{"role": "user", "content": user_prompt}],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return {"text": text, "citations": [], "search": {"available": False}}
+def _run_ai(**kwargs) -> dict:
+    """Chama o modelo escolhido no seletor (ver `generate_analysis`)."""
+    return generate_analysis(ai_provider_id, ai_model, **kwargs)
 
 
 # ------------------------------------------------------------------

@@ -473,5 +473,68 @@ class AvailableModelsTests(unittest.TestCase):
             self.assertEqual(ai_provider._configured_key("GROQ_API_KEY"), "gsk_real")
 
 
+class GenerateAnalysisTests(unittest.TestCase):
+    def test_openai_keeps_going_through_create_analysis(self):
+        with patch.object(
+            ai_provider, "create_analysis", return_value={"text": "ok"}
+        ) as create:
+            ai_provider.generate_analysis(
+                ai_provider.PROVIDER_OPENAI, "gpt-4.1", "s", "u",
+                vector_store_id="vs_1", kb_filter={"k": "v"},
+            )
+
+        kwargs = create.call_args.kwargs
+        self.assertEqual(kwargs["model"], "gpt-4.1")
+        self.assertEqual(kwargs["vector_store_id"], "vs_1")
+        self.assertEqual(kwargs["kb_filter"], {"k": "v"})
+
+    def test_other_providers_report_the_base_as_not_used(self):
+        with patch.object(ai_provider, "chat_completion", return_value="texto") as chat:
+            result = ai_provider.generate_analysis(
+                ai_provider.PROVIDER_ANTHROPIC, "claude-sonnet-5-5", "s", "u",
+                vector_store_id="vs_1",
+            )
+
+        self.assertEqual(result["text"], "texto")
+        self.assertEqual(result["citations"], [])
+        self.assertFalse(result["search"]["available"])
+        self.assertEqual(chat.call_args.args[3], [{"role": "user", "content": "u"}])
+
+
+class CoverageClientTests(unittest.TestCase):
+    def test_openai_uses_the_cheap_model_and_others_the_selected_one(self):
+        openai_client, groq_client = object(), object()
+        clients = {
+            ai_provider.PROVIDER_OPENAI: openai_client,
+            ai_provider.PROVIDER_GROQ: groq_client,
+        }
+
+        with patch.object(ai_provider, "get_provider_client", side_effect=clients.get):
+            self.assertEqual(
+                ai_provider.coverage_client(ai_provider.PROVIDER_OPENAI, "gpt-4o"),
+                (openai_client, "gpt-4.1-mini"),
+            )
+            self.assertEqual(
+                ai_provider.coverage_client(ai_provider.PROVIDER_GROQ, "llama"),
+                (groq_client, "llama"),
+            )
+            self.assertEqual(
+                ai_provider.coverage_client(ai_provider.PROVIDER_ANTHROPIC, "claude"),
+                (None, None),
+            )
+        self.assertEqual(ai_provider.coverage_client(None, None), (None, None))
+
+    def test_question_coverage_accepts_a_claude_client(self):
+        from utils import prosodia_quality
+
+        client = _AnthropicClient([_TextBlock("[]")])
+        prosodia_quality._coverage_ai_batch("transcricao", ["Pergunta?"], client, "claude-sonnet-5-5")
+
+        kwargs = client.messages.kwargs
+        self.assertEqual(kwargs["model"], "claude-sonnet-5-5")
+        self.assertEqual(kwargs["system"], prosodia_quality.COVERAGE_SYSTEM_PROMPT)
+        self.assertNotIn("temperature", kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()

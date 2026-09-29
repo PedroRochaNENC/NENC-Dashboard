@@ -41,9 +41,10 @@ from utils.prosodia_quality import (
 from utils.prosodia_prompts import get_prosodia_system_prompt, build_prosodia_user_prompt
 from utils.ai_provider import (
     add_document_to_vector_store,
+    coverage_client,
+    generate_analysis,
     get_openai_client,
     get_prosodia_vector_store_id,
-    create_analysis as ai_create_analysis,
 )
 from utils.kb_attributes import build_kb_filter, project_document
 from utils.organization_data import claim_external_resource
@@ -117,16 +118,8 @@ with uc3:
 
 # Configuração de modelo para análise automática
 with st.expander("Configurações de análise automática", expanded=False):
-    groq_key = st.text_input(
-        "Chave API Groq (análise automática sem OpenAI)",
-        type="password",
-        key="au_groq_key",
-    )
-    auto_model = st.selectbox(
-        "Modelo de análise",
-        ["gpt-4.1-mini", "gpt-4.1", "gpt-4o", "llama-3.3-70b-versatile"],
-        key="au_model",
-    )
+    # Um unico seletor para todos os provedores; as chaves ficam no .env.
+    ai_provider_id, ai_model = ui.ai_model_selector("au_ai_model", use_kb=True)
 
 if json_files or csv_files or sinc_files:
     if st.button("Processar e Salvar Uploads", type="primary"):
@@ -136,19 +129,9 @@ if json_files or csv_files or sinc_files:
         system_prompt = get_prosodia_system_prompt(tipo_projeto)
         thresholds = thresholds_for_project(project)
         openai_client = get_openai_client()
-        groq_client = None
-
-        # Tentar cliente Groq como fallback
-        if not openai_client and groq_key:
-            try:
-                from groq import Groq
-                groq_client = Groq(api_key=groq_key)
-            except Exception:
-                pass
-
-        ai_client = openai_client or groq_client
+        ai_client, coverage_model = coverage_client(ai_provider_id, ai_model)
         vs_id = get_prosodia_vector_store_id()
-        model = auto_model
+        model = ai_model
 
         # Indexar arquivos por session_id
         json_by_sid = {_session_id_from_name(f.name): f for f in (json_files or [])}
@@ -259,33 +242,20 @@ if json_files or csv_files or sinc_files:
 
             analysis_result = {"text": "", "citations": []}
             try:
-                if openai_client:
+                if ai_provider_id:
                     user_prompt = build_prosodia_user_prompt(
                         tables_text, proj_ctx, transcript_sample
                     )
-                    analysis_result = ai_create_analysis(
+                    analysis_result = generate_analysis(
+                        ai_provider_id,
+                        ai_model,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
-                        model="gpt-4.1-mini",
                         vector_store_id=vs_id,
                         kb_filter=build_kb_filter(project_id),
                         temperature=0.5,
                         max_tokens=3000,
                     )
-                elif ai_client:
-                    user_prompt = build_prosodia_user_prompt(
-                        tables_text, proj_ctx, transcript_sample
-                    )
-                    resp = ai_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.5,
-                        max_tokens=3000,
-                    )
-                    analysis_result = {"text": resp.choices[0].message.content, "citations": []}
             except Exception as e:
                 st.warning(f"[{sid}] Falha na análise de IA: {e}")
 
@@ -308,7 +278,7 @@ if json_files or csv_files or sinc_files:
                 try:
                     coverage_ai = check_question_coverage_ai(
                         transcript_sample, questions, ai_client,
-                        model="llama-3.3-70b-versatile" if groq_client else "gpt-4.1-mini",
+                        model=coverage_model,
                     )
                 except Exception:
                     pass

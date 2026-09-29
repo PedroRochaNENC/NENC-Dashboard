@@ -192,6 +192,62 @@ def chat_completion(
     return response.choices[0].message.content or ""
 
 
+def generate_analysis(
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.5,
+    max_tokens: int = 4000,
+    vector_store_id: str | None = None,
+    kb_filter: dict | None = None,
+) -> dict:
+    """Analise no modelo escolhido, sempre no formato de `create_analysis`.
+
+    OpenAI passa por `create_analysis`, o unico caminho com busca na base de
+    conhecimento. Nos demais provedores a busca aparece como nao usada, e nao
+    como "o modelo ignorou a base".
+    """
+
+    if provider == PROVIDER_OPENAI:
+        return create_analysis(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            vector_store_id=vector_store_id,
+            kb_filter=kb_filter,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    text = chat_completion(
+        provider,
+        model,
+        system_prompt,
+        [{"role": "user", "content": user_prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return {"text": text, "citations": [], "search": {"available": False}}
+
+
+# A cobertura de perguntas e uma classificacao simples e roda em lote: na
+# OpenAI ela sempre usou o modelo barato, qualquer que fosse o da analise.
+_OPENAI_COVERAGE_MODEL = "gpt-4.1-mini"
+
+
+def coverage_client(provider: str | None, model: str | None):
+    """(cliente, modelo) para `check_question_coverage_ai`, ou (None, None)."""
+
+    if not provider:
+        return None, None
+    client = get_provider_client(provider)
+    if client is None:
+        return None, None
+    if provider == PROVIDER_OPENAI:
+        return client, _OPENAI_COVERAGE_MODEL
+    return client, model
+
+
 def get_vector_store_id() -> str | None:
     """Return the Jornada vector store owned by the active organization."""
 

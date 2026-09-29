@@ -18,9 +18,9 @@ from utils import auth
 auth.require_module("teste_sensorial")
 
 import pandas as pd
-from groq import Groq
 
 from utils import ui
+from utils.ai_provider import PROVIDER_GROQ, generate_analysis
 from utils.charts import (
     create_average_by_etapa,
     create_perifericos_by_etapa,
@@ -166,11 +166,10 @@ with st.sidebar:
                     perifericos["Codigo"].astype(str) == selected_codigo
                 ]
 
-    api_key = st.text_input(
-        "Chave da API Groq",
-        type="password",
-        key="ts_groq_key",
-        help="Obtenha gratuitamente em console.groq.com/keys",
+    # Um unico seletor para todos os provedores; as chaves ficam no .env.
+    # Groq vem selecionado: era o unico provedor destas telas.
+    ai_provider_id, ai_model = ui.ai_model_selector(
+        "ts_ai_model", default_provider=PROVIDER_GROQ
     )
 
 # Etapas: faixa acima do gráfico, filtro e legenda temporal ao mesmo tempo
@@ -310,10 +309,10 @@ if peripheral_summary is not None:
         peripheral_summary, "Periféricos (média ± std por Etapa)"
     )
 
-if not api_key:
+if not ai_provider_id:
     st.caption(
-        "Insira a chave da API Groq na barra lateral para habilitar a "
-        "análise automática. Obtenha gratuitamente em console.groq.com/keys."
+        "Configure uma chave de API no .env (OPENAI_API_KEY, GROQ_API_KEY "
+        "ou ANTHROPIC_API_KEY) para habilitar a análise automática."
     )
 elif not tables_text.strip():
     st.warning("Nenhum dado disponível para análise.")
@@ -340,16 +339,14 @@ elif st.button("Gerar análise", key="btn_ai_ts", type="primary"):
 
     with st.spinner("Gerando análise..."):
         try:
-            client = Groq(api_key=api_key)
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+            result = generate_analysis(
+                ai_provider_id,
+                ai_model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 temperature=0.5,
                 max_tokens=2048,
             )
-            st.markdown(response.choices[0].message.content)
+            st.markdown(result["text"])
         except Exception as error:
             st.error("Erro ao chamar a API: {}".format(error))
