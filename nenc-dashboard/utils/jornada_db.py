@@ -464,7 +464,9 @@ def _check_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
     clean: Dict[str, Any] = {}
     for key, value in fields.items():
         if key == "settings_json" and isinstance(value, dict):
-            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            # Sem ordenar chaves: a ordem dos atributos e dos grupos e a que a
+            # equipe escreveu, e aparece assim nas telas.
+            value = json.dumps(value, ensure_ascii=False)
         if key == "quality_thresholds" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False, sort_keys=True)
         if isinstance(value, str) and key not in ("settings_json", "quality_thresholds"):
