@@ -22,3 +22,7 @@ plan-prosodiaEyeTracking.prompt.prompt.md
 # entrevista, e megabytes — em uma camada.
 *.db
 *.sqlite3
+
+# Videos da Jornada vivem no volume ./data (ou NENC_MEDIA_DIR), nunca na imagem.
+jornada_media
+static/video_*

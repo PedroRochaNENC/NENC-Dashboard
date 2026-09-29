@@ -3,3 +3,7 @@ static/audio_*.wav
 __pycache__/
 *.db
 .env
+# Videos da Jornada de Compra (volume de dados) e copias temporarias servidas
+jornada_media/
+static/video_*.mp4
+static/video_*.mp4.part
