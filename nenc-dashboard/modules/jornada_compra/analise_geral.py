@@ -23,6 +23,8 @@ pode_editar = auth.can_write(user)
 
 from utils import jornada_charts as charts
 from utils import jornada_db
+from utils.ai_provider import get_openai_client, get_vector_store_id
+from utils.jornada_ai import AI_MODELS, chat_answer, generate_analysis, send_analysis_to_kb
 from utils.jornada_cache import get_project_metrics, get_project_model
 from utils.jornada_export import build_excel, filters_text
 from utils.jornada_ingest import TASK_LABELS
@@ -316,13 +318,17 @@ elif section == "Navegação e decisão":
                 "Catálogo de AOIs.")
     for dimension, values in dimensions.items():
         st.markdown("**{}**".format(dimension.capitalize()))
-        st.caption("Fração da atenção entre os produtos em que o atributo aparece no nome da AOI.")
+        st.caption("Fração da atenção entre os produtos em que o atributo aparece no nome da AOI. "
+                   "Compare com a presença do valor na gôndola (na tabela): índice acima de 1 "
+                   "é atenção além do espaço que o valor ocupa.")
         st.plotly_chart(charts.attribute_stacked(attributes, dimension, values), width="stretch")
     _table(
         attributes,
         {"cell": "Célula", "dimension": "Atributo", "value": "Valor", "n_defined": "n",
-         "share_mean": "Share", "reach": "Alcance"},
-        {"share_mean": fmt_pct, "reach": fmt_pct},
+         "share_mean": "Share", "reach": "Alcance", "presence": "Presença na gôndola",
+         "presence_index": "Índice"},
+        {"share_mean": fmt_pct, "reach": fmt_pct, "presence": fmt_pct,
+         "presence_index": lambda v: fmt_number(v, 2)},
         key="jc_tab_attr",
     )
 
@@ -481,10 +487,175 @@ elif section == "Amostra e qualidade":
     st.caption("Qualidade de cada gravação, com as checagens, em **Participantes**.")
 
 # ==================================================================
-# IA (passo seguinte)
+# IA
 # ==================================================================
 elif section == "IA":
-    st.info("A análise por IA entra no próximo passo.")
+    analyses = jornada_db.list_analyses(project_id)
+    # Em "Todas as organizações" a base resolvida seria a de quem está logado,
+    # não a do projeto: a busca fica desligada.
+    kb_store = get_vector_store_id() if auth.active_organization_id(user) else None
+    st.subheader("Análise por IA")
+    st.caption(
+        "A IA recebe o contexto do projeto e as métricas do recorte — não os dados brutos — e "
+        "responde às perguntas do estudo com esses números. As contas são do app; a leitura é da IA."
+    )
+    use_kb = False
+    if pode_editar:
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1.4, 1.2, 1.6], vertical_alignment="bottom")
+            mode_label = c1.segmented_control(
+                "Modo",
+                ["Rápida", "Aprofundada"],
+                default="Rápida",
+                key="jc_ai_mode",
+                help="Rápida: uma chamada. Aprofundada: leitura estatística das tabelas e, depois, "
+                     "interpretação estratégica (duas chamadas, mais demorada).",
+            ) or "Rápida"
+            ai_model = c2.selectbox("Modelo", AI_MODELS, key="jc_ai_model")
+            use_kb = c3.toggle(
+                "Usar a base de conhecimento",
+                value=bool(kb_store),
+                disabled=not kb_store,
+                key="jc_ai_kb",
+                help="Busca na literatura da organização e no material deste projeto.",
+            ) and bool(kb_store)
+            if not auth.active_organization_id(user):
+                st.caption("Em “Todas as organizações” a base fica desligada: a busca iria à base da sua "
+                           "organização, não à do projeto.")
+            elif not kb_store:
+                st.caption("A base de conhecimento da Jornada não está configurada nesta organização.")
+            st.caption("Recorte enviado: {}".format(filters_text(filters, model)))
+            if st.button("Gerar análise", type="primary", key="jc_ai_generate"):
+                if get_openai_client() is None:
+                    st.error("A OpenAI não está configurada: defina OPENAI_API_KEY no .env e reinicie o app.")
+                else:
+                    mode = "rapida" if mode_label == "Rápida" else "aprofundada"
+                    try:
+                        with st.spinner("Gerando a análise {}…".format(mode_label.lower())):
+                            result = generate_analysis(
+                                project, model, metrics,
+                                mode=mode,
+                                ai_model=ai_model,
+                                recorte=filters_text(filters, model),
+                                quality=run_quality(model, project),
+                                interviews=jornada_db.list_interviews(project_id),
+                                vector_store_id=kb_store if use_kb else None,
+                            )
+                        if not result["text"].strip():
+                            st.error("A IA não devolveu texto. Tente de novo.")
+                        else:
+                            new_id = jornada_db.save_analysis(
+                                project_id,
+                                model=ai_model,
+                                mode=mode,
+                                analysis_text=result["text"],
+                                citations=result["citations"],
+                                search=result["search"],
+                                filters=filters,
+                                data_version=project.get("data_version"),
+                            )
+                            # O seletor ainda não existe nesta execução: dá para apontar a nova.
+                            st.session_state["jc_ai_pick"] = new_id
+                            st.rerun()
+                    except Exception as error:
+                        st.error("Não foi possível gerar a análise: {}".format(error))
+
+    if not analyses:
+        st.info("Nenhuma análise gerada ainda."
+                + (" Escolha o modo e clique em **Gerar análise**." if pode_editar else ""))
+    else:
+        analyses_by_id = {a["id"]: a for a in analyses}
+        if st.session_state.get("jc_ai_pick") not in analyses_by_id:
+            st.session_state["jc_ai_pick"] = analyses[0]["id"]
+        chosen_id = st.selectbox(
+            "Análise",
+            list(analyses_by_id),
+            format_func=lambda aid: _analysis_label(analyses_by_id[aid]),
+            key="jc_ai_pick",
+        )
+        analysis = analyses_by_id[chosen_id]
+        analysis_recorte = filters_text(analysis.get("filters"), model)
+        if analysis.get("data_version") is not None and analysis["data_version"] != project.get("data_version"):
+            st.warning(
+                "Os dados do projeto mudaram depois desta análise (arquivos, exclusões ou ajustes): os "
+                "números dela podem não bater com as seções atuais. {}".format(
+                    "Gere uma nova para atualizar." if pode_editar
+                    else "Peça uma análise nova a quem edita o projeto.")
+            )
+        st.caption("Recorte da análise: {}".format(analysis_recorte))
+        with st.container(border=True):
+            st.markdown(analysis.get("analysis_text") or "")
+        with st.expander("Referências da base de conhecimento"):
+            ui.knowledge_base_references({"citations": analysis.get("citations"), "search": analysis.get("search")})
+
+        if pode_editar:
+            a1, a2, _ = st.columns([1.4, 1.1, 2.5])
+            if analysis.get("kb_file_id"):
+                a1.caption("Esta análise está na base de conhecimento.")
+            elif a1.button(
+                "Enviar para a base",
+                key="jc_ai_to_kb",
+                disabled=not kb_store,
+                width="stretch",
+                help="Guarda esta análise na base da organização, marcada como análise deste projeto.",
+            ):
+                try:
+                    file_id = send_analysis_to_kb(project, analysis, analysis_recorte, kb_store)
+                    jornada_db.set_analysis_kb_file(project_id, chosen_id, file_id)
+                    st.toast("Análise enviada para a base de conhecimento.")
+                    st.rerun()
+                except Exception as error:
+                    st.error("Não foi possível enviar para a base: {}".format(error))
+            if a2.button("Excluir", key="jc_ai_delete", width="stretch"):
+                st.session_state["jc_ai_confirm"] = chosen_id
+                st.rerun()
+            if st.session_state.get("jc_ai_confirm") == chosen_id:
+                st.warning("Excluir a análise de {}? {}Não dá para desfazer.".format(
+                    str(analysis.get("created_at") or "")[:16],
+                    "A cópia na base de conhecimento também sai. " if analysis.get("kb_file_id") else "",
+                ))
+                y, n, _ = st.columns([1.4, 1.1, 2.5])
+                if y.button("Confirmar exclusão", type="primary", key="jc_ai_delete_yes", width="stretch"):
+                    jornada_db.delete_analyses(project_id, [chosen_id])
+                    for state_key in ("jc_ai_confirm", "jc_ai_pick", "jc_ai_chat_{}".format(chosen_id)):
+                        st.session_state.pop(state_key, None)
+                    st.rerun()
+                if n.button("Cancelar", key="jc_ai_delete_no", width="stretch"):
+                    st.session_state.pop("jc_ai_confirm", None)
+                    st.rerun()
+
+            st.divider()
+            st.markdown("**Perguntas sobre esta análise**")
+            st.caption("A conversa usa o relatório e os achados do recorte da análise e fica só nesta sessão.")
+            chat_key = "jc_ai_chat_{}".format(chosen_id)
+            history = st.session_state.setdefault(chat_key, [])
+            for message in history:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+            if history and st.button("Limpar conversa", key="jc_ai_chat_clear"):
+                st.session_state[chat_key] = []
+                st.rerun()
+            question = st.chat_input("Pergunte sobre esta análise…", key="jc_ai_chat_input")
+            if question:
+                if get_openai_client() is None:
+                    st.error("A OpenAI não está configurada: defina OPENAI_API_KEY no .env e reinicie o app.")
+                else:
+                    history.append({"role": "user", "content": question})
+                    try:
+                        with st.spinner("Pensando…"):
+                            answer = chat_answer(
+                                analysis.get("analysis_text") or "",
+                                get_project_metrics(project, analysis.get("filters") or {}),
+                                history,
+                                ai_model=analysis.get("model") or AI_MODELS[0],
+                                project_id=project_id,
+                                vector_store_id=kb_store if use_kb else None,
+                            )
+                        history.append({"role": "assistant", "content": answer})
+                        st.rerun()
+                    except Exception as error:
+                        history.pop()
+                        st.error("Não foi possível responder: {}".format(error))
 
 # ==================================================================
 # Exportar

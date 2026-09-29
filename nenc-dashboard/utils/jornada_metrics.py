@@ -433,11 +433,32 @@ def price_table(gaze: pd.DataFrame, recordings: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
-def attribute_table(gaze: pd.DataFrame, recordings: pd.DataFrame, dimensions: Sequence[str]) -> pd.DataFrame:
-    """Fração da atenção por valor de atributo, entre as AOIs em que ele existe."""
+def _attribute_presence(catalog: Optional[pd.DataFrame], column: str, stores) -> Dict[str, float]:
+    """Fração das AOIs de produto (ou do peso informado) de cada valor do atributo."""
+
+    if catalog is None or catalog.empty or column not in catalog:
+        return {}
+    rows = catalog[catalog["store"].isin(stores) & (catalog["kind"] == "produto")
+                   & catalog["include"].astype(bool) & (catalog[column].fillna("") != "")]
+    if rows.empty:
+        return {}
+    manual = rows["shelf_weight"].notna().any()
+    weight = rows["shelf_weight"].fillna(1.0) if manual else pd.Series(1.0, index=rows.index)
+    totals = weight.groupby(rows[column]).sum()
+    return (totals / totals.sum()).to_dict() if totals.sum() else {}
+
+
+def attribute_table(gaze: pd.DataFrame, recordings: pd.DataFrame, dimensions: Sequence[str],
+                    catalog: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """Fração da atenção por valor de atributo, entre as AOIs em que ele existe.
+
+    A presença de cada valor na gôndola vem do catálogo, como a das marcas: um
+    valor com mais produtos expostos tende a levar mais atenção, e o índice
+    (share ÷ presença) separa atração de espaço ocupado.
+    """
 
     columns = ["task", "store", "store_label", "cell", "dimension", "value", "n", "n_defined",
-               "share_mean", "reach"]
+               "share_mean", "reach", "presence", "presence_index"]
     rows = []
     products = gaze[gaze["kind"] == "produto"] if not gaze.empty else gaze
     for dimension in dimensions:
@@ -457,13 +478,20 @@ def attribute_table(gaze: pd.DataFrame, recordings: pd.DataFrame, dimensions: Se
             per["fraction"] = per["share"] / totals.where(totals > 0)
             counted = per[totals > 0]
             n_defined = counted["recording_key"].nunique()
+            stores = (set(recordings.loc[recordings["recording_key"].isin(cell["keys"]), "store"])
+                      if cell["store"] == ALL_STORES else {cell["store"]})
+            presence = _attribute_presence(catalog, column, stores)
             for value, rows_v in per.groupby(column):
+                share = rows_v.loc[rows_v["recording_key"].isin(counted["recording_key"]), "fraction"].mean()
+                weight = presence.get(value, math.nan)
                 rows.append({
                     "task": cell["task"], "store": cell["store"], "store_label": cell["store_label"],
                     "cell": cell["cell"], "dimension": dimension, "value": value, "n": cell["n"],
                     "n_defined": n_defined,
-                    "share_mean": rows_v.loc[rows_v["recording_key"].isin(counted["recording_key"]), "fraction"].mean(),
+                    "share_mean": share,
                     "reach": rows_v.loc[rows_v["looked"], "recording_key"].nunique() / cell["n"],
+                    "presence": weight,
+                    "presence_index": share / weight if weight and weight == weight else math.nan,
                 })
     return pd.DataFrame(rows, columns=columns)
 
@@ -707,9 +735,25 @@ def generate_findings(metrics: Dict, focus_brand: str = "") -> List[Dict]:
             ranked = rows.dropna(subset=["share_mean"]).sort_values("share_mean", ascending=False)
             if not ranked.empty:
                 top = ranked.iloc[0]
-                add("navegacao", "{} concentra {} da atenção entre os produtos com {} definido em {} (n={}).".format(
-                    top["value"], _pct(top["share_mean"]), dimension, cell, int(top["n_defined"])),
-                    cell, int(top["n_defined"]), top["share_mean"])
+                presence = top.get("presence", math.nan)
+                index = top.get("presence_index", math.nan)
+                if presence == presence and presence and index == index:
+                    if index >= 1.2:
+                        reading = "acima do espaço que ocupa"
+                    elif index <= 0.8:
+                        reading = "abaixo do espaço que ocupa"
+                    else:
+                        reading = "proporcional ao espaço que ocupa"
+                    add("navegacao", "{} concentra {} da atenção entre os produtos com o atributo {} em {} e "
+                        "ocupa {} das AOIs desses produtos: atenção {} (índice {}; n={}).".format(
+                            top["value"], _pct(top["share_mean"]), dimension, cell, _pct(presence), reading,
+                            _num(index, 2), int(top["n_defined"])),
+                        cell, int(top["n_defined"]), top["share_mean"])
+                else:
+                    add("navegacao", "{} concentra {} da atenção entre os produtos com o atributo {} em {} "
+                        "(n={}).".format(top["value"], _pct(top["share_mean"]), dimension, cell,
+                                         int(top["n_defined"])),
+                        cell, int(top["n_defined"]), top["share_mean"])
 
     packaging = metrics.get("packaging", {}).get("elements", pd.DataFrame())
     if isinstance(packaging, pd.DataFrame) and not packaging.empty:
@@ -831,7 +875,7 @@ def compute_all(model: Dict, filters: Optional[Dict] = None) -> Dict:
             on="recording_key", how="left") if not per_brand.empty else per_brand,
         "sku": sku_table(gaze, recordings),
         "price": price_table(gaze, recordings),
-        "attributes": attribute_table(gaze, recordings, list((meta.get("dimensions") or {}).keys())),
+        "attributes": attribute_table(gaze, recordings, list((meta.get("dimensions") or {}).keys()), catalog),
         "recording_summary": summary,
         "decision": decision_table(summary),
         "packaging": packaging_tables(pooled, meta.get("element_labels")),

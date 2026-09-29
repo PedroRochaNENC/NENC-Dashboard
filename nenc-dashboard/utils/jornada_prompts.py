@@ -61,7 +61,9 @@ marca; empates dividem o crédito.
 de 1, a marca rende mais atenção que o espaço que ocupa. A presença pode ser \
 aproximada pelo número de AOIs; nesse caso, trate o índice como indicativo.
 - **Atributos**: fração da atenção por valor (ex.: Diurno × Noturno), entre os \
-produtos em que o atributo existe.
+produtos em que o atributo existe. Um valor com mais produtos na gôndola tende a \
+levar mais atenção: compare com a presença e use o índice (share ÷ presença) \
+antes de dizer que um valor atrai mais.
 - **Etiqueta de preço**: alcance e fração do tempo no preço sobre preço + \
 produto, só onde o preço foi mapeado.
 - **Tempo até a decisão**: informado pela equipe para cada participante; descritivo.
@@ -238,6 +240,13 @@ def _sample_section(metrics: Dict, recorte: str, quality: Optional[Dict]) -> str
         lines.append(_table(["Célula", "n"], [[item["cell"], item["n"]] for item in by_cell]))
     if sample.get("pooled_groups"):
         lines.append("Grupos agregados (embalagens): {}".format(", ".join(sample["pooled_groups"])))
+    for confound in metrics.get("confounds") or []:
+        first, second = confound["labels"]
+        lines.append(
+            "ATENÇÃO — {} e {} andam juntos nesta amostra ({}): toda diferença entre valores de "
+            "um é também diferença entre valores do outro. Descreva a diferença entre as "
+            "combinações; não a atribua a {} nem a {}.".format(
+                first, second.lower(), confound["mapping"], first.lower(), second.lower()))
     summary = _frame((quality or {}).get("summary"))
     if not summary.empty and "quality" in summary:
         tally = summary["quality"].value_counts()
@@ -278,9 +287,10 @@ def _navigation_section(metrics: Dict) -> str:
     attributes = _frame(metrics.get("attributes"))
     if not attributes.empty:
         blocks.append("### Atributos\n" + _table(
-            ["Célula", "Atributo", "Valor", "n", "Share", "Alcance"],
+            ["Célula", "Atributo", "Valor", "n", "Share", "Alcance", "Presença na gôndola", "Índice"],
             [[row["cell"], row["dimension"], row["value"], int(row["n_defined"]), _pct(row["share_mean"]),
-              _pct(row["reach"])] for _, row in attributes.iterrows()]))
+              _pct(row["reach"]), _pct(row.get("presence")), _num(row.get("presence_index"), 2)]
+             for _, row in attributes.iterrows()]))
     price = _frame(metrics.get("price"))
     if not price.empty:
         blocks.append("### Etiquetas de preço\n" + _table(

@@ -653,6 +653,17 @@ def _navigation(deck: _Deck, model: Dict, metrics: Dict) -> None:
                     colors, title=str(dimension).capitalize(),
                 )
 
+        if "presence" in attributes:
+            deck.table_slides(
+                "Atributos: atenção × presença na gôndola",
+                ["Célula", "Atributo", "Valor", "n", "Share", "Presença", "Índice"],
+                [[row["cell"], row["dimension"], row["value"], int(row["n_defined"]), _pct(row["share_mean"]),
+                  _pct(row["presence"]), _num(row["presence_index"], 2)] for _, row in attributes.iterrows()],
+                [3.4, 1.6, 1.6, 0.7, 1.3, 1.5, 1.2],
+                subtitle="Índice = share ÷ presença do valor na gôndola: acima de 1, atenção além do espaço "
+                         "que o valor ocupa; perto de 1, proporcional.",
+            )
+
     price = _frame(metrics.get("price"))
     if not price.empty:
         deck.table_slides(

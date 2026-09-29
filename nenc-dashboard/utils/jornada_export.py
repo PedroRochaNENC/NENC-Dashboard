@@ -198,8 +198,8 @@ COLUMN_DESCRIPTIONS = {
     "first_noticed_n": "Participantes que olharam alguma marca.",
     "dwell_mean_s": "Tempo médio por participante, em segundos.",
     "visits_mean": "Visitas médias por participante.",
-    "presence": "Fração da gôndola ocupada pela marca (peso manual ou nº de AOIs).",
-    "presence_index": "Share ÷ presença: acima de 1, a marca rende mais atenção que o espaço.",
+    "presence": "Fração da gôndola ocupada pela marca ou pelo valor do atributo (peso manual ou nº de AOIs).",
+    "presence_index": "Share ÷ presença: acima de 1, rende mais atenção que o espaço que ocupa.",
     "presence_source": "Como a presença foi medida.",
     # por gravacao
     "share": "Fração da atenção às marcas que a marca levou nesta gravação.",

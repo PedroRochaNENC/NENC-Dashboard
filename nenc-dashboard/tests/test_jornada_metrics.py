@@ -12,6 +12,7 @@ import unittest
 import pandas as pd
 
 from utils.jornada_metrics import (
+    attribute_table,
     brand_table,
     cliffs_delta,
     compare_groups,
@@ -160,6 +161,26 @@ class BrandTests(unittest.TestCase):
         self.assertTrue(any("sem codificação" in note for note in metrics["limitations"]))
         self.assertEqual(metrics["sample"]["recordings"], 3)
         self.assertFalse(metrics["price"].empty)
+
+
+class AttributeTests(unittest.TestCase):
+    def test_attribute_share_is_read_against_shelf_presence(self):
+        rows = [
+            dict(_gaze_row("Pt01|livre|1", "A N p1", "A", 0.10, 2.0, 2, 5.0), attr_tipo="Noturno"),
+            dict(_gaze_row("Pt01|livre|1", "A N p2", "A", 0.05, 1.0, 1, 8.0), attr_tipo="Noturno"),
+            dict(_gaze_row("Pt01|livre|1", "B D", "B", 0.05, 1.0, 1, 3.0), attr_tipo="Diurno"),
+        ]
+        gaze = pd.DataFrame(rows)
+        catalog = gaze[["store", "aoi", "aoi_key", "kind", "brand", "product", "include", "attr_tipo"]].assign(
+            shelf_weight=None)
+        recordings = pd.DataFrame([_recording("Pt01|livre|1")])
+        table = attribute_table(gaze, recordings, ["tipo"], catalog).set_index("value")
+        self.assertAlmostEqual(table.loc["Noturno", "share_mean"], 0.75)
+        # Duas das três AOIs com tipo são Noturno: 75% de atenção sobre 67% do espaço.
+        self.assertAlmostEqual(table.loc["Noturno", "presence"], 2 / 3)
+        self.assertAlmostEqual(table.loc["Noturno", "presence_index"], 0.75 / (2 / 3))
+        # Sem catálogo, a presença fica em branco em vez de inventada.
+        self.assertTrue(attribute_table(gaze, recordings, ["tipo"])["presence"].isna().all())
 
 
 class PackagingTests(unittest.TestCase):

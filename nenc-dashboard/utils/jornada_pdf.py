@@ -196,14 +196,17 @@ def _navigation(pdf, metrics: Dict) -> None:
     if not attributes.empty:
         pdf_report.heading(pdf, "Atributos dos produtos", level=2)
         pdf_report.paragraph(pdf, "Fração da atenção entre os produtos em que o atributo aparece no "
-                                  "nome da AOI.", size=8, color=pdf_report.MUTED)
+                                  "nome da AOI, e a presença do valor na gôndola. Índice = share ÷ "
+                                  "presença (acima de 1, atenção além do espaço ocupado).",
+                             size=8, color=pdf_report.MUTED)
         pdf.ln(1)
         pdf_report.simple_table(
             pdf,
-            ["Célula", "Atributo", "Valor", "n", "Share", "Alcance"],
+            ["Célula", "Atributo", "Valor", "n", "Share", "Alcance", "Presença", "Índice"],
             [[row["cell"], row["dimension"], row["value"], int(row["n_defined"]), _pct(row["share_mean"]),
-              _pct(row["reach"])] for _, row in attributes.iterrows()],
-            [62, 26, 34, 12, 23, 23],
+              _pct(row["reach"]), _pct(row.get("presence")), _num(row.get("presence_index"), 2)]
+             for _, row in attributes.iterrows()],
+            [52, 22, 28, 10, 17, 17, 18, 16],
         )
     if not price.empty:
         pdf_report.heading(pdf, "Etiquetas de preço", level=2)
