@@ -778,6 +778,16 @@ def limitations(model: Dict, metrics: Dict) -> List[str]:
         notes.append(
             "Embalagens só existem agregadas por perfil: há totais do grupo, sem variação entre "
             "participantes nem teste.")
+        coverage = metrics["packaging"].get("coverage", pd.DataFrame())
+        if not coverage.empty and coverage["aoi_coverage"].notna().any():
+            lowest = coverage["aoi_coverage"].min()
+            if lowest < 0.5:
+                notes.append(
+                    "Nas Embalagens, os elementos mapeados somam só {} a {} do tempo gravado, "
+                    "conforme o perfil: o resto ficou fora de qualquer elemento. As shares por "
+                    "elemento comparam só o tempo dentro dos elementos; tempos absolutos dependem "
+                    "de quanto de cada gravação era a tarefa.".format(
+                        _pct(lowest), _pct(coverage["aoi_coverage"].max())))
     notes.append(
         "Eye tracking mede atenção visual: não prova preferência, intenção nem compra. "
         "FixationCount, sacadas e pupila não são usados — a ~23 Hz o rastreador não separa fixações.")

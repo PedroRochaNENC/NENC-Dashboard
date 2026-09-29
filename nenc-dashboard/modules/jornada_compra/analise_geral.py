@@ -28,6 +28,7 @@ from utils.jornada_export import build_excel, filters_text
 from utils.jornada_ingest import TASK_LABELS
 from utils.jornada_metrics import ALL_STORES
 from utils.jornada_model import RECORDING_STATUS_LABELS
+from utils.jornada_pdf import build_pdf
 from utils.jornada_quality import run_quality
 from utils.jornada_ui import active_project, fmt_number, fmt_pct, fmt_seconds
 
@@ -45,6 +46,7 @@ SECTIONS = [
     "IA",
     "Exportar",
 ]
+MODE_LABELS = {"rapida": "rápida", "aprofundada": "aprofundada"}
 SECTION_OF_FINDING = {
     "gondola": "Gôndola",
     "preco": "Navegação e decisão",
@@ -113,6 +115,19 @@ def _table(frame: pd.DataFrame, columns: dict, formats: dict = None, key: str = 
     view = view.rename(columns=columns)
     with st.expander("Ver tabela"):
         st.dataframe(view, hide_index=True, width="stretch", key=key or None)
+
+
+def _analysis_label(analysis: dict) -> str:
+    """Uma análise salva em uma linha: quando, modo, modelo e se os dados mudaram depois."""
+    parts = [
+        str(analysis.get("created_at") or "")[:16],
+        "análise {}".format(MODE_LABELS.get(analysis.get("mode"), analysis.get("mode") or "")),
+        analysis.get("model") or "",
+    ]
+    label = " · ".join(part for part in parts if part.strip())
+    if analysis.get("data_version") is not None and analysis.get("data_version") != project.get("data_version"):
+        label += " · dados mudaram depois"
+    return label
 
 
 def _cells(frame: pd.DataFrame, include_all: bool = True) -> list:
@@ -372,8 +387,8 @@ elif section == "Embalagens":
     cov = coverage[coverage["profile"] == group]
     if not cov.empty and cov["aoi_coverage"].notna().any():
         st.caption(
-            "n = {} · as AOIs de elemento cobrem {} do tempo diante das embalagens; o resto "
-            "é fora de qualquer elemento.".format(int(cov["n_group"].iloc[0]), fmt_pct(cov["aoi_coverage"].iloc[0]))
+            "n = {} · os elementos mapeados somam {} do tempo gravado; o resto ficou fora de "
+            "qualquer elemento.".format(int(cov["n_group"].iloc[0]), fmt_pct(cov["aoi_coverage"].iloc[0]))
         )
     st.markdown("**Onde o olhar cai em cada embalagem**")
     st.caption("Fração do olhar de cada marca que cada elemento levou.")
@@ -477,17 +492,30 @@ else:
     st.subheader("Exportar")
     st.markdown("**Recorte:** {}".format(filters_text(filters, model)))
     st.caption(
-        "As métricas seguem o recorte acima. O Excel também leva as tabelas completas de "
-        "gravações, olhar e catálogo, com as chaves para relacionar no Power BI e um "
-        "dicionário das colunas."
+        "As métricas seguem o recorte acima. O PDF é o relatório para leitura; o Excel leva "
+        "também as tabelas completas de gravações, olhar e catálogo, com as chaves para "
+        "relacionar no Power BI e um dicionário das colunas."
     )
     analyses = jornada_db.list_analyses(project_id)
-    # Arquivos valem para um recorte, uma versao dos dados e um conjunto de analises.
+    chosen_analysis = None
+    if analyses:
+        analyses_by_id = {a["id"]: a for a in analyses}
+        chosen_id = st.selectbox(
+            "Análise de IA no relatório",
+            [None] + list(analyses_by_id),
+            index=1,
+            format_func=lambda aid: "Nenhuma" if aid is None else _analysis_label(analyses_by_id[aid]),
+            key="jc_export_analysis",
+            help="Entra no fim do PDF. O Excel leva todas as análises salvas.",
+        )
+        chosen_analysis = analyses_by_id.get(chosen_id)
+    # Arquivos valem para um recorte, uma versao dos dados e as analises da vez.
     signature = (
         project_id,
         project.get("data_version"),
         json.dumps(filters, sort_keys=True, ensure_ascii=False),
         tuple(a["id"] for a in analyses),
+        chosen_analysis["id"] if chosen_analysis else None,
     )
     prepared = st.session_state.get("jc_exports")
     if not prepared or prepared.get("signature") != signature:
@@ -495,12 +523,20 @@ else:
             with st.spinner("Montando os arquivos…"):
                 quality = run_quality(model, project)
                 media = jornada_db.list_media(project_id)
+                pdf, pdf_name = build_pdf(project, model, metrics, analysis=chosen_analysis, quality=quality)
                 excel, excel_name = build_excel(
                     project, model, metrics, quality=quality, analyses=analyses, media=media,
                 )
             st.session_state["jc_exports"] = {
                 "signature": signature,
                 "files": [
+                    {
+                        "kind": "pdf",
+                        "label": "Relatório PDF",
+                        "data": pdf,
+                        "name": pdf_name,
+                        "mime": "application/pdf",
+                    },
                     {
                         "kind": "excel",
                         "label": "Excel / Power BI",

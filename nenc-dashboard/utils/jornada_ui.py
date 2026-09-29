@@ -2,11 +2,10 @@
 Pedaços de tela repetidos nas páginas de projeto da Jornada de Compra.
 """
 
-import math
-
 import streamlit as st
 
 from utils import jornada_db
+from utils.jornada_format import fmt_number, fmt_pct, fmt_seconds  # noqa: F401 - usados pelas paginas
 
 STATUS_COLORS = {
     "incluida": "rgba(95,191,159,.18)",
@@ -34,36 +33,3 @@ def active_project() -> dict:
             st.switch_page("modules/jornada_compra/projetos.py")
         st.stop()
     return project
-
-
-def fmt_seconds(value) -> str:
-    """"1:21" para 81 s; vazio para NaN."""
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        return ""
-    if math.isnan(seconds):
-        return ""
-    minutes, rest = divmod(int(round(seconds)), 60)
-    return "{}:{:02d}".format(minutes, rest)
-
-
-def fmt_number(value, digits: int = 1, suffix: str = "") -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return ""
-    if math.isnan(number):
-        return ""
-    return "{:.{d}f}{s}".format(number, d=digits, s=suffix).replace(".", ",")
-
-
-def fmt_pct(value, digits: int = 0) -> str:
-    """Proporção (0..1) como porcentagem pt-BR."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return ""
-    if math.isnan(number):
-        return ""
-    return fmt_number(100 * number, digits, "%")

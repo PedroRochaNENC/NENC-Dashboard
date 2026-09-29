@@ -90,7 +90,7 @@ SHEET_DESCRIPTIONS = {
     "Comparacoes": "Comparações entre grupos: médias, δ de Cliff e p quando a amostra permite.",
     "Elementos_Embalagem": "Elementos de cada embalagem por perfil (dos agregados).",
     "Marcas_Embalagem": "Atenção a cada embalagem por perfil e alcance do logo.",
-    "Cobertura_Embalagem": "Fração do tempo diante das embalagens que caiu em algum elemento.",
+    "Cobertura_Embalagem": "Fração do tempo gravado que caiu em algum elemento de embalagem.",
     "Qualidade": "Checagens de qualidade de cada gravação.",
     "Avisos": "Avisos da leitura dos arquivos (unidades, repetições, agregados que não conferem).",
     "Achados": "Frases determinísticas geradas das métricas, com n e célula.",
@@ -248,7 +248,7 @@ COLUMN_DESCRIPTIONS = {
     "element_share": "Fração do olhar da embalagem que o elemento levou.",
     "packaging_share": "Fração do olhar às embalagens que a marca levou.",
     "logo_reach": "Fração do grupo que viu o logo (elemento MARCA).",
-    "aoi_coverage": "Fração do tempo diante das embalagens dentro de algum elemento.",
+    "aoi_coverage": "Fração do tempo gravado que caiu em algum elemento de embalagem.",
     # qualidade e avisos
     "detail": "Detalhe da checagem.",
     "level": "Gravidade: info, warn ou error.",

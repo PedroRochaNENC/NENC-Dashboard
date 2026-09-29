@@ -17,6 +17,7 @@ from utils.jornada_metrics import (
     compare_groups,
     compute_all,
     design_confounds,
+    limitations,
     packaging_tables,
     per_recording_brand,
     permutation_p_value,
@@ -188,6 +189,21 @@ class PackagingTests(unittest.TestCase):
         self.assertAlmostEqual(elements.loc["PERFIL 1", "dwell_per_participant_s"], 4.0 / 5)
         brands = tables["brands"].set_index("group")
         self.assertAlmostEqual(brands.loc["PERFIL 2", "logo_reach"], 0.5)
+
+    def test_low_element_coverage_becomes_a_limitation(self):
+        pooled = self._pooled()
+        outside = []
+        # Tempo do grupo = tempo no elemento / fração (4 s / 0,01 = 400 s; 6 s / 0,01 = 600 s).
+        for group, dwell, share in (("PERFIL 1", 384.0, 0.96), ("PERFIL 2", 564.0, 0.94)):
+            outside.append(dict(pooled.iloc[0].to_dict(), group=group, aoi="", aoi_key="|", kind="fora",
+                                brand="", element="", is_outside=True, dwell_sum_s=dwell,
+                                share_of_pool_time=share))
+        pooled = pd.concat([pooled, pd.DataFrame(outside)], ignore_index=True)
+        tables = packaging_tables(pooled)
+        coverage = tables["coverage"].set_index("group")["aoi_coverage"]
+        self.assertAlmostEqual(coverage["PERFIL 1"], 0.04)
+        notes = limitations(_model(ROWS, RECORDINGS), {"packaging": tables})
+        self.assertTrue(any("somam só 4% a 6% do tempo gravado" in note for note in notes), notes)
 
 
 class UnitFreeShareTests(unittest.TestCase):
