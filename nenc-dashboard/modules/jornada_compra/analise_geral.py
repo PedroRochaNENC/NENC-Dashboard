@@ -11,6 +11,8 @@ Só entram as gravações incluídas; os filtros valem para todas as seções. C
 gráfico tem a tabela equivalente logo abaixo.
 """
 
+import json
+
 import pandas as pd
 import streamlit as st
 from utils import auth, ui
@@ -22,9 +24,11 @@ pode_editar = auth.can_write(user)
 from utils import jornada_charts as charts
 from utils import jornada_db
 from utils.jornada_cache import get_project_metrics, get_project_model
+from utils.jornada_export import build_excel, filters_text
 from utils.jornada_ingest import TASK_LABELS
 from utils.jornada_metrics import ALL_STORES
 from utils.jornada_model import RECORDING_STATUS_LABELS
+from utils.jornada_quality import run_quality
 from utils.jornada_ui import active_project, fmt_number, fmt_pct, fmt_seconds
 
 jornada_db.init_db()
@@ -461,9 +465,63 @@ elif section == "Amostra e qualidade":
     st.caption("Qualidade de cada gravação, com as checagens, em **Participantes**.")
 
 # ==================================================================
-# IA e exportacao (passos seguintes)
+# IA (passo seguinte)
 # ==================================================================
 elif section == "IA":
     st.info("A análise por IA entra no próximo passo.")
+
+# ==================================================================
+# Exportar
+# ==================================================================
 else:
-    st.info("As exportações entram no próximo passo.")
+    st.subheader("Exportar")
+    st.markdown("**Recorte:** {}".format(filters_text(filters, model)))
+    st.caption(
+        "As métricas seguem o recorte acima. O Excel também leva as tabelas completas de "
+        "gravações, olhar e catálogo, com as chaves para relacionar no Power BI e um "
+        "dicionário das colunas."
+    )
+    analyses = jornada_db.list_analyses(project_id)
+    # Arquivos valem para um recorte, uma versao dos dados e um conjunto de analises.
+    signature = (
+        project_id,
+        project.get("data_version"),
+        json.dumps(filters, sort_keys=True, ensure_ascii=False),
+        tuple(a["id"] for a in analyses),
+    )
+    prepared = st.session_state.get("jc_exports")
+    if not prepared or prepared.get("signature") != signature:
+        if st.button("Preparar arquivos", type="primary", key="jc_export_prepare"):
+            with st.spinner("Montando os arquivos…"):
+                quality = run_quality(model, project)
+                media = jornada_db.list_media(project_id)
+                excel, excel_name = build_excel(
+                    project, model, metrics, quality=quality, analyses=analyses, media=media,
+                )
+            st.session_state["jc_exports"] = {
+                "signature": signature,
+                "files": [
+                    {
+                        "kind": "excel",
+                        "label": "Excel / Power BI",
+                        "data": excel,
+                        "name": excel_name,
+                        "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    },
+                ],
+            }
+            st.rerun()
+    else:
+        columns = st.columns(3)
+        for column, item in zip(columns, prepared["files"]):
+            column.download_button(
+                item["label"],
+                data=item["data"],
+                file_name=item["name"],
+                mime=item["mime"],
+                width="stretch",
+                key="jc_export_{}".format(item["kind"]),
+                on_click=jornada_db.audit_export,
+                args=(project_id, item["kind"]),
+            )
+        st.caption("Prontos para este recorte e estes dados; mudar qualquer um deles pede nova preparação.")

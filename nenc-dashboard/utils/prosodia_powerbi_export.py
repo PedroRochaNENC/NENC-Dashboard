@@ -2,20 +2,21 @@
 
 import hashlib
 import io
-import json
-import re
-import unicodedata
 from typing import Any
 
 import pandas as pd
 
 from utils import prosodia_db
+from utils.excel_export import (  # noqa: F401 - reexportados para quem ja importava daqui
+    EXCEL_SAFE_MAX_DATA_ROWS,
+    EXCEL_SHEET_NAME_MAX_LENGTH,
+    excel_value as _excel_value,
+    json_text as _json_text,
+    safe_slug as _safe_slug,
+    table_sheet_name as _table_sheet_name,
+    write_workbook as _write_workbook,
+)
 from utils.prosodia_loader import load_prosodia_from_uploads
-
-
-EXCEL_SAFE_MAX_DATA_ROWS = 1_000_000
-EXCEL_SHEET_NAME_MAX_LENGTH = 31
-_INVALID_EXCEL_CHARACTERS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
 _PROJECT_COLUMNS = [
     "id",
@@ -180,22 +181,11 @@ class _BytesFile:
         return self._buffer.seek(position)
 
 
-def _json_text(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
-
-
 def _first_value(item: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         if key in item and item[key] is not None:
             return item[key]
     return None
-
-
-def _safe_slug(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(value or ""))
-    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", ascii_value).strip("_")
-    return slug[:80] or "projeto"
 
 
 def _frame(rows: list[dict[str, Any]], columns: list[str]) -> pd.DataFrame:
@@ -526,24 +516,6 @@ def _interview_quality_metrics(
     }
 
 
-def _table_sheet_name(base_name: str, part: int) -> str:
-    if part == 1:
-        return base_name[:EXCEL_SHEET_NAME_MAX_LENGTH]
-    suffix = f"_{part}"
-    return base_name[: EXCEL_SHEET_NAME_MAX_LENGTH - len(suffix)] + suffix
-
-
-def _excel_value(value: Any) -> Any:
-    if isinstance(value, (dict, list, tuple)):
-        return _json_text(value)
-    if isinstance(value, str):
-        clean_value = _INVALID_EXCEL_CHARACTERS.sub("", value)
-        if clean_value.startswith(("=", "+", "-", "@")):
-            return "'" + clean_value
-        return clean_value
-    return value
-
-
 def _coerce_bytes(payload: Any) -> bytes:
     if payload is None:
         return b""
@@ -608,33 +580,6 @@ def _build_raw_audio_artifact_rows(
             )
 
     return artifact_rows, chunk_rows
-
-
-def _write_workbook(
-    tables: dict[str, pd.DataFrame],
-    max_rows_per_sheet: int,
-) -> bytes:
-    if max_rows_per_sheet < 1:
-        raise ValueError("O limite de linhas por aba deve ser maior que zero.")
-
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for table_name, frame in tables.items():
-            safe_frame = frame.copy()
-            for column in safe_frame.columns:
-                safe_frame[column] = safe_frame[column].map(_excel_value)
-
-            row_count = len(safe_frame)
-            part_count = max(1, (row_count + max_rows_per_sheet - 1) // max_rows_per_sheet)
-            for part in range(1, part_count + 1):
-                start = (part - 1) * max_rows_per_sheet
-                end = start + max_rows_per_sheet
-                safe_frame.iloc[start:end].to_excel(
-                    writer,
-                    sheet_name=_table_sheet_name(table_name, part),
-                    index=False,
-                )
-    return output.getvalue()
 
 
 def export_project_to_powerbi_excel(

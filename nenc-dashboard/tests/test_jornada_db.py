@@ -251,6 +251,19 @@ class OrganizationTests(_Base):
         # Em "Todas" o projeto nasce na organizacao da conta que criou.
         self.assertEqual(new_org, self.platform_admin.organization_id)
 
+    def test_an_export_is_audited_for_any_role_once_the_project_is_visible(self):
+        with patch.object(
+            jornada_db, "_require_write", side_effect=auth.AuthorizationError("x")
+        ):
+            jornada_db.audit_export(self.project_one, "excel")
+        jornada_db._audit.assert_called_with(
+            "jornada.export.excel", "jc_project", self.project_one, self.organization.id, write=True
+        )
+        with patch.object(
+            jornada_db, "_active_organization_id", return_value=self.organization_two.id
+        ), self.assertRaises(ValueError):
+            jornada_db.audit_export(self.project_one, "excel")
+
     def test_the_bundle_only_opens_with_the_project_organization(self):
         with self.assertRaises(ValueError):
             jornada_db.load_project_bundle(self.project_one, self.organization_two.id)

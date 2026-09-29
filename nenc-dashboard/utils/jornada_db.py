@@ -1295,6 +1295,20 @@ def set_analysis_kb_file(project_id: int, analysis_id: int, kb_file_id: str) -> 
     _audit("jornada.analysis.update", "jc_analysis", analysis_id, project_org, write=True)
 
 
+def audit_export(project_id: int, kind: str) -> None:
+    """Registra um download do projeto, de qualquer papel.
+
+    Leitura comum nao vai ao audit_log (encheria a tabela a cada rerun), mas
+    exportar e um clique explicito que tira os dados do app: fica registrado
+    como `jornada.export.<tipo>`.
+    """
+
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        project_org = _project_org(conn, project_id, organization_id)
+    _audit("jornada.export.{}".format(kind), "jc_project", project_id, project_org, write=True)
+
+
 def delete_analyses(project_id: int, analysis_ids: Iterable[int]) -> int:
     """Apaga analises e a copia que cada uma deixou na base de conhecimento."""
 
