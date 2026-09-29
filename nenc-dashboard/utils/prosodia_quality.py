@@ -13,7 +13,7 @@ Checks objetivos (sem IA):
 
 Cobertura de perguntas:
   - check_question_coverage_keywords: busca por tokens no texto (sempre disponível)
-  - check_question_coverage_ai: análise semântica via IA (requer client OpenAI/Groq)
+  - check_question_coverage_ai: análise semântica via IA (client OpenAI, Groq ou Anthropic)
 """
 
 import re
@@ -539,6 +539,17 @@ def _coverage_ai_batch(
             max_output_tokens=needed_tokens,
         )
         raw_json = resp.output_text
+    elif not hasattr(client, "chat"):
+        # Anthropic (Claude): sem temperature, que os modelos recentes recusam.
+        resp = client.messages.create(
+            model=model,
+            system=COVERAGE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+            max_tokens=needed_tokens,
+        )
+        raw_json = "".join(
+            block.text for block in resp.content if getattr(block, "type", "") == "text"
+        )
     else:
         resp = client.chat.completions.create(
             model=model,
@@ -574,7 +585,7 @@ def check_question_coverage_ai(
 ) -> List[Dict]:
     """
     Usa IA para verificar semanticamente se cada pergunta foi abordada.
-    Requer client OpenAI ou Groq.
+    Requer client OpenAI, Groq ou Anthropic.
     Processa perguntas em lotes de _COVERAGE_BATCH_SIZE para garantir que
     todas as perguntas recebam avaliação mesmo em entrevistas longas.
     Retorna lista no mesmo formato de check_question_coverage_keywords,

@@ -43,7 +43,10 @@ from utils.prosodia_prompts import (
     build_project_user_prompt,
 )
 from utils.ai_provider import (
+    PROVIDER_OPENAI,
     add_document_to_vector_store,
+    chat_completion,
+    generate_analysis,
     get_openai_client,
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
@@ -814,17 +817,14 @@ with st.sidebar:
     st.header("Controles")
     analysis_mode = st.radio("Modo de analise", ["Rapida (1 chamada)", "Aprofundada (2 etapas)"])
     use_kb = st.checkbox("Usar Base de Conhecimento", value=True)
-    openai_model = st.selectbox(
-        "Modelo OpenAI",
-        ["gpt-4.1-mini", "gpt-4.1", "gpt-4o"],
-        key="prj_oai_model",
-    )
-    groq_key = st.text_input("Chave API Groq (alternativa)", type="password", key="prj_groq_key")
-    groq_model = st.selectbox(
-        "Modelo Groq",
-        ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
-        key="prj_groq_model",
-    )
+    # Um unico seletor para todos os provedores; as chaves ficam no .env.
+    ai_provider_id, ai_model = ui.ai_model_selector("prj_ai_model", use_kb=use_kb)
+
+
+def _run_ai(**kwargs) -> dict:
+    """Chama o modelo escolhido no seletor (ver `generate_analysis`)."""
+    return generate_analysis(ai_provider_id, ai_model, **kwargs)
+
 
 # ------------------------------------------------------------------
 # Resumo agregado
@@ -1189,18 +1189,8 @@ if latest_analysis:
             st.write(prompt)
         st.session_state[chat_key].append({"role": "user", "content": prompt})
         
-        openai_client = get_openai_client()
-        groq_client = None
-        if not openai_client and groq_key:
-            try:
-                from groq import Groq
-                groq_client = Groq(api_key=groq_key)
-            except Exception:
-                pass
-                
-        ai_client = openai_client or groq_client
-        if not ai_client:
-            st.error("Configure uma chave de API para habilitar o chat.")
+        if not ai_provider_id:
+            st.error("Configure uma chave de API no .env para habilitar o chat.")
         else:
             with st.chat_message("assistant"):
                 with st.spinner("Pensando..."):
@@ -1212,13 +1202,8 @@ if latest_analysis:
                             "Responda de forma concisa, objetiva e baseada nas informações do relatório.\n\n"
                             f"--- RELATÓRIO DO PROJETO ---\n{report_context}\n-----------------------------"
                         )
-                        
-                        messages = [{"role": "system", "content": sys_msg}]
-                        for h in st.session_state[chat_key][:-1]:
-                            messages.append({"role": h["role"], "content": h["content"]})
-                        messages.append({"role": "user", "content": prompt})
-                        
-                        if openai_client:
+
+                        if ai_provider_id == PROVIDER_OPENAI:
                             chat_user_prompt = ""
                             for h in st.session_state[chat_key][:-1]:
                                 role_name = "Usuário" if h["role"] == "user" else "Assistente"
@@ -1230,7 +1215,7 @@ if latest_analysis:
                             result = ai_create_analysis(
                                 system_prompt=sys_msg,
                                 user_prompt=chat_user_prompt,
-                                model=openai_model,
+                                model=ai_model,
                                 vector_store_id=chat_vs_id,
                                 kb_filter=build_kb_filter(project_id),
                                 temperature=0.7,
@@ -1249,12 +1234,18 @@ if latest_analysis:
                                     else:
                                         answer += f"\n- *{filename}*"
                         else:
-                            resp = groq_client.chat.completions.create(
-                                model=groq_model,
-                                messages=messages,
+                            messages = [
+                                {"role": h["role"], "content": h["content"]}
+                                for h in st.session_state[chat_key]
+                            ]
+                            answer = chat_completion(
+                                ai_provider_id,
+                                ai_model,
+                                sys_msg,
+                                messages,
                                 temperature=0.7,
+                                max_tokens=1500,
                             )
-                            answer = resp.choices[0].message.content
                             
                         st.write(answer)
                         st.session_state[chat_key].append({"role": "assistant", "content": answer})
@@ -1266,21 +1257,11 @@ else:
 
 btn_label = "Regenerar Analise Geral" if latest_analysis else "Gerar Analise Geral"
 if st.button(btn_label, type="primary"):
-    openai_client = get_openai_client()
-    groq_client = None
-
-    if not openai_client and groq_key:
-        try:
-            from groq import Groq
-
-            groq_client = Groq(api_key=groq_key)
-        except Exception:
-            st.error("Groq nao instalado. Execute: pip install groq")
-            st.stop()
-
-    ai_client = openai_client or groq_client
-    if not ai_client:
-        st.error("Configure uma chave de API (OpenAI via .env ou Groq na barra lateral).")
+    if not ai_provider_id:
+        st.error(
+            "Configure uma chave de API no .env (OPENAI_API_KEY, GROQ_API_KEY "
+            "ou ANTHROPIC_API_KEY) e reinicie o app."
+        )
         st.stop()
 
     vs_id = get_prosodia_vector_store_id() if use_kb else None
@@ -1331,92 +1312,46 @@ if st.button(btn_label, type="primary"):
             tipo_projeto = project.get("tipo_projeto")
             prj_sys_prompt = get_prosodia_project_system_prompt(tipo_projeto)
             if analysis_mode == "Rapida (1 chamada)":
-                if openai_client:
-                    result = ai_create_analysis(
-                        system_prompt=prj_sys_prompt,
-                        user_prompt=user_prompt,
-                        model=openai_model,
-                        vector_store_id=vs_id,
-                        kb_filter=build_kb_filter(project_id),
-                        temperature=0.5,
-                        max_tokens=3500,
-                    )
-                else:
-                    resp = groq_client.chat.completions.create(
-                        model=groq_model,
-                        messages=[
-                            {"role": "system", "content": prj_sys_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.5,
-                        max_tokens=3500,
-                    )
-                    result = {"text": resp.choices[0].message.content, "citations": []}
+                result = _run_ai(
+                    system_prompt=prj_sys_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.5,
+                    max_tokens=3500,
+                    vector_store_id=vs_id,
+                    kb_filter=build_kb_filter(project_id),
+                )
             else:
-                if openai_client:
-                    stat_result = ai_create_analysis(
-                        system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estatistica"),
-                        user_prompt=user_prompt,
-                        model=openai_model,
-                        vector_store_id=None,
-                        temperature=0.3,
-                        max_tokens=2200,
-                    )
-                    strat_user = (
-                        f"Analise estatistica previa:\n{stat_result['text']}\n\n"
-                        f"Dados consolidados do projeto:\n{acoustic_stats_text}\n\n"
-                        f"Ranking de palavras:\n{top_words_text}"
-                    )
-                    strat_result = ai_create_analysis(
-                        system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estrategica"),
-                        user_prompt=strat_user,
-                        model=openai_model,
-                        vector_store_id=vs_id,
-                        kb_filter=build_kb_filter(project_id),
-                        temperature=0.5,
-                        max_tokens=2200,
-                    )
-                    result = {
-                        "text": (
-                            "## Analise Estatistica\n\n"
-                            + stat_result["text"]
-                            + "\n\n---\n\n## Analise Estrategica\n\n"
-                            + strat_result["text"]
-                        ),
-                        "citations": strat_result.get("citations", []),
-                    }
-                else:
-                    resp_stat = groq_client.chat.completions.create(
-                        model=groq_model,
-                        messages=[
-                            {"role": "system", "content": get_prosodia_project_system_prompt(tipo_projeto, "estatistica")},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.3,
-                        max_tokens=2200,
-                    )
-                    stat_text = resp_stat.choices[0].message.content
-                    strat_user = f"Analise previa:\n{stat_text}\n\nDados consolidados:\n{acoustic_stats_text}"
-                    resp_strat = groq_client.chat.completions.create(
-                        model=groq_model,
-                        messages=[
-                            {"role": "system", "content": get_prosodia_project_system_prompt(tipo_projeto, "estrategica")},
-                            {"role": "user", "content": strat_user},
-                        ],
-                        temperature=0.5,
-                        max_tokens=2200,
-                    )
-                    result = {
-                        "text": (
-                            "## Analise Estatistica\n\n"
-                            + stat_text
-                            + "\n\n---\n\n## Analise Estrategica\n\n"
-                            + resp_strat.choices[0].message.content
-                        ),
-                        "citations": [],
-                    }
+                stat_result = _run_ai(
+                    system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estatistica"),
+                    user_prompt=user_prompt,
+                    temperature=0.3,
+                    max_tokens=2200,
+                )
+                strat_user = (
+                    f"Analise estatistica previa:\n{stat_result['text']}\n\n"
+                    f"Dados consolidados do projeto:\n{acoustic_stats_text}\n\n"
+                    f"Ranking de palavras:\n{top_words_text}"
+                )
+                strat_result = _run_ai(
+                    system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estrategica"),
+                    user_prompt=strat_user,
+                    temperature=0.5,
+                    max_tokens=2200,
+                    vector_store_id=vs_id,
+                    kb_filter=build_kb_filter(project_id),
+                )
+                result = {
+                    "text": (
+                        "## Analise Estatistica\n\n"
+                        + stat_result["text"]
+                        + "\n\n---\n\n## Analise Estrategica\n\n"
+                        + strat_result["text"]
+                    ),
+                    "citations": strat_result.get("citations", []),
+                    "search": strat_result.get("search", {}),
+                }
 
-            used_model = openai_model if openai_client else groq_model
+            used_model = ai_model
             save_project_analysis(project_id, used_model, result.get("text", ""), result.get("citations", []))
             st.session_state[f"pr_kb_search_project_{project_id}"] = result.get(
                 "search", {}
