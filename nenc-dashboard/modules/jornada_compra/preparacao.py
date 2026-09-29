@@ -2,11 +2,22 @@
 Jornada de Compra — Novo projeto / Dados do Projeto.
 
 Sem projeto aberto, é o formulário de criação; com projeto aberto, reúne o que
-define a análise: o contexto e o briefing (que também vão para a base de
-conhecimento, marcados como material deste projeto).
+define a análise, em abas:
+
+- Contexto: objetivo, perguntas, marcas e briefing (que também vai para a base
+  de conhecimento, marcado como material deste projeto);
+- Lojas e perfis: nome e canal de cada loja, perfil e tamanho de cada grupo
+  dos agregados;
+- Catálogo de AOIs: atributos (ex.: tipo = Diurno, Noturno) e correções da
+  leitura automática de cada AOI;
+- Parâmetros: limiar de "examinou", Hz nominal e limiares de qualidade por
+  tipo de tarefa — o papel que o tipo de projeto tem no NencBoost.
 """
 
+import json
 from datetime import datetime
+
+import pandas as pd
 
 import streamlit as st
 from utils import auth, ui
@@ -22,6 +33,9 @@ from utils.ai_provider import (
     get_vector_store_id,
 )
 from utils.briefing import BRIEFING_EXTENSIONS, cap_text, extract_briefing_text
+from utils.jornada_ingest import TASK_LABELS
+from utils.jornada_quality import DEFAULT_THRESHOLDS, default_thresholds
+from utils.jornada_taxonomy import KIND_LABELS, format_dimensions, parse_dimensions
 from utils.kb_attributes import project_document
 
 jornada_db.init_db()
@@ -256,4 +270,318 @@ def _render_context() -> None:
     st.rerun()
 
 
-_render_context()
+def _save_settings(changes: dict, **fields) -> None:
+    settings = jornada_db.project_settings(project)
+    settings.update(changes)
+    try:
+        jornada_db.update_project(project["id"], settings_json=settings, **fields)
+    except (auth.AuthorizationError, ValueError) as error:
+        st.error(str(error))
+    else:
+        st.toast("Configuração salva; a análise foi recalculada.")
+        st.rerun()
+
+
+def _render_stores(model: dict) -> None:
+    settings = jornada_db.project_settings(project)
+    st.markdown(
+        "Nome e canal de cada loja aparecem nos gráficos e no relatório. O canal agrupa as "
+        "lojas nas comparações (ex.: FARMA × C&C)."
+    )
+    stores = model["stores"]
+    if stores.empty:
+        st.info("As lojas aparecem aqui depois dos uploads.")
+    else:
+        edited = st.data_editor(
+            stores[["store", "label", "channel", "tasks"]],
+            hide_index=True,
+            width="stretch",
+            disabled=True if not pode_editar else ["store", "tasks"],
+            column_config={
+                "store": st.column_config.TextColumn("Chave"),
+                "label": st.column_config.TextColumn("Nome"),
+                "channel": st.column_config.TextColumn("Canal"),
+                "tasks": st.column_config.TextColumn("Tarefas"),
+            },
+            key="jc_stores_editor_{}".format(project["id"]),
+        )
+        if pode_editar and st.button("Salvar lojas", key="jc_save_stores"):
+            configured = {
+                row["store"]: {
+                    "label": str(row["label"] or "").strip(),
+                    "channel": str(row["channel"] or "").strip(),
+                }
+                for _, row in edited.iterrows()
+            }
+            _save_settings({"stores": configured})
+
+    st.divider()
+    st.markdown(
+        "**Grupos dos agregados.** Exports agregados (`PERFIL 1`, `TODOS`...) não dizem quem "
+        "está no grupo. Informe o perfil de cada um; o tamanho é contado pelos participantes "
+        "desse perfil, ou pode ser fixado."
+    )
+    pooled = model["pooled"]
+    groups = (
+        sorted(group for group in pooled["group"].unique() if group and group != "TODOS")
+        if not pooled.empty
+        else []
+    )
+    if not groups:
+        st.caption("Nenhum agregado por grupo neste projeto.")
+        return
+    configured = settings.get("groups") or {}
+    profiles = sorted(profile for profile in model["participants"]["profile"].unique() if profile)
+    table = pd.DataFrame(
+        [
+            {
+                "group": group,
+                "profile": (configured.get(group) or {}).get("profile") or "",
+                "size": (configured.get(group) or {}).get("size"),
+                "counted": int(pooled[pooled["group"] == group]["n_group"].max()),
+            }
+            for group in groups
+        ]
+    )
+    edited_groups = st.data_editor(
+        table,
+        hide_index=True,
+        width="stretch",
+        disabled=True if not pode_editar else ["group", "counted"],
+        column_config={
+            "group": st.column_config.TextColumn("Grupo"),
+            "profile": st.column_config.SelectboxColumn("Perfil", options=[""] + profiles),
+            "size": st.column_config.NumberColumn("Tamanho fixo", min_value=0, step=1),
+            "counted": st.column_config.NumberColumn("Tamanho usado hoje"),
+        },
+        key="jc_groups_editor_{}".format(project["id"]),
+    )
+    if pode_editar and st.button("Salvar grupos", key="jc_save_groups"):
+        groups_config = {}
+        for _, row in edited_groups.iterrows():
+            entry = {}
+            if row["profile"]:
+                entry["profile"] = row["profile"]
+            if row["size"] == row["size"] and row["size"]:
+                entry["size"] = int(row["size"])
+            if entry:
+                groups_config[row["group"]] = entry
+        _save_settings({"groups": groups_config})
+
+
+def _render_catalog(model: dict) -> None:
+    settings = jornada_db.project_settings(project)
+    st.markdown(
+        "Cada AOI é lida pelo nome: marca, linha, atributos, parte, preço ou elemento de "
+        "embalagem. Os **atributos** são as dimensões que o nome carrega — uma por linha, no "
+        "formato `nome: valor1, valor2`."
+    )
+    dimensions_text = st.text_area(
+        "Atributos das AOIs",
+        value=format_dimensions(settings.get("dimensions") or {}),
+        placeholder="tipo: Diurno, Noturno\ncobertura: Seco, Suave",
+        height=90,
+        disabled=not pode_editar,
+    )
+    if pode_editar and st.button("Salvar atributos", key="jc_save_dims"):
+        _save_settings({"dimensions": parse_dimensions(dimensions_text)})
+
+    catalog = model["catalog"]
+    if catalog.empty:
+        st.info("O catálogo aparece depois dos uploads.")
+        return
+    st.divider()
+    filters = st.columns(3)
+    store_labels = dict(zip(model["stores"]["store"], model["stores"]["label"]))
+
+    def _store_name(key: str) -> str:
+        if key == "Todas":
+            return "Todas"
+        return store_labels.get(key) or key or "Todas as lojas (agregado)"
+
+    store_choice = filters[0].selectbox(
+        "Loja", ["Todas"] + sorted(catalog["store"].unique()), format_func=_store_name,
+        key="jc_cat_store",
+    )
+    kind_choice = filters[1].selectbox(
+        "Tipo", ["Todos"] + list(KIND_LABELS), format_func=lambda key: KIND_LABELS.get(key, key),
+        key="jc_cat_kind",
+    )
+    only_manual = filters[2].checkbox("Só ajustadas à mão", key="jc_cat_manual")
+    view = catalog
+    if store_choice != "Todas":
+        view = view[view["store"] == store_choice]
+    if kind_choice != "Todos":
+        view = view[view["kind"] == kind_choice]
+    if only_manual:
+        view = view[view["source"] == "manual"]
+    attr_columns = [column for column in catalog.columns if column.startswith("attr_")]
+    columns = ["store", "aoi", "kind", "brand", "line", "product", "part", "element"] + attr_columns + [
+        "shelf_weight", "include", "source",
+    ]
+    attr_config = {
+        column: st.column_config.TextColumn(column.replace("attr_", "").capitalize())
+        for column in attr_columns
+    }
+    edited = st.data_editor(
+        view[columns],
+        hide_index=True,
+        width="stretch",
+        disabled=True if not pode_editar else ["store", "aoi", "source"],
+        column_config={
+            "store": st.column_config.TextColumn("Loja"),
+            "aoi": st.column_config.TextColumn("AOI"),
+            "kind": st.column_config.SelectboxColumn("Tipo", options=list(KIND_LABELS)),
+            "brand": st.column_config.TextColumn("Marca"),
+            "line": st.column_config.TextColumn("Linha"),
+            "product": st.column_config.TextColumn("Produto"),
+            "part": st.column_config.TextColumn("Parte"),
+            "element": st.column_config.TextColumn("Elemento"),
+            "shelf_weight": st.column_config.NumberColumn(
+                "Peso na gôndola", help="Facings ou área, para o índice de presença. Vazio = 1."
+            ),
+            "include": st.column_config.CheckboxColumn("Entra"),
+            "source": st.column_config.TextColumn("Origem"),
+            **attr_config,
+        },
+        key="jc_catalog_editor_{}_{}_{}".format(project["id"], store_choice, kind_choice),
+    )
+    st.caption("{} AOI(s) · origem “manual” = ajuste salvo por alguém.".format(len(view)))
+    if not pode_editar:
+        return
+    save_col, reset_col = st.columns(2)
+    with save_col:
+        if st.button("Salvar ajustes do catálogo", key="jc_save_catalog", type="primary"):
+            before = view[columns].set_index(["store", "aoi"])
+            rows = []
+            for _, row in edited.iterrows():
+                old = before.loc[(row["store"], row["aoi"])]
+                changed = any(
+                    str(row[column]) != str(old[column])
+                    for column in columns
+                    if column not in ("store", "aoi", "source")
+                )
+                if not changed:
+                    continue
+                weight = row["shelf_weight"]
+                rows.append({
+                    "store": row["store"],
+                    "aoi": row["aoi"],
+                    "kind": row["kind"],
+                    "brand": row["brand"],
+                    "line": row["line"],
+                    "product": row["product"],
+                    "part": row["part"],
+                    "element": row["element"],
+                    "attrs": {column.replace("attr_", ""): row[column] for column in attr_columns if row[column]},
+                    "shelf_weight": None if weight is None or weight != weight else weight,
+                    "include": bool(row["include"]),
+                })
+            if not rows:
+                st.info("Nada mudou.")
+            else:
+                try:
+                    jornada_db.save_aoi_overrides(project["id"], rows)
+                except (auth.AuthorizationError, ValueError) as error:
+                    st.error(str(error))
+                else:
+                    st.toast("{} AOI(s) ajustada(s).".format(len(rows)))
+                    st.rerun()
+    with reset_col:
+        manual = view[view["source"] == "manual"]
+        if not manual.empty and st.button(
+            "Voltar à leitura automática ({} ajuste(s) nesta visão)".format(len(manual)),
+            key="jc_reset_catalog",
+        ):
+            jornada_db.delete_aoi_overrides(project["id"], list(zip(manual["store"], manual["aoi"])))
+            st.rerun()
+
+
+def _render_parameters() -> None:
+    settings = jornada_db.project_settings(project)
+    st.markdown("**Métricas**")
+    c1, c2 = st.columns(2)
+    examined = c1.number_input(
+        "Limiar de “examinou” (s)", min_value=0.1, max_value=30.0, step=0.1,
+        value=float(settings.get("examined_threshold_s") or 1.0),
+        help="Tempo total numa marca a partir do qual ela conta como examinada no funil.",
+        disabled=not pode_editar,
+    )
+    hz_nominal = c2.number_input(
+        "Hz nominal do rastreador (0 = não usar)", min_value=0.0, max_value=500.0, step=1.0,
+        value=float(settings.get("hz_nominal") or 0.0),
+        help="Só converte exports em amostras de gravações sem o arquivo de quadros.",
+        disabled=not pode_editar,
+    )
+
+    st.divider()
+    st.markdown("**Limiares de qualidade**")
+    st.caption(
+        "Os padrões mudam por tipo de tarefa: a jornada livre inclui a caminhada até a "
+        "categoria, então espera gravações mais longas."
+    )
+    saved = project.get("quality_thresholds")
+    use_default = st.checkbox(
+        "Usar valores padrão do sistema", value=not saved, disabled=not pode_editar
+    )
+    try:
+        custom = json.loads(saved) if saved else {}
+    except (TypeError, ValueError):
+        custom = {}
+    quality_json = None
+    if not use_default:
+        common = dict(DEFAULT_THRESHOLDS)
+        common.update(custom.get("*") or {})
+        q1, q2, q3 = st.columns(3)
+        values = {
+            "hz_warn": q1.number_input("Alerta de Hz abaixo de", value=float(common["hz_warn"]), step=1.0),
+            "hz_fail": q1.number_input("Problema de Hz abaixo de", value=float(common["hz_fail"]), step=1.0),
+            "loss_warn_pct": q2.number_input(
+                "Alerta de perda acima de (%)", value=float(common["loss_warn_pct"]), step=1.0
+            ),
+            "loss_fail_pct": q2.number_input(
+                "Problema de perda acima de (%)", value=float(common["loss_fail_pct"]), step=1.0
+            ),
+            "gap_warn_s": q3.number_input(
+                "Alerta de falha maior que (s)", value=float(common["gap_warn_s"]), step=0.5
+            ),
+        }
+        per_task = {}
+        task_columns = st.columns(len(TASK_LABELS))
+        for column, (task, label) in zip(task_columns, TASK_LABELS.items()):
+            base = default_thresholds(task)
+            base.update(custom.get(task) or {})
+            per_task[task] = {
+                "min_duration_s": column.number_input(
+                    "Duração mínima — {} (s)".format(label),
+                    value=float(base["min_duration_s"]),
+                    step=5.0,
+                    key="jc_min_dur_{}".format(task),
+                )
+            }
+        quality_json = json.dumps(dict({"*": values}, **per_task))
+
+    if pode_editar and st.button("Salvar parâmetros", type="primary", key="jc_save_params"):
+        _save_settings(
+            {"examined_threshold_s": float(examined), "hz_nominal": float(hz_nominal) or None},
+            quality_thresholds=quality_json,
+        )
+
+
+if not editing:
+    _render_context()
+else:
+    from utils.jornada_cache import get_project_model
+
+    tab_context, tab_stores, tab_catalog, tab_params = st.tabs(
+        ["Contexto", "Lojas e perfis", "Catálogo de AOIs", "Parâmetros"]
+    )
+    with tab_context:
+        _render_context()
+    project_model = get_project_model(project)
+    with tab_stores:
+        _render_stores(project_model)
+    with tab_catalog:
+        _render_catalog(project_model)
+    with tab_params:
+        _render_parameters()
