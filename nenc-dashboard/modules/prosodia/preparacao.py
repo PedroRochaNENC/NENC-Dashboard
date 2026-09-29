@@ -5,9 +5,6 @@ Formulário de criação/edição de um projeto: nome, tipo, contexto e pergunta
 As perguntas serão usadas na verificação automática de qualidade de cada áudio.
 """
 
-import io
-import zipfile
-import xml.etree.ElementTree as ET
 import json
 from datetime import datetime
 
@@ -31,6 +28,7 @@ from utils.ai_provider import (
     get_openai_client,
     get_prosodia_vector_store_id,
 )
+from utils.briefing import cap_text, extract_briefing_text
 from utils.kb_attributes import project_document
 from utils.organization_data import claim_external_resource, list_external_resources
 from utils.prosodia_project_types import (
@@ -42,63 +40,13 @@ from utils.prosodia_project_types import (
 init_db()
 
 
-def _decode_text_bytes(data: bytes) -> str:
-    for enc in ("utf-8", "utf-8-sig", "latin-1"):
-        try:
-            return data.decode(enc)
-        except Exception:
-            continue
-    return data.decode("utf-8", errors="ignore")
-
-
-def _extract_text_from_docx(data: bytes) -> str:
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        xml_bytes = zf.read("word/document.xml")
-
-    root = ET.fromstring(xml_bytes)
-    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    paragraphs = []
-    for p in root.findall(".//w:p", ns):
-        texts = [t.text for t in p.findall(".//w:t", ns) if t.text]
-        if texts:
-            paragraphs.append("".join(texts))
-    return "\n".join(paragraphs)
-
-
 def _extract_briefing_text(uploaded_file) -> tuple[str, str]:
     """
     Retorna (texto_extraido, erro). Em caso de sucesso, erro="".
     """
     if not uploaded_file:
         return "", ""
-
-    filename = str(uploaded_file.name or "briefing")
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-
-    data = uploaded_file.getvalue()
-    if not data:
-        return "", "O arquivo de briefing está vazio."
-
-    try:
-        if ext in {"txt", "md", "csv", "json"}:
-            return _decode_text_bytes(data).strip(), ""
-
-        if ext == "docx":
-            text = _extract_text_from_docx(data).strip()
-            if not text:
-                return "", "Não foi possível extrair texto do .docx informado."
-            return text, ""
-
-        return "", "Formato não suportado. Use .txt, .md, .csv, .json ou .docx."
-    except Exception as e:
-        return "", f"Erro ao processar briefing: {e}"
-
-
-def _cap_briefing(text: str, max_chars: int = 20000) -> str:
-    text = str(text or "").strip()
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + "\n...[briefing truncado no armazenamento]"
+    return extract_briefing_text(uploaded_file.name, uploaded_file.getvalue())
 
 
 def _slugify(text: str) -> str:
@@ -623,7 +571,7 @@ if submitted:
                 st.error(err)
                 st.stop()
             briefing_filename = briefing_file.name
-            briefing_text = _cap_briefing(extracted_text)
+            briefing_text = cap_text(extracted_text)
             uploaded_briefing_name = briefing_file.name
             uploaded_briefing_bytes = briefing_file.getvalue()
 
