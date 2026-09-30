@@ -13,8 +13,10 @@ A sincronização pode ser feita por:
     - Por campanha pertencente à organização, usando seus contatos registrados
 """
 
+import bisect
 import io
 import json
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -803,33 +805,226 @@ def fetch_audios_for_sync(
 
 
 # ---------------------------------------------------------------------------
-# Mapper: JSON da API → CSV Sincronizado
+# Mapper: JSON da API → CSVs do Dashboard
 #
 # O result_json do worker tem a seguinte estrutura:
 # Se devaice_result é dict (caso normal):
 #   { "vad": [...], "expressionLarge": {...}, "prosody": {...}, "asr": {...},
-#     "whisper": { "segments": [...], "text": "...", ... } }
+#     "whisper": { "segments": [...], "text": "...", ... },
+#     "text_sentiment": { "status": ..., "segments": [...] },   # desde 09/2026
+#     "segmentacao": { "cortado": true, "trecho_s": 60 } }      # só áudio longo
 #
 # Se devaice_result não é dict (raro):
-#   { "devaice": <valor>, "whisper": {...} }
+#   { "devaice": <valor>, "whisper": {...}, ... }
+#
+# A linha i do VAD (DevAIce) e o segmento i do Whisper NÃO são o mesmo trecho:
+# são duas segmentações independentes do mesmo áudio. O sincronizado casa cada
+# linha do VAD com o segmento do Whisper pelo tempo, nunca pela posição.
 # ---------------------------------------------------------------------------
 
-def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
-    """
-    Converte o JSON de resultado da API (DevAIce + Whisper) em um CSV
-    no formato "Sincronizado" que o Dashboard entende nativamente.
+# Sem sobreposição, a linha do VAD fica com o segmento mais próximo até esta
+# distância (segundos); além dela, fica sem fala.
+TOLERANCIA_ALINHAMENTO_S = 0.5
 
-    O CSV resultante contém colunas de VAD (start_s, end_s, duracao_s),
-    colunas de transcrição (speakers, timestamp_inicio, texto_transcricao)
-    e todas as colunas de features acústicas.
-    """
-    # --- Extrair VAD do DevAIce ---
+# Mesmo limiar da API: acima dele o áudio é analisado em trechos de ~60 s, e o
+# Whisper recomeça os rótulos de locutor (A, B...) a cada trecho.
+LIMIAR_AUDIO_CORTADO_S = 900.0
+
+# |nota| abaixo disto é neutro. Vale só quando o resultado não traz o rótulo.
+FAIXA_NEUTRA_SENTIMENTO = 0.2
+
+COLUNAS_SENTIMENTO = ["sentimento_texto", "sentimento_rotulo", "sentimento_justificativa"]
+
+# O que vai para a base de conhecimento: a fala, sem as inferências sobre ela.
+COLUNAS_TRANSCRICAO_KB = ["SpeakerName", "Timestamp", "Text"]
+
+COLUNAS_TRANSCRICAO = COLUNAS_TRANSCRICAO_KB + [
+    "start_s",
+    "end_s",
+    "segmento_idx",
+] + COLUNAS_SENTIMENTO
+
+_COLUNAS_VAD_ACUSTICAS = [
+    "start_s", "end_s", "duracao_s",
+    "f0_media", "f0_variacao", "f0_min", "f0_max",
+    "loudness_media", "loudness_variacao",
+    "speaking_rate", "intonation_score",
+    "emocao_angry", "emocao_happy", "emocao_neutral", "emocao_sad",
+    "dim_arousal", "dim_dominance", "dim_valence",
+]
+
+
+def _numero(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _formatar_timestamp(seconds: float, casas: int = 0) -> str:
+    """Segundos em HH:MM:SS (ou HH:MM:SS.ss com casas=2)."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    rest = seconds % 60
+    if casas:
+        return f"{hours:02d}:{minutes:02d}:{rest:0{3 + casas}.{casas}f}"
+    return f"{hours:02d}:{minutes:02d}:{int(rest):02d}"
+
+
+def rotulo_sentimento(score: Optional[float], faixa_neutra: float = FAIXA_NEUTRA_SENTIMENTO) -> Optional[str]:
+    if score is None:
+        return None
+    if score >= faixa_neutra:
+        return "positivo"
+    if score <= -faixa_neutra:
+        return "negativo"
+    return "neutro"
+
+
+def _devaice(result: Dict) -> Dict:
     # No caso normal, vad está na raiz do result. No caso raro, dentro de "devaice".
     if "devaice" in result and isinstance(result["devaice"], dict):
-        devaice = result["devaice"]
-    else:
-        devaice = result
+        return result["devaice"]
+    return result
 
+
+def _whisper(result: Dict) -> Dict:
+    whisper = result.get("whisper") or {}
+    return whisper if isinstance(whisper, dict) else {}
+
+
+def _segmentos_whisper(result: Dict) -> List[Dict]:
+    """Segmentos do Whisper com o índice original de `whisper.segments`.
+
+    O índice é a chave que liga o segmento à nota de sentimento da API. Início
+    ou fim nulo não derruba a importação: o início herda o fim do segmento
+    anterior (o Whisper devolve em ordem) e o fim, o início.
+    """
+    segments = _whisper(result).get("segments")
+    saida = []
+    fim_anterior = 0.0
+    for index, seg in enumerate(segments if isinstance(segments, list) else []):
+        if not isinstance(seg, dict):
+            continue
+        start = _numero(seg.get("start"))
+        end = _numero(seg.get("end"))
+        if start is None:
+            start = fim_anterior
+        if end is None or end < start:
+            end = start
+        fim_anterior = end
+        speaker = str(seg.get("speaker") or "").strip() or "Entrevistado"
+        saida.append({
+            "index": index,
+            "start": start,
+            "end": end,
+            "speaker": speaker,
+            "text": str(seg.get("text") or "").strip(),
+        })
+    return saida
+
+
+def _sentimento_por_indice(result: Dict) -> Dict[int, Dict[str, Any]]:
+    """Nota de sentimento do texto por índice de segmento do Whisper.
+
+    Só vale o bloco `done` ou `partial` cujo `n_segments` bate com os segmentos
+    do Whisper deste mesmo resultado: se a transcrição mudou, os índices seriam
+    de outra.
+    """
+    bloco = result.get("text_sentiment")
+    if not isinstance(bloco, dict) or bloco.get("status") not in ("done", "partial"):
+        return {}
+    segments = _whisper(result).get("segments")
+    if not isinstance(segments, list) or bloco.get("n_segments") != len(segments):
+        return {}
+    faixa = _numero(bloco.get("faixa_neutra"))
+    faixa = FAIXA_NEUTRA_SENTIMENTO if faixa is None else faixa
+
+    notas: Dict[int, Dict[str, Any]] = {}
+    for item in bloco.get("segments") or []:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        score = _numero(item.get("score"))
+        if isinstance(index, bool) or not isinstance(index, int) or score is None:
+            continue
+        notas[index] = {
+            "sentimento_texto": round(score, 3),
+            "sentimento_rotulo": item.get("label") or rotulo_sentimento(score, faixa),
+            "sentimento_justificativa": str(item.get("justificativa") or "").strip() or None,
+        }
+    return notas
+
+
+def _audio_cortado(result: Dict, segmentos: List[Dict], vad_rows: List[Dict]) -> bool:
+    """Áudio analisado em trechos pela API: rótulos de locutor por trecho.
+
+    A marca `segmentacao` vem da API; resultados de antes dela são
+    reconhecidos pela duração.
+    """
+    segmentacao = result.get("segmentacao")
+    if isinstance(segmentacao, dict) and segmentacao.get("cortado"):
+        return True
+    fins = [s["end"] for s in segmentos] + [
+        r["end_s"] for r in vad_rows if r.get("end_s") is not None
+    ]
+    return max(fins, default=0.0) > LIMIAR_AUDIO_CORTADO_S
+
+
+def alinhar_vad_aos_segmentos(
+    vad: List[tuple],
+    segmentos: List[tuple],
+    tol: float = TOLERANCIA_ALINHAMENTO_S,
+) -> List[Optional[int]]:
+    """Para cada intervalo do VAD, a posição do segmento que o cobre no tempo.
+
+    `vad` e `segmentos` são listas de (início, fim) em segundos. Vence o
+    segmento de maior sobreposição (empate: o de menor posição). Sem
+    sobreposição, o de menor distância até `tol`; além disso, None.
+    """
+    ordem = sorted(range(len(segmentos)), key=lambda i: (segmentos[i][0], segmentos[i][1], i))
+    inicios = [segmentos[i][0] for i in ordem]
+    # Maior fim entre as posições 0..k da ordem: limita a varredura para trás.
+    maior_fim = []
+    acumulado = float("-inf")
+    for i in ordem:
+        acumulado = max(acumulado, segmentos[i][1])
+        maior_fim.append(acumulado)
+
+    resultado: List[Optional[int]] = []
+    for inicio, fim in vad:
+        if inicio is None or fim is None:
+            resultado.append(None)
+            continue
+        melhor = None  # (sobreposição, -posição)
+        mais_proximo = None  # (distância, posição)
+        k = bisect.bisect_right(inicios, fim + tol) - 1
+        while k >= 0 and maior_fim[k] >= inicio - tol:
+            posicao = ordem[k]
+            seg_inicio, seg_fim = segmentos[posicao]
+            sobreposicao = min(fim, seg_fim) - max(inicio, seg_inicio)
+            if sobreposicao > 0:
+                if melhor is None or (sobreposicao, -posicao) > melhor:
+                    melhor = (sobreposicao, -posicao)
+            else:
+                distancia = max(seg_inicio - fim, inicio - seg_fim, 0.0)
+                if distancia <= tol and (mais_proximo is None or (distancia, posicao) < mais_proximo):
+                    mais_proximo = (distancia, posicao)
+            k -= 1
+        if melhor is not None:
+            resultado.append(-melhor[1])
+        elif mais_proximo is not None:
+            resultado.append(mais_proximo[1])
+        else:
+            resultado.append(None)
+    return resultado
+
+
+def _vad_rows(devaice: Dict) -> List[Dict]:
+    """Uma linha por segmento do VAD, com as features da DevAIce do mesmo índice."""
     vad_raw = devaice.get("vad", [])
     if not isinstance(vad_raw, list):
         vad_raw = []
@@ -846,10 +1041,10 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
     for idx, seg in enumerate(vad_raw):
         if not isinstance(seg, dict):
             continue
-        start = float(seg.get("start", seg.get("begin", 0)))
-        end = float(seg.get("end", 0))
+        start = _numero(seg.get("start", seg.get("begin"))) or 0.0
+        end = _numero(seg.get("end")) or 0.0
 
-        # Obter dados correspondentes de expressão e prosódia
+        # A DevAIce devolve expressão e prosódia na mesma ordem do VAD.
         expr = expression_raw[idx] if idx < len(expression_raw) else {}
         if not isinstance(expr, dict):
             expr = {}
@@ -864,7 +1059,7 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
         f0 = pros.get("f0") or {}
         loudness = pros.get("loudness") or {}
 
-        row = {
+        vad_rows.append({
             "start_s": round(start, 4),
             "end_s": round(end, 4),
             "duracao_s": round(end - start, 4),
@@ -884,86 +1079,80 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
             "dim_arousal": dimensional.get("arousal"),
             "dim_dominance": dimensional.get("dominance"),
             "dim_valence": dimensional.get("valence"),
+        })
+    return vad_rows
+
+
+def _colunas_do_segmento(seg: Optional[Dict], sentimento: Dict[int, Dict]) -> Dict[str, Any]:
+    if seg is None:
+        return {
+            "speakers": None,
+            "timestamp_inicio": None,
+            "texto_transcricao": None,
+            "segmento_idx": None,
+            **{coluna: None for coluna in COLUNAS_SENTIMENTO},
         }
-        vad_rows.append(row)
+    nota = sentimento.get(seg["index"], {})
+    return {
+        "speakers": seg["speaker"],
+        "timestamp_inicio": _formatar_timestamp(seg["start"], casas=2),
+        "texto_transcricao": seg["text"],
+        "segmento_idx": seg["index"],
+        **{coluna: nota.get(coluna) for coluna in COLUNAS_SENTIMENTO},
+    }
 
-    # --- Extrair Transcrição (Whisper) ---
-    whisper = result.get("whisper") or {}
-    if not isinstance(whisper, dict):
-        whisper = {}
 
-    segments = whisper.get("segments", [])
-    if not isinstance(segments, list):
-        segments = []
+def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
+    """
+    Converte o JSON de resultado da API (DevAIce + Whisper) em um CSV
+    no formato "Sincronizado" que o Dashboard entende nativamente.
 
-    tr_rows = []
-    for seg in segments:
-        if not isinstance(seg, dict):
-            continue
-        start = float(seg.get("start", 0))
-        text = str(seg.get("text", "")).strip()
-        if not text:
-            continue
-        # Whisper com diarização pode ter "speaker", senão genérico
-        speaker = seg.get("speaker", "Entrevistado")
-        if not speaker:
-            speaker = "Entrevistado"
-        # Converter segundos para timestamp HH:MM:SS.ss
-        hours = int(start // 3600)
-        minutes = int((start % 3600) // 60)
-        seconds = start % 60
-        ts = f"{hours:02d}:{minutes:02d}:{seconds:05.2f}"
-        tr_rows.append({
-            "speakers": speaker,
-            "timestamp_inicio": ts,
-            "texto_transcricao": text,
-        })
-
-    # Se Whisper não tiver segments mas tiver text, criar uma linha única
-    if not tr_rows and whisper.get("text"):
-        tr_rows.append({
-            "speakers": "Entrevistado",
-            "timestamp_inicio": "00:00:00.00",
-            "texto_transcricao": str(whisper["text"]).strip(),
-        })
-
-    # --- Montar DataFrame unificado ---
-    n_vad = len(vad_rows)
-    n_tr = len(tr_rows)
-    n = max(n_vad, n_tr, 1)
-
-    while len(vad_rows) < n:
-        vad_rows.append({
-            "start_s": None,
-            "end_s": None,
-            "duracao_s": None,
-            "f0_media": None,
-            "f0_variacao": None,
-            "f0_min": None,
-            "f0_max": None,
-            "loudness_media": None,
-            "loudness_variacao": None,
-            "speaking_rate": None,
-            "intonation_score": None,
-            "emocao_angry": None,
-            "emocao_happy": None,
-            "emocao_neutral": None,
-            "emocao_sad": None,
-            "dim_arousal": None,
-            "dim_dominance": None,
-            "dim_valence": None,
-        })
-    while len(tr_rows) < n:
-        tr_rows.append({"speakers": None, "timestamp_inicio": None, "texto_transcricao": None})
+    Uma linha por segmento do VAD: colunas de VAD (start_s, end_s, duracao_s),
+    as features acústicas e a fala do segmento do Whisper que cobre aquele
+    trecho no tempo (speakers, timestamp_inicio, texto_transcricao), com o
+    índice do segmento (segmento_idx) e o sentimento do texto dele. Vários
+    segmentos do VAD podem cair no mesmo segmento do Whisper; quem precisar
+    da fala uma vez só deduplica por segmento_idx. Sem VAD, uma linha por
+    segmento do Whisper, sem features.
+    """
+    devaice = _devaice(result)
+    vad_rows = _vad_rows(devaice)
+    segmentos = _segmentos_whisper(result)
+    com_texto = [s for s in segmentos if s["text"]]
+    sentimento = _sentimento_por_indice(result)
+    cortado = _audio_cortado(result, segmentos, vad_rows)
 
     rows = []
-    for i in range(n):
-        row = {}
-        row.update(vad_rows[i])
-        row.update(tr_rows[i])
-        rows.append(row)
+    if vad_rows:
+        posicoes = alinhar_vad_aos_segmentos(
+            [(r["start_s"], r["end_s"]) for r in vad_rows],
+            [(s["start"], s["end"]) for s in com_texto],
+        )
+        for vad_row, posicao in zip(vad_rows, posicoes):
+            seg = com_texto[posicao] if posicao is not None else None
+            rows.append({**vad_row, **_colunas_do_segmento(seg, sentimento)})
+        # Whisper sem segmentos (modelo sem timestamps): o texto inteiro fica
+        # na primeira linha, como sempre ficou.
+        texto = str(_whisper(result).get("text") or "").strip()
+        if not com_texto and texto:
+            rows[0].update({"speakers": "Entrevistado", "timestamp_inicio": "00:00:00.00",
+                            "texto_transcricao": texto})
+    else:
+        vazio = {coluna: None for coluna in _COLUNAS_VAD_ACUSTICAS}
+        for seg in com_texto:
+            rows.append({**vazio, **_colunas_do_segmento(seg, sentimento)})
+        texto = str(_whisper(result).get("text") or "").strip()
+        if not rows:
+            rows.append({**vazio, **_colunas_do_segmento(None, sentimento)})
+            if texto:
+                rows[0].update({"speakers": "Entrevistado", "timestamp_inicio": "00:00:00.00",
+                                "texto_transcricao": texto})
+
+    for row in rows:
+        row["audio_cortado"] = cortado
 
     df = pd.DataFrame(rows)
+    df["segmento_idx"] = df["segmento_idx"].astype("Int64")
 
     col_order = ["start_s", "end_s", "duracao_s", "speakers", "timestamp_inicio", "texto_transcricao"]
     existing = [c for c in col_order if c in df.columns]
@@ -975,17 +1164,62 @@ def map_api_result_to_sincronizado_csv(result: Dict, session_id: str) -> bytes:
     return buf.getvalue()
 
 
+def _transcricao_rows(result: Dict, devaice: Dict) -> List[Dict]:
+    """Uma linha por segmento do Whisper com fala; sem segmentos, o texto inteiro."""
+    sentimento = _sentimento_por_indice(result)
+    tr_rows = []
+    for seg in _segmentos_whisper(result):
+        if not seg["text"]:
+            continue
+        nota = sentimento.get(seg["index"], {})
+        tr_rows.append({
+            "SpeakerName": seg["speaker"],
+            "Timestamp": _formatar_timestamp(seg["start"]),
+            "Text": seg["text"],
+            "start_s": round(seg["start"], 3),
+            "end_s": round(seg["end"], 3),
+            "segmento_idx": seg["index"],
+            **{coluna: nota.get(coluna) for coluna in COLUNAS_SENTIMENTO},
+        })
+
+    # Se Whisper não tiver segments mas tiver text
+    whisper = _whisper(result)
+    if not tr_rows and whisper.get("text"):
+        tr_rows.append({
+            "SpeakerName": "Entrevistado",
+            "Timestamp": "00:00:00",
+            "Text": str(whisper["text"]).strip(),
+        })
+
+    # Se não houver transcrição no Whisper, tentar do ASR do DevAIce
+    if not tr_rows:
+        asr = devaice.get("asr", {})
+        asr_text = ""
+        if isinstance(asr, dict):
+            asr_text = asr.get("transcript") or asr.get("transcription") or ""
+        elif isinstance(asr, list) and asr:
+            first = asr[0]
+            if isinstance(first, dict):
+                asr_text = first.get("transcript") or first.get("transcription") or ""
+
+        if asr_text:
+            tr_rows.append({
+                "SpeakerName": "Entrevistado",
+                "Timestamp": "00:00:00",
+                "Text": str(asr_text).strip(),
+            })
+    return tr_rows
+
+
 def map_api_result_to_all_formats(result: Dict, session_id: str) -> tuple[bytes, bytes, bytes]:
     """
     Converte o JSON de resultado da API (DevAIce + Whisper) em três arquivos de bytes:
     1. prosodia_json: Estrutura JSON {"result": {"vad": [...], "expressionLarge": {...}, ...}}
-    2. transcricao_csv: Estrutura CSV com colunas [SpeakerName, Timestamp, Text]
+    2. transcricao_csv: CSV com SpeakerName, Timestamp, Text na frente, seguidas de
+       start_s, end_s, segmento_idx e do sentimento do texto de cada segmento
     3. sincronizado_csv: Estrutura CSV Sincronizado unificando ambos
     """
-    if "devaice" in result and isinstance(result["devaice"], dict):
-        devaice = result["devaice"]
-    else:
-        devaice = result
+    devaice = _devaice(result)
 
     # 1. Montar prosodia_json
     prosodia_dict = {
@@ -999,68 +1233,8 @@ def map_api_result_to_all_formats(result: Dict, session_id: str) -> tuple[bytes,
     prosodia_json_bytes = json.dumps(prosodia_dict, ensure_ascii=False).encode("utf-8")
 
     # 2. Montar transcricao_csv (Whisper)
-    whisper = result.get("whisper") or {}
-    if not isinstance(whisper, dict):
-        whisper = {}
-
-    segments = whisper.get("segments", [])
-    if not isinstance(segments, list):
-        segments = []
-
-    tr_rows = []
-    for seg in segments:
-        if not isinstance(seg, dict):
-            continue
-        start = float(seg.get("start", 0))
-        text = str(seg.get("text", "")).strip()
-        if not text:
-            continue
-        speaker = seg.get("speaker", "Entrevistado")
-        if not speaker:
-            speaker = "Entrevistado"
-
-        # Converter segundos para timestamp HH:MM:SS
-        hours = int(start // 3600)
-        minutes = int((start % 3600) // 60)
-        seconds = start % 60
-        ts = f"{hours:02d}:{minutes:02d}:{int(seconds):02d}"
-
-        tr_rows.append({
-            "SpeakerName": speaker,
-            "Timestamp": ts,
-            "Text": text
-        })
-
-    # Se Whisper não tiver segments mas tiver text
-    if not tr_rows and whisper.get("text"):
-        tr_rows.append({
-            "SpeakerName": "Entrevistado",
-            "Timestamp": "00:00:00",
-            "Text": str(whisper["text"]).strip()
-        })
-
-    # Se não houver transcrição no Whisper, tentar do ASR do DevAIce
-    if not tr_rows:
-        asr = devaice.get("asr", {})
-        asr_text = ""
-        if isinstance(asr, dict):
-            asr_text = asr.get("transcript") or asr.get("transcription") or ""
-        elif isinstance(asr, list) and asr:
-            first = asr[0]
-            if isinstance(first, dict):
-                asr_text = first.get("transcript") or first.get("transcription") or ""
-        
-        if asr_text:
-            tr_rows.append({
-                "SpeakerName": "Entrevistado",
-                "Timestamp": "00:00:00",
-                "Text": str(asr_text).strip()
-            })
-
-    if tr_rows:
-        df_tr = pd.DataFrame(tr_rows)
-    else:
-        df_tr = pd.DataFrame(columns=["SpeakerName", "Timestamp", "Text"])
+    df_tr = pd.DataFrame(_transcricao_rows(result, devaice), columns=COLUNAS_TRANSCRICAO)
+    df_tr["segmento_idx"] = df_tr["segmento_idx"].astype("Int64")
 
     buf_tr = io.BytesIO()
     df_tr.to_csv(buf_tr, index=False, encoding="utf-8")
@@ -1070,6 +1244,69 @@ def map_api_result_to_all_formats(result: Dict, session_id: str) -> tuple[bytes,
     sincronizado_csv_bytes = map_api_result_to_sincronizado_csv(result, session_id)
 
     return prosodia_json_bytes, transcricao_csv_bytes, sincronizado_csv_bytes
+
+
+def transcricao_para_base_conhecimento(csv_bytes: Optional[bytes]) -> Optional[bytes]:
+    """O CSV de transcrição só com locutor, tempo e fala, para a base de conhecimento.
+
+    O CSV passou a levar a nota e a justificativa de sentimento de cada trecho.
+    A base de conhecimento existe para a IA citar o que foi dito; a inferência
+    sobre a fala não precisa sair junto para a OpenAI (minimização de dados).
+    CSV que não abre, ou sem nenhuma das três colunas, segue como veio.
+    """
+    if not csv_bytes:
+        return csv_bytes
+    try:
+        df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str, keep_default_na=False)
+    except Exception:
+        return csv_bytes
+    df.columns = [str(c).strip() for c in df.columns]
+    colunas = [c for c in COLUNAS_TRANSCRICAO_KB if c in df.columns]
+    if not colunas or len(colunas) == len(df.columns):
+        return csv_bytes
+    buf = io.BytesIO()
+    df[colunas].to_csv(buf, index=False, encoding="utf-8")
+    return buf.getvalue()
+
+
+def atualizar_conteudo_audios_importados(audios: Iterable[Dict]) -> Dict[str, Any]:
+    """Rebaixa da API o resultado dos áudios já importados e regrava os blobs.
+
+    Leva para os áudios antigos o que mudou sem nova análise: o casamento VAD ×
+    transcrição pelo tempo e o sentimento do texto que a API calculou depois.
+    Não pede reprocessamento, não chama IA e não refaz a verificação de
+    qualidade: troca prosódia, transcrição e sincronizado e recalcula os
+    momentos de maior ativação, que saem do sincronizado.
+
+    Áudios que não vieram da API, ou que ainda estão em processamento ou
+    falharam, ficam como estão (a sincronização normal cuida deles).
+    """
+    from utils.prosodia_db import save_high_activations, update_audio_content
+    from utils.prosodia_loader import normalizar_sincronizado
+    from utils.prosodia_signals import momentos_alta_ativacao
+
+    resumo: Dict[str, Any] = {"atualizados": 0, "ignorados": 0, "falhas": []}
+    for audio in audios:
+        session_id = audio.get("session_id")
+        api_audio_id = api_audio_id_from_session(session_id)
+        if api_audio_id is None or audio.get("quality_status") in (
+            "pending", "processing", "running", "failed"
+        ):
+            resumo["ignorados"] += 1
+            continue
+        try:
+            result = get_audio_result(api_audio_id)
+            if not result:
+                resumo["ignorados"] += 1
+                continue
+            json_bytes, csv_bytes, sinc_bytes = map_api_result_to_all_formats(result, session_id)
+            update_audio_content(audio["id"], json_bytes, csv_bytes, sinc_bytes)
+            sinc_df = normalizar_sincronizado(pd.read_csv(io.BytesIO(sinc_bytes)), session_id)
+            save_high_activations(audio["id"], momentos_alta_ativacao(sinc_df))
+            resumo["atualizados"] += 1
+        except Exception as exc:  # um áudio com problema não para os demais
+            resumo["falhas"].append((session_id, str(exc) or type(exc).__name__))
+    return resumo
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,8 @@ from utils.whatsapp_api_client import (
     get_audio_result,
     list_owned_jobs,
     map_api_result_to_all_formats,
-    is_configured
+    is_configured,
+    transcricao_para_base_conhecimento,
 )
 from utils.prosodia_db import (
     get_projects,
@@ -513,10 +514,11 @@ with tab_audios:
                                                 file_id_prosodia = documento.id
                                             if csv_bytes:
                                                 # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
+                                                # Sem as colunas de sentimento: a base cita a fala, nao a inferencia sobre ela.
                                                 documento = add_document_to_vector_store(
                                                     vs_id,
                                                     f"Transcricao-{session_id}.txt",
-                                                    csv_bytes,
+                                                    transcricao_para_base_conhecimento(csv_bytes),
                                                     project_document(
                                                         "prosodia",
                                                         project_id,
@@ -531,7 +533,8 @@ with tab_audios:
                                             st.warning(f"[{session_id}] Falha no upload para KB: {e}")
                                             
                                     # 5. Parse DataFrames
-                                    from utils.prosodia_loader import load_prosodia_from_uploads
+                                    from utils.prosodia_loader import load_prosodia_from_uploads, normalizar_sincronizado
+                                    from utils.prosodia_signals import montar_evidencias_audio
                                     class _BytesFile:
                                         def __init__(self, data: bytes, name: str):
                                             self._buf = _io.BytesIO(data)
@@ -555,7 +558,9 @@ with tab_audios:
                                     sinc_df = pd.DataFrame()
                                     if sinc_bytes:
                                         try:
-                                            sinc_df = pd.read_csv(_io.BytesIO(sinc_bytes))
+                                            sinc_df = normalizar_sincronizado(
+                                                pd.read_csv(_io.BytesIO(sinc_bytes)), session_id
+                                            )
                                         except Exception:
                                             pass
                                             
@@ -567,19 +572,18 @@ with tab_audios:
                                         "problemas": project.get("problemas", ""),
                                     }
                                     
-                                    tables_lines = []
-                                    if not vad_df.empty and "duration" in vad_df.columns:
-                                        total_s = vad_df["duration"].sum()
-                                        tables_lines.append(f"VAD: {len(vad_df)} segmentos, {total_s:.1f}s de fala total.")
-                                    if not tr_df.empty and "SpeakerName" in tr_df.columns:
-                                        by_spk = tr_df.groupby("SpeakerName").agg(msgs=("Text", "count"), words=("word_count", "sum")).reset_index()
-                                        tables_lines.append("Participação por locutor:\n" + by_spk.to_string(index=False))
-                                    tables_text = "\n\n".join(tables_lines)
+                                    evidencias = montar_evidencias_audio(vad_df, tr_df, sinc_df)
                                     transcript_sample = " ".join(tr_df["Text"].fillna("").astype(str).tolist())[:3000]
                                     
                                     # Criar prompt e chamar IA
                                     system_prompt = get_prosodia_system_prompt(tipo_projeto)
-                                    user_prompt = build_prosodia_user_prompt(tables_text, proj_ctx, transcript_sample)
+                                    user_prompt = build_prosodia_user_prompt(
+                                        evidencias.tabelas,
+                                        proj_ctx,
+                                        transcript_sample,
+                                        sentimento_texto=evidencias.sentimento_texto,
+                                        divergencias=evidencias.divergencias,
+                                    )
                                     
                                     with st.spinner(f"[{session_id}] Gerando análise de IA..."):
                                         ai_res = ai_create_analysis(

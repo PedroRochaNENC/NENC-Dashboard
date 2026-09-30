@@ -23,7 +23,8 @@ import pandas as pd
 import html
 
 from utils.prosodia_db import init_db, get_audio, get_project
-from utils.prosodia_loader import load_prosodia_from_uploads
+from utils.prosodia_loader import load_prosodia_from_uploads, normalizar_sincronizado
+from utils.prosodia_signals import detectar_divergencias
 from utils.organization_data import list_external_resources
 from utils.charts import NENC_SEQUENCE
 from utils.prosodia_charts import (
@@ -40,6 +41,13 @@ _LOGGER = logging.getLogger(__name__)
 # roda sem ScriptRunContext e não pode tocar no estado da sessão.
 _AUDIO_DOWNLOADS: set[str] = set()
 _AUDIO_DOWNLOADS_LOCK = threading.Lock()
+
+# Chip de sentimento do texto nos turnos da transcrição.
+_CHIP_SENTIMENTO = {
+    "positivo": "#5fbf9f",
+    "neutro": "#9397ab",
+    "negativo": "#e0748b",
+}
 
 # Idade máxima de um .wav no diretório static servido publicamente.
 _STATIC_AUDIO_TTL_SECONDS = 2 * 60 * 60
@@ -195,6 +203,19 @@ if audio.get("sincronizado_csv"):
     except Exception:
         pass
 
+# Divergências voz × texto: o triângulo vai na primeira linha do VAD de cada
+# segmento divergente, que é para onde a análise salta.
+if not sinc_df.empty and "segmento_idx" in sinc_df.columns:
+    divergencias = detectar_divergencias(normalizar_sincronizado(sinc_df, sid))
+    tipo_por_segmento = dict(zip(divergencias["segmento_idx"].astype(int), divergencias["tipo"]))
+    segmento = pd.to_numeric(sinc_df["segmento_idx"], errors="coerce")
+    primeira_linha = segmento.notna() & ~segmento.duplicated(keep="first")
+    sinc_df["divergencia"] = primeira_linha & segmento.isin(list(tipo_por_segmento))
+    sinc_df["divergencia_tipo"] = [
+        tipo_por_segmento.get(int(seg)) if marcado else None
+        for seg, marcado in zip(segmento.fillna(-1), sinc_df["divergencia"])
+    ]
+
 # Mostrar erros de parse
 for err in data.get("_errors", []):
     st.warning(err)
@@ -229,14 +250,14 @@ if selected_speakers and not tr_filtered.empty and "SpeakerName" in tr_filtered.
 # ------------------------------------------------------------------
 # Preparar dados para o componente HTML
 # ------------------------------------------------------------------
-import json
-
 # Garantir que valores NaN/Null sejam convertidos corretamente
 if not sinc_df.empty:
     sinc_data_list = sinc_df.where(pd.notnull(sinc_df), None).to_dict(orient="records")
 else:
     sinc_data_list = []
-sinc_json = json.dumps(sinc_data_list)
+# A fala e a justificativa do sentimento vão junto: um "</script>" dito na
+# entrevista não pode fechar o bloco do componente.
+sinc_json = ui.json_para_script(sinc_data_list)
 
 focus_seconds = 0.0
 if focus_active and isinstance(focus.get("seconds"), (int, float)):
@@ -258,18 +279,30 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
         spk = str(row.get("SpeakerName", "Desconhecido"))
         text = str(row.get("Text", ""))
         start_s = float(row.get("seconds", 0.0))
-        
+        # A transcrição gerada da API traz o fim real do segmento (end_s).
+        end_s = pd.to_numeric(row.get("end_s"), errors="coerce")
+        score = pd.to_numeric(row.get("sentimento_texto"), errors="coerce")
+        rotulo = row.get("sentimento_rotulo")
+        justificativa = row.get("sentimento_justificativa")
+
         transcript_items.append({
             "speaker": spk,
             "timestamp": str(row.get("Timestamp", "00:00:00")),
             "seconds": start_s,
+            "end_real": float(end_s) if pd.notna(end_s) and end_s > start_s else None,
             "text": text,
-            "color": spk_color_map.get(spk, "#FFFFFF")
+            "color": spk_color_map.get(spk, "#FFFFFF"),
+            "sentimento": float(score) if pd.notna(score) else None,
+            "sentimento_rotulo": str(rotulo) if isinstance(rotulo, str) and rotulo else None,
+            "sentimento_justificativa": str(justificativa) if isinstance(justificativa, str) else "",
         })
 
-    # Estimar end_seconds para cada bloco de fala
+    # end_seconds de cada bloco de fala: o fim real quando existe; senão, o
+    # começo do próximo (ou uma estimativa pelo número de palavras no último).
     for idx, item in enumerate(transcript_items):
-        if idx < len(transcript_items) - 1:
+        if item["end_real"] is not None:
+            item["end_seconds"] = item["end_real"]
+        elif idx < len(transcript_items) - 1:
             item["end_seconds"] = transcript_items[idx + 1]["seconds"]
         else:
             words = len(item["text"].split())
@@ -372,10 +405,17 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
         escaped_speaker = html.escape(str(item["speaker"]))
         escaped_timestamp = html.escape(str(item["timestamp"]))
         escaped_color = html.escape(str(item["color"]), quote=True)
+        chip = ""
+        if item["sentimento"] is not None and item["sentimento_rotulo"] in _CHIP_SENTIMENTO:
+            chip = (
+                f'<span class="sent-chip" style="background: {_CHIP_SENTIMENTO[item["sentimento_rotulo"]]};" '
+                f'title="{html.escape(item["sentimento_justificativa"], quote=True)}">'
+                f'{html.escape(item["sentimento_rotulo"])} {item["sentimento"]:+.2f}</span>'
+            )
         html_turns.append(
             f'<div class="transcript-turn" id="turn-{idx}" data-seconds="{item["seconds"]}" data-end="{item["end_seconds"]}" data-color="{escaped_color}" style="padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid transparent; background-color: var(--nenc-bg); transition: all 0.25s ease;">'
-            f'  <div style="font-weight: bold; color: {escaped_color}; font-size: 0.9em; margin-bottom: 4px; display: flex; justify-content: space-between;">'
-            f'    <span>{escaped_speaker}</span>'
+            f'  <div style="font-weight: bold; color: {escaped_color}; font-size: 0.9em; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px;">'
+            f'    <span>{escaped_speaker}{chip}</span>'
             f'    <span style="font-weight: normal; color: var(--nenc-muted); font-size: 0.85em;">{escaped_timestamp}</span>'
             f'  </div>'
             f'  <div style="color: var(--nenc-text); font-size: 0.95em; line-height: 1.45;">{escaped_text}</div>'
@@ -459,6 +499,16 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
             .transcript-turn:hover {
                 background-color: var(--nenc-border) !important;
             }
+            .sent-chip {
+                display: inline-block;
+                margin-left: 8px;
+                padding: 1px 7px;
+                border-radius: 9px;
+                font-size: 0.78em;
+                font-weight: 600;
+                color: #161826;
+                cursor: help;
+            }
             .transcript-turn.active {
                 background-color: var(--nenc-accent-800) !important;
                 box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
@@ -501,7 +551,7 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                     </div>
                 </div>
                 <div class="chart-wrapper" id="wrapper-dimensions">
-                    <div class="chart-title">Dimensões Afetivas (Arousal, Valence, Dominance)</div>
+                    <div class="chart-title">Dimensões Afetivas (Arousal, Valence, Dominance) e Sentimento do Texto</div>
                     <div style="height: 180px; position: relative;">
                         <canvas id="chart-dimensions"></canvas>
                     </div>
@@ -642,6 +692,20 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                             }
                         },
                         plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    // Justificativa do sentimento e leitura da
+                                    // divergência, só nas séries do texto.
+                                    afterLabel: (ctx) => {
+                                        if (!ctx.dataset.sentimento && !ctx.dataset.divergencia) return '';
+                                        const d = rawData[ctx.dataIndex] || {};
+                                        const linhas = [];
+                                        if (ctx.dataset.divergencia && d.divergencia_tipo) linhas.push(d.divergencia_tipo);
+                                        if (d.sentimento_justificativa) linhas.push(d.sentimento_justificativa);
+                                        return linhas;
+                                    }
+                                }
+                            },
                             legend: {
                                 position: 'top',
                                 align: 'end',
@@ -704,10 +768,41 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
                 getDataset('Raiva', 'emocao_angry', '#e0748b')
             ].filter(d => d !== null);
 
+            // Sentimento do texto: um valor por segmento do Whisper, repetido
+            // nas linhas do VAD que caem nele — por isso em degraus. Amostrado
+            // nas linhas do VAD porque os gráficos dividem o eixo x no modo index.
+            const sentimentoDataset = getDataset('Sentimento do texto', 'sentimento_texto', '#b5abfc');
+            if (sentimentoDataset) {
+                sentimentoDataset.stepped = true;
+                sentimentoDataset.tension = 0;
+                sentimentoDataset.borderDash = [6, 4];
+                sentimentoDataset.sentimento = true;
+            }
+            const divergenciaDataset = rawData.some(d => d.divergencia === true) ? {
+                label: 'Divergência voz × texto',
+                data: rawData.map(d => {
+                    const t = d.start_s !== undefined ? d.start_s : (d.start !== undefined ? d.start : 0);
+                    const val = d.divergencia === true ? d.sentimento_texto : null;
+                    return {
+                        x: parseFloat(t),
+                        y: (val !== null && val !== undefined) ? parseFloat(val) : null
+                    };
+                }),
+                borderColor: '#e9c46a',
+                backgroundColor: '#e9c46a',
+                showLine: false,
+                pointStyle: 'triangle',
+                pointRadius: 7,
+                pointHoverRadius: 9,
+                divergencia: true
+            } : null;
+
             const dimensionsDatasets = [
                 getDataset('Valência', 'dim_valence', '#5fbf9f'),
                 getDataset('Arousal', 'dim_arousal', '#e0748b'),
-                getDataset('Dominância', 'dim_dominance', '#d98d5f')
+                getDataset('Dominância', 'dim_dominance', '#d98d5f'),
+                sentimentoDataset,
+                divergenciaDataset
             ].filter(d => d !== null);
 
             const temporalDatasets = [
@@ -888,8 +983,8 @@ if not tr_filtered.empty and "seconds" in tr_filtered.columns:
     widget_html = widget_html.replace("__TURNS_JOINED__", turns_joined)
     widget_html = widget_html.replace("__ACOUSTIC_DATA__", sinc_json)
     widget_html = widget_html.replace("__FOCUS_SECONDS__", str(focus_seconds))
-    # json.dumps produz um literal JS com aspas e escape corretos.
-    widget_html = widget_html.replace("__AUDIO_FILENAME__", json.dumps(audio_filename))
+    # Literal JS com aspas e escape corretos, sem como fechar o <script>.
+    widget_html = widget_html.replace("__AUDIO_FILENAME__", ui.json_para_script(audio_filename))
 
     # Renderizar o widget customizado unificado
     import streamlit.components.v1 as components

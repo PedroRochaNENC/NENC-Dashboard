@@ -323,6 +323,65 @@ class DocumentRemovalTests(unittest.TestCase):
         self.assertEqual(listing.cleared, 1)
 
 
+class DocumentRemovalTests(unittest.TestCase):
+    """O botao "Remover" da tela de Base de Conhecimento.
+
+    Ele some com o documento nos tres modulos pelo mesmo caminho, e nenhum
+    deles pode parar num erro por causa de um arquivo que ja nao existe.
+    """
+
+    class _Listing:
+        def __init__(self):
+            self.cleared = 0
+
+        def clear(self):
+            self.cleared += 1
+
+    def _patched(self, client, listing=None):
+        return patch.multiple(
+            kb_cleanup,
+            get_openai_client=lambda: client,
+            list_vector_store_documents=listing or self._Listing(),
+        )
+
+    def test_a_file_that_openai_no_longer_has_is_removed_without_error(self):
+        # O caso do "No such File object": o documento continuava listado, e o
+        # 404 do arquivo aparecia na tela como se nada tivesse saido.
+        client = _Client(
+            [], missing_files=["file-sumido"], missing_entries=["file-sumido"]
+        )
+        listing = self._Listing()
+
+        with self._patched(client, listing):
+            kb_cleanup.remove_document("vs_1", "file-sumido")
+
+        self.assertEqual(listing.cleared, 1)
+
+    def test_the_file_still_goes_when_it_had_already_left_the_vector_store(self):
+        # Sem isto o arquivo ficaria na conta, invisivel e cobrado.
+        client = _Client([], missing_entries=["file-solto"])
+
+        with self._patched(client):
+            kb_cleanup.remove_document("vs_1", "file-solto")
+
+        self.assertEqual(client.files.deleted, ["file-solto"])
+
+    def test_a_failure_that_is_not_a_404_reaches_who_clicked(self):
+        def explode(file_id):
+            raise RuntimeError("erro da OpenAI")
+
+        client = _Client([])
+        client.files.delete = explode
+        listing = self._Listing()
+
+        with self._patched(client, listing):
+            with self.assertRaises(RuntimeError):
+                kb_cleanup.remove_document("vs_1", "file-x")
+
+        # A remocao parou no meio: a listagem em cache nao vale mais.
+        self.assertEqual(listing.cleared, 1)
+
+
 class ReferenceRenderingTests(unittest.TestCase):
     def test_the_old_string_citations_still_render(self):
         # O Teste Sensorial gravou por um tempo so o nome do arquivo; o

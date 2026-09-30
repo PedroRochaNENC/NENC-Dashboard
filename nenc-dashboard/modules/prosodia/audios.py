@@ -27,9 +27,12 @@ from utils.prosodia_db import (
 )
 from utils.prosodia_loader import (
     load_prosodia_from_uploads,
+    normalizar_sincronizado,
     _session_id_from_name,
     _read_bytes,
 )
+from utils.prosodia_signals import montar_evidencias_audio
+from utils.whatsapp_api_client import transcricao_para_base_conhecimento
 from utils.prosodia_quality import (
     run_quality_checks,
     check_question_coverage_keywords,
@@ -173,7 +176,7 @@ if json_files or csv_files or sinc_files:
             if sinc_bytes:
                 import io as _io
                 try:
-                    sinc_df = pd.read_csv(_io.BytesIO(sinc_bytes))
+                    sinc_df = normalizar_sincronizado(pd.read_csv(_io.BytesIO(sinc_bytes)), sid)
                 except Exception:
                     pass
 
@@ -197,10 +200,11 @@ if json_files or csv_files or sinc_files:
                         file_id_prosodia = documento.id
                     if csv_bytes:
                         # O file_search da OpenAI nao indexa .csv: sobe a transcricao como texto puro.
+                        # Sem colunas de sentimento, se o CSV as trouxer: a base cita a fala.
                         documento = add_document_to_vector_store(
                             vs_id,
                             f"Transcricao-{sid}.txt",
-                            csv_bytes,
+                            transcricao_para_base_conhecimento(csv_bytes),
                             project_document(
                                 "prosodia", project_id, session_id=sid, tipo="transcricao"
                             ),
@@ -219,23 +223,7 @@ if json_files or csv_files or sinc_files:
                 "problemas": project.get("problemas", ""),
             }
 
-            # Montar texto de tabelas
-            tables_lines = []
-            if not vad_df.empty and "duration" in vad_df.columns:
-                total_s = vad_df["duration"].sum()
-                n_segs = len(vad_df)
-                tables_lines.append(
-                    f"VAD: {n_segs} segmentos, {total_s:.1f}s de fala total."
-                )
-            if not tr_df.empty and "SpeakerName" in tr_df.columns:
-                by_spk = (
-                    tr_df.groupby("SpeakerName")
-                    .agg(msgs=("Text", "count"), words=("word_count", "sum"))
-                    .reset_index()
-                )
-                tables_lines.append("Participação por locutor:\n" + by_spk.to_string(index=False))
-
-            tables_text = "\n\n".join(tables_lines)
+            evidencias = montar_evidencias_audio(vad_df, tr_df, sinc_df)
             transcript_sample = " ".join(
                 tr_df["Text"].fillna("").astype(str).tolist()
             )[:3000] if not tr_df.empty and "Text" in tr_df.columns else ""
@@ -244,7 +232,11 @@ if json_files or csv_files or sinc_files:
             try:
                 if ai_provider_id:
                     user_prompt = build_prosodia_user_prompt(
-                        tables_text, proj_ctx, transcript_sample
+                        evidencias.tabelas,
+                        proj_ctx,
+                        transcript_sample,
+                        sentimento_texto=evidencias.sentimento_texto,
+                        divergencias=evidencias.divergencias,
                     )
                     analysis_result = generate_analysis(
                         ai_provider_id,

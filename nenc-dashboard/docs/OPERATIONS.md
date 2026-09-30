@@ -124,6 +124,30 @@ py scripts/prune_analysis_history.py --database C:\dados\nenc-insights.db --keep
 Faca a copia do banco antes do `--apply`: o texto das analises antigas nao tem
 outra copia.
 
+## Sentimento do texto e alinhamento da fala
+
+A API passou a gravar, para cada trecho da transcricao, uma nota de sentimento
+do texto (`text_sentiment`). O dashboard casa cada segmento do VAD com a fala
+pelo tempo (antes era pela posicao, e os momentos de alta ativacao citavam a
+fala de outro minuto). Ordem de implantacao:
+
+1. Deploy da API com a fila `analysis` ociosa (`/health/queues`) e smoke test
+   de um audio curto: `/audios/{id}/status` deve trazer `has_text_sentiment`.
+2. Deploy do dashboard. Ele aceita resultado sem `text_sentiment` e os CSVs
+   antigos.
+3. Em cada projeto, **Atualizar dados da API (sem nova analise)** na pagina
+   Audios. O botao so rebaixa o resultado da API, refaz os CSVs e recalcula os
+   momentos de maior ativacao: nao reprocessa, nao chama IA e nao refaz a
+   verificacao de qualidade. Pode rodar antes do aval do DPO.
+4. Os audios antigos so ganham sentimento depois do aval escrito do DPO (e uma
+   finalidade nova sobre dados coletados sob a politica anterior): rode o
+   `scripts/backfill_sentimento_texto.py` da API em dry-run, depois com
+   `--apply --aprovacao-dpo "<referencia>" --limit N`, e repita o passo 3.
+
+As medias por locutor e as tabelas de ativacao mudam depois do passo 3: e
+correcao do alinhamento, nao regressao. Verificacoes de qualidade e analises de
+IA ja salvas ficam como estavam ate um novo Reverificar ou Regenerar.
+
 ## Recuperacao de administrador
 
 O bootstrap nao deve ser reutilizado para recuperar acesso. Um administrador

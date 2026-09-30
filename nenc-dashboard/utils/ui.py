@@ -17,7 +17,9 @@ Ordem de uso numa pagina de modulo:
 
 from __future__ import annotations
 
-from typing import Callable, Iterable, Sequence
+import json
+import math
+from typing import Any, Callable, Iterable, Sequence
 
 import streamlit as st
 
@@ -128,6 +130,40 @@ def resolve_js_colors(markup: str) -> str:
             "'var(--nenc-{})'".format(key), "'{}'".format(value)
         )
     return markup
+
+
+def _json_valido(valor: Any) -> Any:
+    """NaN e infinito (que o pandas produz) viram null; numpy vira Python."""
+    if isinstance(valor, dict):
+        return {str(k): _json_valido(v) for k, v in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [_json_valido(v) for v in valor]
+    if hasattr(valor, "item") and not isinstance(valor, (str, bytes)):
+        try:
+            valor = valor.item()
+        except (TypeError, ValueError):
+            pass
+    if isinstance(valor, float) and not math.isfinite(valor):
+        return None
+    return valor
+
+
+def json_para_script(dados: Any) -> str:
+    """Literal JSON seguro para colar dentro de um <script> inline.
+
+    `json.dumps` sozinho deixa passar um `</script>` vindo da transcrição, que
+    fecha o bloco antes da hora e injeta o resto como HTML; e NaN, que não é
+    JSON, derruba o script inteiro. `<`, `>` e `&` só aparecem dentro de
+    strings JSON, então viram escapes unicode sem mudar o valor.
+    """
+    texto = json.dumps(_json_valido(dados), ensure_ascii=False, default=str)
+    return (
+        texto.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
 
 
 def breadcrumb(*parts: str) -> None:
