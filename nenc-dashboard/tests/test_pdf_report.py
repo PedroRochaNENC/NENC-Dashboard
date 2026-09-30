@@ -73,6 +73,34 @@ class PieceTests(unittest.TestCase):
         self.assertIn("Barras", _pdf_text(pdf_report.output_bytes(self.pdf)))
 
 
+class ParagraphTests(unittest.TestCase):
+    """Campo do projeto e trecho citado chegam com markdown colado de fora."""
+
+    def setUp(self):
+        self.pdf = pdf_report.ReportPDF("Teste")
+        self.pdf.add_page()
+
+    def test_inline_bold_is_applied_not_printed(self):
+        pdf_report.paragraph(self.pdf, "Relatos com **pitch moderado**, sem extremos.")
+        texto = _pdf_text(pdf_report.output_bytes(self.pdf))
+
+        self.assertNotIn("**", texto)
+        self.assertIn("pitch moderado", texto)
+
+    def test_an_italic_paragraph_keeps_italic_around_the_bold(self):
+        pdf_report.paragraph(self.pdf, "Citação com **ênfase** no meio.", style="I")
+        fluxo = _pdf_text(pdf_report.output_bytes(self.pdf))
+
+        self.assertNotIn("**", fluxo)
+        self.assertIn("ênfase", fluxo)
+
+    def test_plain_text_still_goes_through_multi_cell(self):
+        pdf_report.paragraph(self.pdf, "Texto sem marcação nenhuma.")
+
+        self.assertIn("Texto sem marcação nenhuma.",
+                      _pdf_text(pdf_report.output_bytes(self.pdf)))
+
+
 class MeasuredWidthsTests(unittest.TestCase):
     """Partes iguais quebram palavra no meio; a largura sai da fonte real."""
 

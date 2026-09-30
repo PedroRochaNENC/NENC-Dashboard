@@ -121,18 +121,31 @@ def heading(pdf: FPDF, text: str, level: int = 1) -> None:
 
 
 def paragraph(pdf: FPDF, text: str, size: float = 9.5, color=SECONDARY, style: str = "") -> None:
-    pdf.set_font(FONT, style, size)
     pdf.set_text_color(*color)
-    pdf.multi_cell(0, size * 0.48, sanitize(text), new_x="LMARGIN", new_y="NEXT")
+    height = size * 0.48
+    if "**" in str(text):
+        # Campo do projeto e trecho citado podem vir com markdown colado de
+        # outro lugar. Sem tratar aqui, o leitor ve os asteriscos crus.
+        _write_inline(pdf, text, size, height, base=style)
+        pdf.ln(height)
+    else:
+        pdf.set_font(FONT, style, size)
+        pdf.multi_cell(0, height, sanitize(text), new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(*INK)
 
 
-def _write_inline(pdf: FPDF, text: str, size: float, height: float) -> None:
-    """Escreve uma linha com **negrito** inline, quebrando na margem."""
+def _write_inline(pdf: FPDF, text: str, size: float, height: float, base: str = "") -> None:
+    """Escreve uma linha com **negrito** inline, quebrando na margem.
+
+    `base` e o estilo de fora do negrito — um trecho citado em italico segue
+    italico entre os asteriscos.
+    """
+    forte = "B" if "B" in base else ""
     for index, part in enumerate(str(text).split("**")):
         if not part:
             continue
-        pdf.set_font(FONT, "B" if index % 2 else "", size)
+        estilo = base if index % 2 == 0 else base.replace(forte, "") + "B"
+        pdf.set_font(FONT, estilo, size)
         pdf.write(height, sanitize(part))
 
 
