@@ -1433,12 +1433,16 @@ if st.button(btn_label, type="primary"):
 
             tipo_projeto = project.get("tipo_projeto")
             prj_sys_prompt = get_prosodia_project_system_prompt(tipo_projeto)
+            # Os limites vem de quando o relatorio tinha metade das secoes de
+            # hoje. Com as tres dimensoes, a distribuicao de emocoes, a matriz
+            # de destaques e o termometro, 2200 tokens cortam o texto no meio
+            # de uma secao — foi o que aconteceu com o relatorio de 30/09.
             if analysis_mode == "Rapida (1 chamada)":
                 result = _run_ai(
                     system_prompt=prj_sys_prompt,
                     user_prompt=user_prompt,
                     temperature=0.5,
-                    max_tokens=3500,
+                    max_tokens=4500,
                     vector_store_id=vs_id,
                     kb_filter=build_kb_filter(project_id),
                 )
@@ -1447,7 +1451,7 @@ if st.button(btn_label, type="primary"):
                     system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estatistica"),
                     user_prompt=user_prompt,
                     temperature=0.3,
-                    max_tokens=2200,
+                    max_tokens=4000,
                 )
                 strat_user = (
                     f"Analise estatistica previa:\n{stat_result['text']}\n\n"
@@ -1459,7 +1463,7 @@ if st.button(btn_label, type="primary"):
                     system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estrategica"),
                     user_prompt=strat_user,
                     temperature=0.5,
-                    max_tokens=2200,
+                    max_tokens=4000,
                     vector_store_id=vs_id,
                     kb_filter=build_kb_filter(project_id),
                 )
