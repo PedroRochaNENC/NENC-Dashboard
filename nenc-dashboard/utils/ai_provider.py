@@ -62,16 +62,37 @@ PROVIDER_ENV_KEYS = {
     PROVIDER_ANTHROPIC: "ANTHROPIC_API_KEY",
 }
 
-# O primeiro modelo de cada provedor e o padrao dele no seletor.
+# O primeiro modelo de cada provedor e o padrao dele no seletor. Na Groq a
+# lista e so a preferencia de ordem: o seletor mostra o que a conta tem de fato
+# (ver `_groq_account_models`), porque a Groq aposenta modelos com frequencia.
 PROVIDER_MODELS = {
     PROVIDER_OPENAI: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o"],
-    PROVIDER_GROQ: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"],
+    PROVIDER_GROQ: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
     PROVIDER_ANTHROPIC: [
         "claude-sonnet-5-5",
         "claude-opus-5-5",
-        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5",
     ],
 }
+
+# Modelos da Groq que nao conversam: transcricao, voz e classificadores.
+_GROQ_NON_CHAT = ("whisper", "tts", "playai", "orpheus", "guard")
+# O prompt da analise geral passa de 20 mil tokens: modelo com janela menor
+# aparece no seletor so para falhar na hora de gerar.
+_GROQ_MIN_CONTEXT = 32_000
+
+
+def _is_groq_chat_model(model) -> bool:
+    model_id = str(getattr(model, "id", "")).lower()
+    if any(word in model_id for word in _GROQ_NON_CHAT):
+        return False
+    outputs = getattr(model, "output_modalities", None)
+    if outputs and "text" not in outputs:
+        return False
+    if getattr(model, "active", True) is False:
+        return False
+    context = getattr(model, "context_window", None)
+    return not (isinstance(context, int) and context < _GROQ_MIN_CONTEXT)
 
 
 def _configured_key(env_name: str) -> str:
@@ -108,7 +129,11 @@ def get_anthropic_client():
         from anthropic import Anthropic
     except ImportError:
         return None
-    return Anthropic(api_key=api_key)
+    # Chave criada fora de um workspace exige dizer em qual workspace cobrar:
+    # sem isso a API responde 400 pedindo o header anthropic-workspace-id.
+    workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID", "").strip()
+    headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+    return Anthropic(api_key=api_key, default_headers=headers)
 
 
 def get_provider_client(provider: str):
@@ -121,14 +146,41 @@ def get_provider_client(provider: str):
     raise ValueError(f"Provedor de IA desconhecido: {provider}")
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _groq_account_models() -> list[str] | None:
+    """Modelos de chat que a chave Groq alcanca, ou None se a listagem falhar."""
+
+    client = get_groq_client()
+    if client is None:
+        return None
+    try:
+        models = client.models.list().data
+    except Exception:
+        return None
+    return [model.id for model in models if _is_groq_chat_model(model)]
+
+
+def _provider_models(provider: str) -> list[str]:
+    preferred = PROVIDER_MODELS[provider]
+    if provider != PROVIDER_GROQ:
+        return preferred
+    account = _groq_account_models()
+    if not account:
+        return preferred
+    # Os preferidos primeiro, na ordem de PROVIDER_MODELS; um modelo aposentado
+    # some do seletor em vez de virar um 404 na hora de gerar.
+    ordered = [model for model in preferred if model in account]
+    return ordered + sorted(model for model in account if model not in ordered)
+
+
 def available_models() -> list[tuple[str, str]]:
     """Pares (provedor, modelo) dos provedores com chave configurada."""
 
     return [
         (provider, model)
-        for provider, models in PROVIDER_MODELS.items()
+        for provider in PROVIDER_MODELS
         if get_provider_client(provider) is not None
-        for model in models
+        for model in _provider_models(provider)
     ]
 
 
@@ -189,7 +241,16 @@ def chat_completion(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    return response.choices[0].message.content or ""
+    choice = response.choices[0]
+    text = choice.message.content or ""
+    # Modelos que raciocinam (gpt-oss, qwen) gastam o max_tokens pensando e
+    # podem nao chegar a responder: melhor um erro do que salvar analise vazia.
+    if not text.strip() and getattr(choice, "finish_reason", "") == "length":
+        raise RuntimeError(
+            f"{model} usou todo o limite de {max_tokens} tokens sem responder. "
+            "Tente outro modelo ou o modo Rapida."
+        )
+    return text
 
 
 def generate_analysis(

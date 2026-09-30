@@ -436,6 +436,17 @@ class ChatCompletionTests(unittest.TestCase):
         self.assertEqual(messages[0], {"role": "system", "content": "Sistema"})
         self.assertEqual(messages[1]["content"], "Pergunta")
 
+    def test_a_reasoning_model_that_ran_out_of_tokens_raises(self):
+        client = _ChatClient("")
+        client.chat.completions._response.choices[0].finish_reason = "length"
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "limite de 100 tokens"):
+                ai_provider.chat_completion(
+                    ai_provider.PROVIDER_GROQ, "openai/gpt-oss-120b", "s",
+                    [{"role": "user", "content": "u"}], max_tokens=100,
+                )
+
     def test_a_provider_without_key_says_which_variable_is_missing(self):
         with patch.object(ai_provider, "get_anthropic_client", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY"):
@@ -534,6 +545,88 @@ class CoverageClientTests(unittest.TestCase):
         self.assertEqual(kwargs["model"], "claude-sonnet-5-5")
         self.assertEqual(kwargs["system"], prosodia_quality.COVERAGE_SYSTEM_PROMPT)
         self.assertNotIn("temperature", kwargs)
+
+
+class _GroqModels:
+    def __init__(self, ids, error=None):
+        self._ids = ids
+        self._error = error
+
+    def list(self):
+        if self._error:
+            raise self._error
+        def model(entry):
+            fields = entry if isinstance(entry, dict) else {"id": entry}
+            return type("Model", (), fields)()
+
+        return type("Page", (), {"data": [model(i) for i in self._ids]})()
+
+
+class GroqModelListTests(unittest.TestCase):
+    def setUp(self):
+        ai_provider._groq_account_models.clear()
+
+    def tearDown(self):
+        ai_provider._groq_account_models.clear()
+
+    def _groq(self, ids, error=None):
+        client = type("Groq", (), {})()
+        client.models = _GroqModels(ids, error)
+        return client
+
+    def test_retired_model_leaves_the_selector_and_preferred_come_first(self):
+        client = self._groq(
+            ["whisper-large-v3", "zeta-chat", "openai/gpt-oss-120b", "alpha-chat"]
+        )
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            models = ai_provider._provider_models(ai_provider.PROVIDER_GROQ)
+
+        self.assertEqual(models, ["openai/gpt-oss-120b", "alpha-chat", "zeta-chat"])
+
+    def test_small_context_and_speech_models_are_left_out(self):
+        client = self._groq([
+            {"id": "openai/gpt-oss-20b", "context_window": 131072, "output_modalities": ["text"]},
+            {"id": "allam-2-7b", "context_window": 4096, "output_modalities": ["text"]},
+            {"id": "voz-nova", "context_window": 131072, "output_modalities": ["speech"]},
+            {"id": "desligado", "context_window": 131072, "active": False},
+        ])
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            models = ai_provider._provider_models(ai_provider.PROVIDER_GROQ)
+
+        self.assertEqual(models, ["openai/gpt-oss-20b"])
+
+    def test_a_failed_listing_falls_back_to_the_fixed_list(self):
+        client = self._groq([], error=RuntimeError("fora do ar"))
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            models = ai_provider._provider_models(ai_provider.PROVIDER_GROQ)
+
+        self.assertEqual(models, ai_provider.PROVIDER_MODELS[ai_provider.PROVIDER_GROQ])
+
+
+class AnthropicWorkspaceTests(unittest.TestCase):
+    def setUp(self):
+        ai_provider.get_anthropic_client.clear()
+
+    def tearDown(self):
+        ai_provider.get_anthropic_client.clear()
+
+    def test_workspace_id_goes_as_header_when_configured(self):
+        env = {"ANTHROPIC_API_KEY": "sk-ant-x", "ANTHROPIC_WORKSPACE_ID": "wrkspc_1"}
+        with patch.dict("os.environ", env):
+            client = ai_provider.get_anthropic_client()
+
+        self.assertEqual(client.default_headers.get("anthropic-workspace-id"), "wrkspc_1")
+
+    def test_no_workspace_header_without_the_variable(self):
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-x"}):
+            os_env = __import__("os").environ
+            os_env.pop("ANTHROPIC_WORKSPACE_ID", None)
+            client = ai_provider.get_anthropic_client()
+
+        self.assertNotIn("anthropic-workspace-id", client.default_headers)
 
 
 if __name__ == "__main__":
