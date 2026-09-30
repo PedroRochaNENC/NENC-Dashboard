@@ -8,6 +8,8 @@ Escopo: só entra aqui o que está em um projeto da API pertencente à organiza�
 ativa. Telefone é filtro de exibição, nunca fonte de busca.
 """
 
+import logging
+
 import streamlit as st
 from utils import auth
 
@@ -15,6 +17,8 @@ auth.require_module("prosodia")
 
 import pandas as pd
 import io as _io
+
+_LOGGER = logging.getLogger(__name__)
 from utils.whatsapp_api_client import (
     get_all_audios,
     get_inbound_messages,
@@ -562,7 +566,17 @@ with tab_audios:
                                                 pd.read_csv(_io.BytesIO(sinc_bytes)), session_id
                                             )
                                         except Exception:
-                                            pass
+                                            # Importacao automatica: sem log,
+                                            # ninguem descobre que este audio
+                                            # entrou sem prosodia.
+                                            _LOGGER.exception(
+                                                "Sincronizado ilegivel na importacao automatica do audio %s.",
+                                                session_id,
+                                            )
+                                            st.warning(
+                                                f"[{session_id}] NencBoost ilegível: a análise "
+                                                "automática sai sem as métricas acústicas."
+                                            )
                                             
                                     # 6. Análise automática de IA
                                     proj_ctx = {

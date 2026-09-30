@@ -201,7 +201,16 @@ if audio.get("sincronizado_csv"):
     try:
         sinc_df = pd.read_csv(io.BytesIO(audio["sincronizado_csv"]))
     except Exception:
-        pass
+        # A timeline fica sem as curvas acusticas; dizer isso evita concluir
+        # que o audio nao tem prosodia quando o problema e o arquivo.
+        _LOGGER.exception(
+            "Sincronizado ilegivel no audio %s; a timeline fica sem as curvas.",
+            audio.get("session_id", audio_id),
+        )
+        st.warning(
+            "Não foi possível ler o NencBoost deste áudio. A timeline aparece "
+            "sem as curvas acústicas."
+        )
 
 # Divergências voz × texto: o triângulo vai na primeira linha do VAD de cada
 # segmento divergente, que é para onde a análise salta.

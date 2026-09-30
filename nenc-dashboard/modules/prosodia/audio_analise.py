@@ -9,6 +9,7 @@ Exibe:
 
 import io
 import json
+import logging
 import re
 import unicodedata
 from datetime import datetime
@@ -70,6 +71,8 @@ from utils.ai_provider import (
     create_analysis as ai_create_analysis,
 )
 from utils.kb_attributes import build_kb_filter, project_document
+
+_LOGGER = logging.getLogger(__name__)
 
 init_db()
 
@@ -400,7 +403,13 @@ if audio.get("sincronizado_csv"):
     try:
         sinc_df = normalizar_sincronizado(pd.read_csv(io.BytesIO(audio["sincronizado_csv"])), sid)
     except Exception:
-        pass
+        # Sem isto a analise segue sem pitch, loudness nem as tres dimensoes,
+        # e o relatorio conclui que o audio nao tem dados acusticos.
+        _LOGGER.exception("Sincronizado ilegivel no audio %s.", sid)
+        st.warning(
+            "Não foi possível ler o NencBoost deste áudio. A análise sai sem "
+            "as métricas acústicas — reprocesse o áudio para recuperá-las."
+        )
 
 high_activations_list = get_latest_high_activations(audio_id)
 if high_activations_list is None and not sinc_df.empty:
@@ -547,7 +556,15 @@ if is_wa and h2 is not None:
                             try:
                                 new_sinc_df = normalizar_sincronizado(pd.read_csv(io.BytesIO(sinc_bytes)), sid)
                             except Exception:
-                                pass
+                                # Reprocessamento que volta ilegivel gera uma
+                                # analise pior que a anterior, sem aviso.
+                                _LOGGER.exception(
+                                    "Sincronizado ilegivel no reprocessamento do audio %s.", sid
+                                )
+                                st.warning(
+                                    "O NencBoost reprocessado veio ilegível; a análise "
+                                    "sai sem as métricas acústicas."
+                                )
                         
                         new_transcript_text = " ".join(new_tr_df["Text"].fillna("").astype(str).tolist()) if not new_tr_df.empty and "Text" in new_tr_df.columns else ""
                         

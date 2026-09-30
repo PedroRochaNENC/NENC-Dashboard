@@ -8,6 +8,7 @@ Consolida dados de todos os áudios de um projeto para gerar:
 """
 
 import io
+import logging
 from datetime import datetime
 
 import pandas as pd
@@ -66,6 +67,8 @@ from utils.ai_provider import (
     create_analysis as ai_create_analysis,
 )
 from utils.kb_attributes import build_kb_filter, project_document
+
+_LOGGER = logging.getLogger(__name__)
 
 init_db()
 
@@ -270,6 +273,7 @@ def _load_project_frames(
     vad_parts = []
     tr_parts = []
     sinc_parts = []
+    sincronizados_ilegiveis = []
 
     class _BytesFile:
         def __init__(self, data: bytes, name: str):
@@ -312,7 +316,24 @@ def _load_project_frames(
                 if not sinc_df.empty:
                     sinc_parts.append(normalizar_sincronizado(sinc_df, sid))
             except Exception:
-                pass
+                # Engolir aqui apaga o audio da analise sem deixar rastro: o
+                # prompt sai sem as metricas dele e o relatorio conclui que nao
+                # havia dados. O projeto segue com os demais, mas registrado.
+                _LOGGER.exception(
+                    "Sincronizado ilegivel no audio %s do projeto %s; "
+                    "ele fica fora das metricas acusticas do projeto.",
+                    sid,
+                    project_id,
+                )
+                sincronizados_ilegiveis.append(sid)
+
+    if sincronizados_ilegiveis:
+        st.warning(
+            "Não foi possível ler o NencBoost de {} áudio(s): {}. "
+            "Eles ficam de fora das métricas acústicas deste relatório.".format(
+                len(sincronizados_ilegiveis), ", ".join(sincronizados_ilegiveis)
+            )
+        )
 
     all_vad = pd.concat(vad_parts, ignore_index=True) if vad_parts else pd.DataFrame()
     all_tr = pd.concat(tr_parts, ignore_index=True) if tr_parts else pd.DataFrame()

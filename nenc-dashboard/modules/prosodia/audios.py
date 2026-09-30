@@ -5,6 +5,7 @@ Upload e processamento em lote de áudios (JSON/CSV), com geração
 automática de análise e verificação de qualidade.
 """
 
+import logging
 import io
 import streamlit as st
 from utils import auth, ui
@@ -51,6 +52,8 @@ from utils.ai_provider import (
 )
 from utils.kb_attributes import build_kb_filter, project_document
 from utils.organization_data import claim_external_resource
+
+_LOGGER = logging.getLogger(__name__)
 
 init_db()
 
@@ -178,7 +181,12 @@ if json_files or csv_files or sinc_files:
                 try:
                     sinc_df = normalizar_sincronizado(pd.read_csv(_io.BytesIO(sinc_bytes)), sid)
                 except Exception:
-                    pass
+                    # O upload segue, mas a analise automatica sai sem prosodia.
+                    _LOGGER.exception("Sincronizado ilegivel no upload do audio %s.", sid)
+                    st.warning(
+                        f"[{sid}] NencBoost ilegível: a análise automática sai "
+                        "sem as métricas acústicas."
+                    )
 
             # -- Upload OpenAI KB --
             file_id_prosodia = None

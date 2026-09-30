@@ -7,6 +7,7 @@ Tela principal de consulta dos áudios de um projeto:
 - ações de timeline, análise, download e exclusão
 """
 
+import logging
 from datetime import date, datetime
 
 import pandas as pd
@@ -27,6 +28,8 @@ from utils.prosodia_db import (
 )
 from utils.organization_data import claim_external_resource, list_external_resources
 from utils.prosodia_quality import thresholds_for_project
+
+_LOGGER = logging.getLogger(__name__)
 
 init_db()
 
@@ -464,7 +467,15 @@ if wa_configured():
                         try:
                             sinc_df = normalizar_sincronizado(pd.read_csv(_io.BytesIO(sinc_bytes)), session_id)
                         except Exception:
-                            pass
+                            # A importacao continua, mas a analise automatica
+                            # deste audio nasce sem as metricas acusticas.
+                            _LOGGER.exception(
+                                "Sincronizado ilegivel na importacao do audio %s.", session_id
+                            )
+                            st.warning(
+                                f"[{session_id}] NencBoost ilegível: a análise "
+                                "automática sai sem as métricas acústicas."
+                            )
 
                     # -- Análise automática de IA --
                     proj_ctx = {
@@ -863,7 +874,14 @@ else:
                                             pd.read_csv(io.BytesIO(sinc_bytes)), selected_audio["session_id"]
                                         )
                                     except Exception:
-                                        pass
+                                        _LOGGER.exception(
+                                            "Sincronizado ilegivel no reprocessamento do audio %s.",
+                                            selected_audio["session_id"],
+                                        )
+                                        st.warning(
+                                            "O NencBoost reprocessado veio ilegível; a "
+                                            "análise sai sem as métricas acústicas."
+                                        )
                                 
                                 new_transcript_text = " ".join(new_tr_df["Text"].fillna("").astype(str).tolist()) if not new_tr_df.empty and "Text" in new_tr_df.columns else ""
                                 
