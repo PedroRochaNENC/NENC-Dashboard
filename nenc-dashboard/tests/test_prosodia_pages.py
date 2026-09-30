@@ -1,14 +1,20 @@
-"""Contrato das páginas de prosódia quanto à leitura do Sincronizado.
+"""Contrato das páginas de prosódia: os sinais chegam mesmo à IA.
 
-O CSV Sincronizado é lido dentro de try/except em várias telas. Enquanto o
-except era `pass`, um arquivo ilegível virava dataframe vazio sem rastro: o
-prompt saía sem pitch, loudness nem as três dimensões, e o relatório concluía
-que o áudio "não tem dados acústicos". Foi assim que 15 análises individuais do
-Smart Fit nasceram afirmando uma lacuna que não existia.
+Duas formas de o prompt sair sem os dados que ele próprio pede já aconteceram
+aqui, e são o que estes testes seguram.
 
-As páginas são scripts Streamlit e não rodam num teste de unidade. O que dá
-para garantir sem executá-las é que nenhuma leitura do Sincronizado volta a
-falhar em silêncio.
+A primeira: o CSV Sincronizado é lido dentro de try/except em várias telas.
+Enquanto o except era `pass`, um arquivo ilegível virava dataframe vazio sem
+rastro, e o relatório concluía que o áudio "não tem dados acústicos". Foi assim
+que 15 análises individuais do Smart Fit nasceram afirmando uma lacuna
+inexistente.
+
+A segunda: a etapa estratégica da Análise Geral recebe um prompt montado à mão,
+que ficou para trás dos sinais acrescentados depois. Ela tinha de nomear os
+temas dos momentos de maior engajamento sem receber a tabela deles.
+
+As páginas são scripts Streamlit e não rodam num teste de unidade; o que dá
+para garantir sem executá-las é o contrato lido do código-fonte.
 """
 
 import ast
@@ -83,6 +89,51 @@ class SincronizadoNaoFalhaEmSilencioTests(unittest.TestCase):
             with self.subTest(pagina=nome):
                 fonte = (PAGES_DIR / nome).read_text(encoding="utf-8")
                 self.assertIn("logging.getLogger(__name__)", fonte)
+
+
+class EtapaEstrategicaRecebeOsSinaisTests(unittest.TestCase):
+    """A segunda etapa nao pode interpretar sem os dados da primeira.
+
+    `strat_user` e montado a mao, fora de build_project_user_prompt, e por isso
+    nao acompanha sozinho os sinais que entram no prompt principal. O prompt
+    estrategico pede os temas dos momentos de maior engajamento e a separacao
+    entre entusiasmo e friccao pela valencia: as duas coisas saem da tabela de
+    ativacao.
+    """
+
+    _ESPERADOS = (
+        "stat_result",           # o texto da etapa estatistica
+        "acoustic_stats_text",   # medias, dimensoes e distribuicao de emocoes
+        "high_activation_text",  # os momentos de maior ativacao
+        "top_words_text",        # ranking de assuntos
+        "secao_sentimento",      # sentimento do texto e divergencias voz x texto
+    )
+
+    def _fonte_do_strat_user(self) -> str:
+        fonte = (PAGES_DIR / "analise_geral.py").read_text(encoding="utf-8")
+        for no in ast.walk(ast.parse(fonte)):
+            if not isinstance(no, ast.Assign):
+                continue
+            alvos = [a.id for a in no.targets if isinstance(a, ast.Name)]
+            if "strat_user" in alvos:
+                return ast.get_source_segment(fonte, no.value) or ""
+        self.fail("strat_user nao encontrado em analise_geral.py")
+
+    def test_the_glue_prompt_exists(self):
+        """Se o nome mudar, o teste abaixo passa sem verificar nada."""
+        self.assertTrue(self._fonte_do_strat_user().strip())
+
+    def test_the_strategic_step_gets_every_signal(self):
+        trecho = self._fonte_do_strat_user()
+
+        for nome in self._ESPERADOS:
+            with self.subTest(sinal=nome):
+                self.assertIn(
+                    nome,
+                    trecho,
+                    "a etapa estrategica nao recebe {}; ela vai interpretar "
+                    "sem esse sinal.".format(nome),
+                )
 
 
 if __name__ == "__main__":

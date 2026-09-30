@@ -1453,9 +1453,16 @@ if st.button(btn_label, type="primary"):
                     temperature=0.3,
                     max_tokens=4000,
                 )
+                # A etapa estrategica tem de nomear os temas dos momentos de
+                # maior engajamento e separar entusiasmo de friccao pela
+                # valencia. Sem esta tabela ela so tinha o texto da etapa
+                # anterior para isso, e reinterpretava numeros em vez de
+                # rele-los da fonte — dai as divergencias entre as duas metades
+                # do relatorio.
                 strat_user = (
                     f"Analise estatistica previa:\n{stat_result['text']}\n\n"
                     f"Dados consolidados do projeto:\n{acoustic_stats_text}\n\n"
+                    f"Momentos de maior ativacao prosodica:\n{high_activation_text}\n\n"
                     f"Ranking de palavras:\n{top_words_text}\n\n"
                     + secao_sentimento
                 )
