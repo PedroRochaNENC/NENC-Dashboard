@@ -67,7 +67,7 @@ PROVIDER_ENV_KEYS = {
 # (ver `_groq_account_models`), porque a Groq aposenta modelos com frequencia.
 PROVIDER_MODELS = {
     PROVIDER_OPENAI: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o"],
-    PROVIDER_GROQ: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"],
+    PROVIDER_GROQ: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
     PROVIDER_ANTHROPIC: [
         "claude-sonnet-5-5",
         "claude-opus-5-5",
@@ -77,6 +77,22 @@ PROVIDER_MODELS = {
 
 # Modelos da Groq que nao conversam: transcricao, voz e classificadores.
 _GROQ_NON_CHAT = ("whisper", "tts", "playai", "orpheus", "guard")
+# O prompt da analise geral passa de 20 mil tokens: modelo com janela menor
+# aparece no seletor so para falhar na hora de gerar.
+_GROQ_MIN_CONTEXT = 32_000
+
+
+def _is_groq_chat_model(model) -> bool:
+    model_id = str(getattr(model, "id", "")).lower()
+    if any(word in model_id for word in _GROQ_NON_CHAT):
+        return False
+    outputs = getattr(model, "output_modalities", None)
+    if outputs and "text" not in outputs:
+        return False
+    if getattr(model, "active", True) is False:
+        return False
+    context = getattr(model, "context_window", None)
+    return not (isinstance(context, int) and context < _GROQ_MIN_CONTEXT)
 
 
 def _configured_key(env_name: str) -> str:
@@ -138,14 +154,10 @@ def _groq_account_models() -> list[str] | None:
     if client is None:
         return None
     try:
-        ids = [model.id for model in client.models.list().data]
+        models = client.models.list().data
     except Exception:
         return None
-    return [
-        model_id
-        for model_id in ids
-        if not any(word in model_id.lower() for word in _GROQ_NON_CHAT)
-    ]
+    return [model.id for model in models if _is_groq_chat_model(model)]
 
 
 def _provider_models(provider: str) -> list[str]:
@@ -229,7 +241,16 @@ def chat_completion(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    return response.choices[0].message.content or ""
+    choice = response.choices[0]
+    text = choice.message.content or ""
+    # Modelos que raciocinam (gpt-oss, qwen) gastam o max_tokens pensando e
+    # podem nao chegar a responder: melhor um erro do que salvar analise vazia.
+    if not text.strip() and getattr(choice, "finish_reason", "") == "length":
+        raise RuntimeError(
+            f"{model} usou todo o limite de {max_tokens} tokens sem responder. "
+            "Tente outro modelo ou o modo Rapida."
+        )
+    return text
 
 
 def generate_analysis(

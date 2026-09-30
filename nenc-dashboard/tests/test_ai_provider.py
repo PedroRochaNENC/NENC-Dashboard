@@ -436,6 +436,17 @@ class ChatCompletionTests(unittest.TestCase):
         self.assertEqual(messages[0], {"role": "system", "content": "Sistema"})
         self.assertEqual(messages[1]["content"], "Pergunta")
 
+    def test_a_reasoning_model_that_ran_out_of_tokens_raises(self):
+        client = _ChatClient("")
+        client.chat.completions._response.choices[0].finish_reason = "length"
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "limite de 100 tokens"):
+                ai_provider.chat_completion(
+                    ai_provider.PROVIDER_GROQ, "openai/gpt-oss-120b", "s",
+                    [{"role": "user", "content": "u"}], max_tokens=100,
+                )
+
     def test_a_provider_without_key_says_which_variable_is_missing(self):
         with patch.object(ai_provider, "get_anthropic_client", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY"):
@@ -544,7 +555,10 @@ class _GroqModels:
     def list(self):
         if self._error:
             raise self._error
-        model = lambda i: type("Model", (), {"id": i})()
+        def model(entry):
+            fields = entry if isinstance(entry, dict) else {"id": entry}
+            return type("Model", (), fields)()
+
         return type("Page", (), {"data": [model(i) for i in self._ids]})()
 
 
@@ -569,6 +583,19 @@ class GroqModelListTests(unittest.TestCase):
             models = ai_provider._provider_models(ai_provider.PROVIDER_GROQ)
 
         self.assertEqual(models, ["openai/gpt-oss-120b", "alpha-chat", "zeta-chat"])
+
+    def test_small_context_and_speech_models_are_left_out(self):
+        client = self._groq([
+            {"id": "openai/gpt-oss-20b", "context_window": 131072, "output_modalities": ["text"]},
+            {"id": "allam-2-7b", "context_window": 4096, "output_modalities": ["text"]},
+            {"id": "voz-nova", "context_window": 131072, "output_modalities": ["speech"]},
+            {"id": "desligado", "context_window": 131072, "active": False},
+        ])
+
+        with patch.object(ai_provider, "get_groq_client", return_value=client):
+            models = ai_provider._provider_models(ai_provider.PROVIDER_GROQ)
+
+        self.assertEqual(models, ["openai/gpt-oss-20b"])
 
     def test_a_failed_listing_falls_back_to_the_fixed_list(self):
         client = self._groq([], error=RuntimeError("fora do ar"))
