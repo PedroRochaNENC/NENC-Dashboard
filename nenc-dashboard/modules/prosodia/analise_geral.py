@@ -18,7 +18,7 @@ from utils.icons import page_title
 
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
-from fpdf import FPDF
+from utils import pdf_report
 
 from utils.prosodia_db import (
     init_db,
@@ -110,11 +110,6 @@ def _build_project_analysis_markdown(
     return "\n".join(lines)
 
 
-def _sanitize(text: str) -> str:
-    """Remove caracteres fora do latin-1 para compatibilidade com fontes PDF."""
-    return str(text or "").encode("latin-1", errors="replace").decode("latin-1")
-
-
 def _build_project_analysis_pdf(
     project_name: str,
     project_info: dict,
@@ -124,116 +119,87 @@ def _build_project_analysis_pdf(
     citations: list,
     acoustic_summary: str = "",
 ) -> bytes:
-    """Gera um PDF formatado com a análise geral do projeto."""
-    pdf = FPDF()
+    """PDF da análise geral, no mesmo desenho dos demais relatórios.
+
+    Usa `pdf_report` em vez de montar o FPDF na mão: o texto da IA passa a
+    renderizar títulos, negrito e tabelas em vez de sair com `**` e barras
+    verticais cruas, o rodapé numera as páginas, e a sanitização preserva
+    travessões e aspas curvas que a codificação antiga virava `?`.
+    """
+    pdf = pdf_report.ReportPDF("Análise Geral · {}".format(project_name or "Projeto"))
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
 
-    # Titulo principal
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, _sanitize("Relatório de Análise Geral - Prosódia"), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
+    # -- Capa curta -------------------------------------------------------
+    pdf.set_font(pdf_report.FONT, "B", 8.5)
+    pdf.set_text_color(*pdf_report.ACCENT)
+    pdf.cell(0, 5, pdf_report.sanitize("NENCBOOST · ANÁLISE DE VOZ E PROSÓDIA"),
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1.5)
 
-    # Info do projeto
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 6, _sanitize(f"Projeto: {project_name}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 5, _sanitize(f"Modelo de IA: {model}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 5, _sanitize(f"Gerado em: {created_at}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+    pdf.set_font(pdf_report.FONT, "B", 20)
+    pdf.set_text_color(*pdf_report.INK)
+    pdf.multi_cell(0, 9, pdf_report.sanitize(project_name or "Projeto"),
+                   new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+    pdf.set_draw_color(*pdf_report.ACCENT)
+    pdf.set_line_width(0.8)
+    pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + 24, pdf.get_y())
+    pdf.set_line_width(0.2)
+    pdf.ln(5)
 
-    # Contexto/Metadados do projeto
-    if project_info:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize("Contexto do Projeto"), new_x="LMARGIN", new_y="NEXT")
-        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
-        pdf.ln(2)
-        
-        for label, key in [
-            ("Especialidade", "especialidade"),
-            ("Histórico", "historico"),
-            ("Problemas Centrais", "problemas"),
-            ("Briefing", "briefing"),
-        ]:
-            val = project_info.get(key, "")
-            if val:
-                pdf.set_font("Helvetica", "B", 9)
-                pdf.cell(0, 5, _sanitize(f"{label}:"), new_x="LMARGIN", new_y="NEXT")
-                pdf.set_font("Helvetica", "", 9)
-                pdf.multi_cell(0, 4.5, _sanitize(val), new_x="LMARGIN", new_y="NEXT")
-                pdf.ln(1)
+    ficha = [item for item in (
+        "Modelo: {}".format(model) if model else "",
+        "Gerado em: {}".format(created_at) if created_at else "",
+    ) if item]
+    if ficha:
+        pdf_report.paragraph(pdf, " · ".join(ficha), size=8.5, color=pdf_report.MUTED)
 
-    # Resumo Acústico (se houver)
-    if acoustic_summary:
-        pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize("Métricas Acústicas Resumidas"), new_x="LMARGIN", new_y="NEXT")
-        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
-        pdf.ln(2)
-        
-        pdf.set_font("Courier", "", 8)
-        for line in acoustic_summary.splitlines():
-            pdf.cell(0, 4, _sanitize(line[:120]), new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(3)
+    # -- Contexto do projeto ----------------------------------------------
+    rotulos = [
+        ("Especialidade", "especialidade"),
+        ("Histórico", "historico"),
+        ("Perguntas centrais", "problemas"),
+        ("Briefing", "briefing"),
+    ]
+    contexto = [(rotulo, str(project_info.get(chave) or "").strip())
+                for rotulo, chave in rotulos]
+    contexto = [(rotulo, valor) for rotulo, valor in contexto if valor]
+    if contexto:
+        pdf_report.heading(pdf, "Contexto do Projeto", level=2)
+        for rotulo, valor in contexto:
+            # O briefing e o campo longo; os demais cabem em poucas linhas.
+            if len(valor) > 1200:
+                valor = valor[:1200].rstrip() + "…"
+            pdf_report.paragraph(pdf, "{}:".format(rotulo), size=9, style="B",
+                                 color=pdf_report.INK)
+            pdf_report.paragraph(pdf, valor, size=9)
 
-    # Resultado da Análise de IA
+    # -- Resultado da análise ---------------------------------------------
     if text:
-        pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize("Resultado da Análise Geral"), new_x="LMARGIN", new_y="NEXT")
-        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
-        pdf.ln(2)
+        pdf_report.heading(pdf, "Resultado da Análise", level=2)
+        pdf_report.render_markdown_lite(pdf, text)
 
-        # Processar markdown simplificado
-        lines = text.splitlines()
-        for line in lines:
-            line_str = line.strip()
-            if not line_str:
-                pdf.ln(2.5)
-                continue
-            
-            # Cabeçalhos
-            if line_str.startswith("### "):
-                pdf.set_font("Helvetica", "B", 10)
-                pdf.cell(0, 6, _sanitize(line_str[4:]), new_x="LMARGIN", new_y="NEXT")
-            elif line_str.startswith("## "):
-                pdf.ln(1)
-                pdf.set_font("Helvetica", "B", 11)
-                pdf.cell(0, 7, _sanitize(line_str[3:]), new_x="LMARGIN", new_y="NEXT")
-            elif line_str.startswith("# "):
-                pdf.ln(2)
-                pdf.set_font("Helvetica", "B", 13)
-                pdf.cell(0, 9, _sanitize(line_str[2:]), new_x="LMARGIN", new_y="NEXT")
-            elif line_str.startswith("- ") or line_str.startswith("* "):
-                pdf.set_font("Helvetica", "", 9)
-                pdf.multi_cell(0, 4.5, _sanitize(f"  - {line_str[2:]}"), new_x="LMARGIN", new_y="NEXT")
-            else:
-                pdf.set_font("Helvetica", "", 9)
-                pdf.multi_cell(0, 4.5, _sanitize(line_str), new_x="LMARGIN", new_y="NEXT")
-                
-        pdf.ln(3)
+    # -- Métricas acústicas -----------------------------------------------
+    # Vem em markdown do mesmo gerador que alimenta o prompt; renderizar como
+    # tabela e nao como texto monoespacado cortado em 120 colunas.
+    if acoustic_summary:
+        pdf_report.heading(pdf, "Métricas Acústicas Consolidadas", level=2)
+        pdf_report.render_markdown_lite(pdf, acoustic_summary, size=8.5)
 
-    # Referências/Citações
+    # -- Referências -------------------------------------------------------
     if citations:
-        pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, _sanitize("Referências e Citações"), new_x="LMARGIN", new_y="NEXT")
-        pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
-        pdf.ln(2)
-        
-        for i, cit in enumerate(citations, 1):
-            filename = cit.get("filename", "Documento")
-            quote = cit.get("quote", "")
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.cell(0, 5, _sanitize(f"{i}. {filename}"), new_x="LMARGIN", new_y="NEXT")
-            if quote:
-                pdf.set_font("Helvetica", "I", 8.5)
-                pdf.multi_cell(0, 4, _sanitize(f"   Trecho: \"{quote}\""), new_x="LMARGIN", new_y="NEXT")
-                pdf.ln(1)
+        pdf_report.heading(pdf, "Referências da Base de Conhecimento", level=2)
+        for numero, citacao in enumerate(citations, 1):
+            arquivo = citacao.get("filename") or "Documento"
+            trecho = (citacao.get("quote") or "").strip()
+            pdf_report.paragraph(pdf, "{}. {}".format(numero, arquivo), size=9,
+                                 style="B", color=pdf_report.INK)
+            if trecho:
+                if len(trecho) > 600:
+                    trecho = trecho[:600].rstrip() + "…"
+                pdf_report.paragraph(pdf, trecho, size=8.5, style="I")
 
-    buf = io.BytesIO()
-    pdf.output(buf)
-    return buf.getvalue()
+    return pdf_report.output_bytes(pdf)
 
 
 def _append_result_to_kb(

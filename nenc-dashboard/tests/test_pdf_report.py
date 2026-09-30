@@ -73,6 +73,144 @@ class PieceTests(unittest.TestCase):
         self.assertIn("Barras", _pdf_text(pdf_report.output_bytes(self.pdf)))
 
 
+class MeasuredWidthsTests(unittest.TestCase):
+    """Partes iguais quebram palavra no meio; a largura sai da fonte real."""
+
+    def setUp(self):
+        self.pdf = pdf_report.ReportPDF("Teste")
+        self.pdf.add_page()
+
+    def _cabe(self, headers, rows, widths):
+        for indice, largura in enumerate(widths):
+            for numero, linha in enumerate([list(headers)] + [list(r) for r in rows]):
+                self.pdf.set_font(pdf_report.FONT, "B" if numero == 0 else "", 8.0)
+                for palavra in pdf_report.sanitize(linha[indice]).split():
+                    if self.pdf.get_string_width(palavra) > largura:
+                        return False
+        return True
+
+    def test_no_word_is_wider_than_its_column(self):
+        headers = ["Ordem", "Reclamação / Dor", "Frequência", "Evidências"]
+        rows = [["1", "Equipamento com mau funcionamento", "Pontual",
+                 "wa_+5521980007572_35"]]
+
+        widths = pdf_report.measured_widths(self.pdf, headers, rows)
+
+        self.assertTrue(self._cabe(headers, rows, widths))
+
+    def test_the_widths_fill_the_content_width(self):
+        headers = ["A", "B", "C"]
+        rows = [["1", "2", "3"]]
+
+        widths = pdf_report.measured_widths(self.pdf, headers, rows)
+
+        self.assertAlmostEqual(sum(widths), pdf_report.CONTENT_WIDTH, places=3)
+
+    def test_the_column_with_more_text_gets_more_room(self):
+        headers = ["Nº", "Descrição"]
+        rows = [["1", "Um texto bem mais longo do que o rótulo ao lado dele"]]
+
+        estreita, larga = pdf_report.measured_widths(self.pdf, headers, rows)
+
+        self.assertGreater(larga, estreita * 2)
+
+    def test_it_degrades_instead_of_overflowing(self):
+        """Nem os pisos cabem: reparte o que ha, sem estourar a pagina."""
+        headers = ["Coluna", "Coluna", "Coluna", "Coluna", "Coluna", "Coluna"]
+        rows = [["Palavraextremamentelongaquenaocabe"] * 6]
+
+        widths = pdf_report.measured_widths(self.pdf, headers, rows)
+
+        self.assertAlmostEqual(sum(widths), pdf_report.CONTENT_WIDTH, places=3)
+
+
+class ProseTableTests(unittest.TestCase):
+    """A tabela da IA e prosa: cortar com reticencias apagaria o conteudo."""
+
+    def setUp(self):
+        self.pdf = pdf_report.ReportPDF("Teste")
+        self.pdf.add_page()
+
+    def test_long_text_wraps_instead_of_being_cut(self):
+        fim = "e termina aqui"
+        rows = [["Higiene", "Corrigir prontamente as falhas de infraestrutura "
+                            "apontadas pelos respondentes, {}".format(fim)]]
+
+        pdf_report.prose_table(self.pdf, ["Classificação", "Recomendação"], rows)
+        texto = _pdf_text(pdf_report.output_bytes(self.pdf))
+
+        self.assertIn(fim, texto)
+        self.assertNotIn("…", texto)
+
+    def test_a_table_that_does_not_fit_breaks_the_page(self):
+        rows = [["Tema {}".format(i), "Descrição razoavelmente longa " * 8]
+                for i in range(40)]
+
+        pdf_report.prose_table(self.pdf, ["Tema", "Descrição"], rows)
+        texto = _pdf_text(pdf_report.output_bytes(self.pdf))
+
+        self.assertGreater(self.pdf.page_no(), 1)
+        # A ultima linha sobrevive a quebra: o y nao pode ficar preso na
+        # pagina anterior, que foi o defeito que este teste pegou.
+        self.assertIn("Tema 39", texto)
+
+    def test_the_header_comes_back_after_a_page_break(self):
+        rows = [["Tema {}".format(i), "Descrição razoavelmente longa " * 8]
+                for i in range(40)]
+
+        pdf_report.prose_table(self.pdf, ["Tema", "Classificação"], rows)
+        texto = _pdf_text(pdf_report.output_bytes(self.pdf))
+
+        self.assertGreaterEqual(texto.count("Classificação"), self.pdf.page_no())
+
+    def test_empty_rows_draw_nothing(self):
+        antes = self.pdf.get_y()
+
+        pdf_report.prose_table(self.pdf, ["A", "B"], [])
+
+        self.assertEqual(self.pdf.get_y(), antes)
+
+    def test_a_wide_table_shrinks_instead_of_breaking_a_word(self):
+        """As métricas acústicas têm 8 colunas e IDs longos."""
+        headers = ["Áudio", "f0_media", "f0_variacao", "loudness_media",
+                   "speaking_rate", "dim_arousal", "dim_valence", "dim_dominance"]
+        rows = [["wa_+5521976287276_32", "193.597", "34.539", "0.895",
+                 "5.251", "-0.071", "-0.006", "0.085"]]
+
+        # Recuo da celula (1,4 de cada lado) + margem interna do multi_cell.
+        folga = 2 * 1.4 + 2 * self.pdf.c_margin + 0.4
+        corpo = pdf_report.fit_size(self.pdf, headers, rows, padding=folga)
+        larguras = pdf_report.measured_widths(self.pdf, headers, rows,
+                                              size=corpo, padding=folga)
+
+        self.pdf.set_font(pdf_report.FONT, "", corpo)
+        util = larguras[0] - 2 * 1.4 - 2 * self.pdf.c_margin
+        self.assertLess(self.pdf.get_string_width("wa_+5521976287276_32"), util)
+
+    def test_the_audio_id_survives_the_rendered_table(self):
+        sid = "wa_+5521975310982_37"
+        pdf_report.render_markdown_lite(self.pdf, (
+            "| Áudio | f0_media | f0_variacao | loudness_media | speaking_rate "
+            "| dim_arousal | dim_valence | dim_dominance |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| {} | 93.512 | 7.104 | 0.779 | 4.380 | -0.244 | 0.013 | -0.061 |\n"
+        ).format(sid))
+        texto = _pdf_text(pdf_report.output_bytes(self.pdf))
+
+        self.assertIn(sid, texto)
+
+    def test_markdown_tables_go_through_the_prose_table(self):
+        """render_markdown_lite dividia em partes iguais e cortava o texto."""
+        fim = "conclusao preservada"
+        pdf_report.render_markdown_lite(self.pdf, (
+            "| Insight | Recomendação |\n|---|---|\n"
+            "| Elogios à equipe geram picos de ativação | "
+            "Reforçar o reconhecimento em treinamentos, {} |\n".format(fim)
+        ))
+
+        self.assertIn(fim, _pdf_text(pdf_report.output_bytes(self.pdf)))
+
+
 class JornadaReportTests(unittest.TestCase):
     def setUp(self):
         files = [

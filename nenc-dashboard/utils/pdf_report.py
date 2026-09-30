@@ -161,8 +161,13 @@ def render_markdown_lite(pdf: FPDF, text: str, size: float = 9.5) -> None:
         if not table:
             return
         header, body = table[0], table[1:]
-        widths = [CONTENT_WIDTH / max(1, len(header))] * len(header)
-        simple_table(pdf, header, [row + [""] * (len(header) - len(row)) for row in body], widths)
+        # Tabela escrita pela IA e prosa, nao numero: quebra em linhas e tem a
+        # largura medida na fonte, em vez de partes iguais que cortariam texto.
+        prose_table(
+            pdf,
+            header,
+            [row + [""] * (len(header) - len(row)) for row in body],
+        )
         table.clear()
 
     for raw in str(text or "").splitlines():
@@ -387,6 +392,162 @@ def simple_table(
         pdf.set_draw_color(*RULE)
         pdf.line(pdf.l_margin, y, pdf.l_margin + sum(widths), y)
     pdf.ln(3)
+
+
+def measured_widths(
+    pdf: FPDF,
+    headers: Sequence[str],
+    rows: Sequence[Sequence],
+    total: float = CONTENT_WIDTH,
+    *,
+    size: float = 8.0,
+    padding: float = 3.0,
+) -> List[float]:
+    """Larguras de coluna medidas na fonte real, não em partes iguais.
+
+    O piso de cada coluna é a palavra mais larga que ela contém — sem isso um
+    cabeçalho como "Frequência" quebra em "Frequênci/a". O que sobra é
+    repartido pela extensão média do conteúdo, para a coluna de texto longo
+    ficar larga e a de rótulo curto, estreita.
+    """
+    pisos, pesos = _pisos_e_pesos(pdf, headers, rows, size, padding)
+
+    if sum(pisos) >= total:  # nem os pisos cabem: proporcional e segue
+        fator = total / sum(pisos)
+        return [piso * fator for piso in pisos]
+
+    sobra = total - sum(pisos)
+    peso_total = sum(pesos)
+    return [piso + sobra * peso / peso_total for piso, peso in zip(pisos, pesos)]
+
+
+def _pisos_e_pesos(pdf, headers, rows, size, padding):
+    """Por coluna: a largura da palavra mais longa e o peso do conteúdo."""
+    pisos: List[float] = []
+    pesos: List[float] = []
+    for indice in range(len(headers)):
+        maior = 0.0
+        soma = 0
+        for numero, linha in enumerate([list(headers)] + [list(r) for r in rows]):
+            if indice >= len(linha):
+                continue
+            texto = sanitize(linha[indice])
+            pdf.set_font(FONT, "B" if numero == 0 else "", size)
+            soma += len(texto)
+            for palavra in texto.split():
+                maior = max(maior, pdf.get_string_width(palavra))
+        pisos.append(maior + padding)
+        pesos.append(max(soma / (len(rows) + 1), 6) ** 0.72)
+    return pisos, pesos
+
+
+def fit_size(
+    pdf: FPDF,
+    headers: Sequence[str],
+    rows: Sequence[Sequence],
+    total: float = CONTENT_WIDTH,
+    *,
+    size: float = 8.0,
+    minimo: float = 6.0,
+    padding: float = 3.0,
+) -> float:
+    """O maior corpo em que nenhuma palavra precisa quebrar no meio.
+
+    Tabela larga — as métricas acústicas têm oito colunas e IDs como
+    `wa_+5521975310982_37` — não cabe no corpo padrão. Diminuir o texto
+    preserva o identificador inteiro; insistir no corpo o parte ao meio.
+    """
+    tentativa = size
+    while tentativa > minimo:
+        pisos, _ = _pisos_e_pesos(pdf, headers, rows, tentativa, padding)
+        if sum(pisos) <= total:
+            return tentativa
+        tentativa -= 0.5
+    return minimo
+
+
+def prose_table(
+    pdf: FPDF,
+    headers: Sequence[str],
+    rows: Sequence[Sequence],
+    widths: Optional[Sequence[float]] = None,
+    *,
+    size: float = 8.0,
+    line_height: float = 4.2,
+    padding: float = 1.4,
+) -> None:
+    """Tabela de texto corrido: a célula quebra em linhas em vez de ser cortada.
+
+    `simple_table` corta com reticências porque serve a números, com o detalhe
+    no Excel. As tabelas que a IA escreve — matriz de destaques, recomendações
+    por driver — são prosa: cortar apaga o conteúdo.
+    """
+    if not rows:
+        return
+    if widths is None:
+        # O piso reserva o recuo que a celula desenha MAIS a margem interna
+        # que o multi_cell aplica dentro da largura recebida (c_margin de cada
+        # lado). Sem esse segundo termo a palavra parece caber e quebra assim
+        # mesmo — foi o que partia `wa_+5521975310982_37` ao meio.
+        folga = 2 * padding + 2 * pdf.c_margin + 0.4
+        # Encolhe o corpo antes de deixar uma palavra partir ao meio.
+        size = fit_size(pdf, headers, rows, size=size, padding=folga)
+        line_height = max(line_height * size / 8.0, 3.4)
+        larguras = measured_widths(pdf, headers, rows, size=size, padding=folga)
+    else:
+        larguras = list(widths)
+
+    def altura_da_linha(valores, estilo):
+        pdf.set_font(FONT, estilo, size)
+        alturas = []
+        for valor, largura in zip(valores, larguras):
+            alturas.append(
+                pdf.multi_cell(
+                    largura - 2 * padding, line_height, sanitize(valor),
+                    dry_run=True, output="HEIGHT",
+                )
+            )
+        return max(alturas + [line_height])
+
+    def desenha(valores, estilo, cor, quebrar=True):
+        altura = altura_da_linha(valores, estilo)
+        if quebrar:
+            ensure_space(pdf, altura + 1.5)
+        topo = pdf.get_y()
+        x = pdf.l_margin
+        pdf.set_font(FONT, estilo, size)
+        pdf.set_text_color(*cor)
+        # A quebra automatica no meio de uma celula deslocaria as colunas
+        # seguintes: a altura ja foi medida e a pagina, garantida acima.
+        automatica = pdf.auto_page_break
+        pdf.set_auto_page_break(False)
+        for indice, largura in enumerate(larguras):
+            valor = valores[indice] if indice < len(valores) else ""
+            pdf.set_xy(x + padding, topo)
+            pdf.multi_cell(largura - 2 * padding, line_height, sanitize(valor))
+            x += largura
+        pdf.set_auto_page_break(automatica, pdf.b_margin)
+        pdf.set_xy(pdf.l_margin, topo + altura + 1)
+        return pdf.get_y()
+
+    def cabecalho():
+        y = desenha(list(headers), "B", SECONDARY, quebrar=False)
+        pdf.set_draw_color(*SECONDARY)
+        pdf.line(pdf.l_margin, y - 0.6, pdf.l_margin + sum(larguras), y - 0.6)
+
+    ensure_space(pdf, altura_da_linha(list(headers), "B") + line_height * 2)
+    cabecalho()
+
+    for linha in rows:
+        altura = altura_da_linha(list(linha), "")
+        if pdf.get_y() + altura + 1.5 > pdf.h - pdf.b_margin:
+            pdf.add_page()
+            cabecalho()  # tabela que atravessa a pagina repete o cabecalho
+        y = desenha(list(linha), "", INK, quebrar=False)
+        pdf.set_draw_color(*RULE)
+        pdf.line(pdf.l_margin, y - 0.6, pdf.l_margin + sum(larguras), y - 0.6)
+    pdf.ln(2.5)
+    pdf.set_text_color(*INK)
 
 
 _NUMBER = re.compile(r"^[-+]?[\d.,]+\s?(%|s|×|x)?$")
