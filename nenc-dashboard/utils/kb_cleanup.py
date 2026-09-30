@@ -9,9 +9,14 @@ camada de dados logo depois do DELETE.
 Sao best-effort de proposito. A verdade e o banco: se a OpenAI estiver fora do
 ar, apagar um projeto nao pode falhar por causa disso. O que escapar aqui e
 recolhido depois por `scripts/cleanup_orphan_kb_files.py`.
+
+A excecao e `remove_document`, que vem do botao da tela de Base de
+Conhecimento: ali o erro tem que chegar a quem clicou.
 """
 
 from typing import Iterable, Optional
+
+from openai import NotFoundError
 
 from utils.ai_provider import (
     get_openai_client,
@@ -150,6 +155,48 @@ def remove_files(file_ids: Iterable[str], module_key: str = "prosodia") -> int:
         return _delete_files(client, vector_store_id, file_ids)
     except Exception:
         return 0
+
+
+def remove_document(vector_store_id: str, file_id: str) -> None:
+    """Tira um documento da base a pedido da tela, e levanta o que der errado.
+
+    O 404 nao e erro: arquivo que a OpenAI nao encontra mais ja esta removido.
+    Era ele que travava o botao "Remover" — a linha saia do vector store, o
+    `files.delete` seguinte estourava com "No such File object", e a tela
+    mostrava o erro sem limpar a listagem, ainda exibindo o documento que
+    acabara de sair.
+
+    O estado que leva a isso: o arquivo sumiu da conta e a linha continuou no
+    vector store (uma limpeza anterior em que o desanexo falhou e o
+    `files.delete` passou, ou `scripts/cleanup_orphan_kb_files.py`). Na
+    listagem esse documento aparece com o id no lugar do nome, porque o nome
+    vinha do arquivo que nao existe mais.
+    """
+
+    client = get_openai_client()
+    if client is None:
+        raise RuntimeError("OpenAI API key not configured. Set OPENAI_API_KEY in .env")
+
+    try:
+        try:
+            client.vector_stores.files.delete(
+                vector_store_id=vector_store_id, file_id=file_id
+            )
+        except NotFoundError:
+            pass
+        # O arquivo em si e o que continua sendo cobrado: vale apagar mesmo
+        # quando a linha no vector store ja tinha saido.
+        try:
+            client.files.delete(file_id)
+        except NotFoundError:
+            pass
+    finally:
+        # Qualquer tentativa deixa a listagem em cache suspeita, inclusive a
+        # que falhou no meio do caminho.
+        try:
+            list_vector_store_documents.clear()
+        except Exception:
+            pass
 
 
 def delete_vector_store(vector_store_id: Optional[str]) -> bool:

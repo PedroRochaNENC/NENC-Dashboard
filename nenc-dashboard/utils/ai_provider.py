@@ -41,6 +41,213 @@ def get_openai_client() -> OpenAI | None:
     return OpenAI(api_key=api_key)
 
 
+# ------------------------------------------------------------------
+# Provedores de IA
+# ------------------------------------------------------------------
+# As chaves vivem so no .env: a tela nao pede chave nenhuma ao usuario. Um
+# provedor sem chave configurada simplesmente nao aparece no seletor.
+PROVIDER_OPENAI = "openai"
+PROVIDER_GROQ = "groq"
+PROVIDER_ANTHROPIC = "anthropic"
+
+PROVIDER_LABELS = {
+    PROVIDER_OPENAI: "OpenAI",
+    PROVIDER_GROQ: "Groq",
+    PROVIDER_ANTHROPIC: "Claude",
+}
+
+PROVIDER_ENV_KEYS = {
+    PROVIDER_OPENAI: "OPENAI_API_KEY",
+    PROVIDER_GROQ: "GROQ_API_KEY",
+    PROVIDER_ANTHROPIC: "ANTHROPIC_API_KEY",
+}
+
+# O primeiro modelo de cada provedor e o padrao dele no seletor.
+PROVIDER_MODELS = {
+    PROVIDER_OPENAI: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o"],
+    PROVIDER_GROQ: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"],
+    PROVIDER_ANTHROPIC: [
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-haiku-4-5-20251001",
+    ],
+}
+
+
+def _configured_key(env_name: str) -> str:
+    """Chave do .env, ou vazio quando ficou o texto de exemplo do .env.example."""
+
+    value = os.getenv(env_name, "").strip()
+    if not value or value.startswith("your_") or value.endswith("YOUR_KEY_HERE"):
+        return ""
+    return value
+
+
+@st.cache_resource(show_spinner=False)
+def get_groq_client():
+    """Cliente Groq com a chave fixa do .env (GROQ_API_KEY), ou None."""
+
+    api_key = _configured_key("GROQ_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from groq import Groq
+    except ImportError:
+        return None
+    return Groq(api_key=api_key)
+
+
+@st.cache_resource(show_spinner=False)
+def get_anthropic_client():
+    """Cliente Anthropic (Claude) com a chave do .env (ANTHROPIC_API_KEY), ou None."""
+
+    api_key = _configured_key("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from anthropic import Anthropic
+    except ImportError:
+        return None
+    return Anthropic(api_key=api_key)
+
+
+def get_provider_client(provider: str):
+    if provider == PROVIDER_OPENAI:
+        return get_openai_client()
+    if provider == PROVIDER_GROQ:
+        return get_groq_client()
+    if provider == PROVIDER_ANTHROPIC:
+        return get_anthropic_client()
+    raise ValueError(f"Provedor de IA desconhecido: {provider}")
+
+
+def available_models() -> list[tuple[str, str]]:
+    """Pares (provedor, modelo) dos provedores com chave configurada."""
+
+    return [
+        (provider, model)
+        for provider, models in PROVIDER_MODELS.items()
+        if get_provider_client(provider) is not None
+        for model in models
+    ]
+
+
+def unavailable_providers() -> list[str]:
+    """Provedores sem chave no .env (ou sem o pacote instalado)."""
+
+    return [
+        provider
+        for provider in PROVIDER_MODELS
+        if get_provider_client(provider) is None
+    ]
+
+
+def format_model_option(option: tuple[str, str]) -> str:
+    provider, model = option
+    return f"{PROVIDER_LABELS.get(provider, provider)} · {model}"
+
+
+def chat_completion(
+    provider: str,
+    model: str,
+    system_prompt: str,
+    messages: list[dict],
+    temperature: float = 0.5,
+    max_tokens: int = 4000,
+) -> str:
+    """Uma chamada de chat em qualquer provedor, devolvendo so o texto.
+
+    `messages` alterna "user" e "assistant", sem a mensagem de sistema: cada
+    provedor a recebe do seu jeito. Nao consulta a base de conhecimento, que
+    so existe na OpenAI (ver `create_analysis`).
+    """
+
+    client = get_provider_client(provider)
+    if client is None:
+        env_name = PROVIDER_ENV_KEYS.get(provider, "")
+        raise RuntimeError(
+            f"{PROVIDER_LABELS.get(provider, provider)} nao configurado. "
+            f"Defina {env_name} no .env e reinicie o app."
+        )
+
+    if provider == PROVIDER_ANTHROPIC:
+        # Sem temperature: os modelos Claude mais recentes rejeitam parametros
+        # de amostragem fora do padrao.
+        response = client.messages.create(
+            model=model,
+            system=system_prompt,
+            messages=messages,
+            max_tokens=max_tokens,
+        )
+        return "".join(
+            block.text for block in response.content if getattr(block, "type", "") == "text"
+        )
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system_prompt}, *messages],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content or ""
+
+
+def generate_analysis(
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.5,
+    max_tokens: int = 4000,
+    vector_store_id: str | None = None,
+    kb_filter: dict | None = None,
+) -> dict:
+    """Analise no modelo escolhido, sempre no formato de `create_analysis`.
+
+    OpenAI passa por `create_analysis`, o unico caminho com busca na base de
+    conhecimento. Nos demais provedores a busca aparece como nao usada, e nao
+    como "o modelo ignorou a base".
+    """
+
+    if provider == PROVIDER_OPENAI:
+        return create_analysis(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            vector_store_id=vector_store_id,
+            kb_filter=kb_filter,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    text = chat_completion(
+        provider,
+        model,
+        system_prompt,
+        [{"role": "user", "content": user_prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return {"text": text, "citations": [], "search": {"available": False}}
+
+
+# A cobertura de perguntas e uma classificacao simples e roda em lote: na
+# OpenAI ela sempre usou o modelo barato, qualquer que fosse o da analise.
+_OPENAI_COVERAGE_MODEL = "gpt-4.1-mini"
+
+
+def coverage_client(provider: str | None, model: str | None):
+    """(cliente, modelo) para `check_question_coverage_ai`, ou (None, None)."""
+
+    if not provider:
+        return None, None
+    client = get_provider_client(provider)
+    if client is None:
+        return None, None
+    if provider == PROVIDER_OPENAI:
+        return client, _OPENAI_COVERAGE_MODEL
+    return client, model
+
+
 def get_vector_store_id() -> str | None:
     """Return the Jornada vector store owned by the active organization."""
 

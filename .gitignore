@@ -17,3 +17,9 @@ __pycache__/
 
 # Local static temporary files
 static/audio_*.wav
+
+# Configuracao local de execucao (caminhos absolutos da maquina do dev)
+.claude/
+
+# Planilhas internas de custo — repositorio publico, nao versionar
+custos_sistema_prosodia.xlsx

@@ -376,3 +376,57 @@ def knowledge_base_references(result: dict) -> None:
         # Sem expander: as telas de analise chamam esta funcao de dentro de um,
         # e o Streamlit nao aninha expanders.
         st.caption("Buscas feitas na base: " + " · ".join(queries))
+
+
+def ai_model_selector(
+    key: str,
+    use_kb: bool = False,
+    default_provider: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Seletor unico de modelo de IA (OpenAI, Groq e Claude).
+
+    As chaves ficam so no .env: aparecem os provedores configurados, e os que
+    faltam sao listados com a variavel a definir. `default_provider` escolhe o
+    provedor que vem selecionado, quando configurado; senao vale o primeiro.
+    Devolve (provedor, modelo), ou (None, None) sem nenhum provedor.
+    """
+    from utils.ai_provider import (
+        PROVIDER_ENV_KEYS,
+        PROVIDER_LABELS,
+        PROVIDER_OPENAI,
+        available_models,
+        format_model_option,
+        unavailable_providers,
+    )
+
+    options = available_models()
+    if not options:
+        st.warning(
+            "Nenhum provedor de IA configurado. Defina OPENAI_API_KEY, "
+            "GROQ_API_KEY ou ANTHROPIC_API_KEY no .env e reinicie o app."
+        )
+        return None, None
+
+    index = next(
+        (i for i, (provider, _) in enumerate(options) if provider == default_provider),
+        0,
+    )
+    provider, model = st.selectbox(
+        "Modelo de IA",
+        options,
+        index=index,
+        format_func=format_model_option,
+        key=key,
+    )
+    if use_kb and provider != PROVIDER_OPENAI:
+        st.caption("A Base de Conhecimento só é consultada com modelos OpenAI.")
+    missing = unavailable_providers()
+    if missing:
+        st.caption(
+            "Indisponível: "
+            + ", ".join(
+                f"{PROVIDER_LABELS[p]} (defina {PROVIDER_ENV_KEYS[p]} no .env)"
+                for p in missing
+            )
+        )
+    return provider, model
