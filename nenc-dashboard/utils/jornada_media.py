@@ -108,6 +108,43 @@ def save_video(
     return {"sha256": sha256, "size_bytes": size, "rel_path": rel_path}
 
 
+def adopt_video(organization_id: int, project_id: int, filename: str, path: Path) -> Dict[str, object]:
+    """Move para a pasta de mídia um vídeo que já está em disco (o inbox da importação).
+
+    O inbox fica no mesmo volume, então mover é instantâneo mesmo para GBs; se
+    não der para renomear (outro disco), copia em blocos pelo `save_video`.
+    """
+
+    path = Path(path)
+    extension = Path(str(filename)).suffix.lower()
+    if extension not in VIDEO_EXTENSIONS:
+        raise ValueError("Formato de video nao suportado: {}.".format(extension or "(sem extensao)"))
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_CHUNK), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    if not size:
+        raise ValueError("Video vazio: {}".format(filename))
+    sha256 = digest.hexdigest()
+    target_dir = project_dir(organization_id, project_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    final_path = target_dir / "{}{}".format(sha256, extension)
+    if final_path.exists():
+        path.unlink(missing_ok=True)
+    else:
+        try:
+            os.replace(path, final_path)
+        except OSError:
+            with path.open("rb") as handle:
+                stored = save_video(organization_id, project_id, filename, handle)
+            path.unlink(missing_ok=True)
+            return stored
+    rel_path = PurePosixPath(str(int(organization_id)), str(int(project_id)), final_path.name).as_posix()
+    return {"sha256": sha256, "size_bytes": size, "rel_path": rel_path}
+
+
 def delete_files(rel_paths: Iterable[str]) -> int:
     """Apaga videos pelo caminho relativo. Best-effort; devolve quantos sairam."""
 

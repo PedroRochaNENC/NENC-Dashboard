@@ -70,6 +70,7 @@ _CHILD_TABLES = (
     "jc_recordings",
     "jc_aoi_catalog",
     "jc_media",
+    "jc_import_batches",
 )
 
 
@@ -372,6 +373,42 @@ def init_db() -> None:
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 UNIQUE (project_id, sha256)
             );
+
+            -- Importacoes enviadas pelo script (utils/jornada_imports.py): os
+            -- arquivos esperam revisao no inbox, fora do banco.
+            CREATE TABLE IF NOT EXISTS jc_import_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                project_id INTEGER NOT NULL REFERENCES jc_projects(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'recebendo',
+                source_label TEXT,
+                client_json TEXT,
+                summary_json TEXT,
+                ignored_json TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                closed_at TEXT,
+                decided_at TEXT,
+                decided_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS jc_import_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id INTEGER NOT NULL REFERENCES jc_import_batches(id) ON DELETE CASCADE,
+                rel_path TEXT NOT NULL,
+                role TEXT NOT NULL,
+                meta_json TEXT NOT NULL DEFAULT '{}',
+                sha256 TEXT NOT NULL,
+                source_sha256 TEXT,
+                size_bytes INTEGER NOT NULL,
+                received_bytes INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'recebendo',
+                created_at TEXT,
+                UNIQUE (batch_id, rel_path)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_jc_import_batches_project
+                ON jc_import_batches(project_id, status);
             """
         )
 
@@ -604,6 +641,12 @@ def delete_project(project_id: int) -> bool:
     _audit("jornada.project.delete", "jc_project", project_id, project_org, write=True)
     _remove_from_knowledge_base(project_id)
     _remove_media_files(project_org, project_id, [row["rel_path"] for row in media_rows])
+    try:
+        from utils import jornada_imports
+
+        jornada_imports.remove_project_inbox(project_org, project_id)
+    except Exception:
+        pass
     return True
 
 
