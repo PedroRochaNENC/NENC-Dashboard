@@ -47,6 +47,14 @@ class ImportRefused(ValueError):
     """Recusa com mensagem para quem envia (vira 4xx na API)."""
 
 
+class ChunkOutOfOrder(ImportRefused):
+    """Bloco que não começa onde o arquivo parou; `expected` diz o offset certo."""
+
+    def __init__(self, expected: int):
+        super().__init__("Bloco fora de ordem: esperado o offset {}.".format(expected))
+        self.expected = int(expected)
+
+
 def inbox_root() -> Path:
     configured = os.environ.get("NENC_IMPORT_INBOX", "").strip()
     if configured:
@@ -239,7 +247,7 @@ def receive_chunk(
         if offset + len(data) <= received:
             return {"file_id": row["id"], "received": received, "complete": False}
         if offset != received:
-            raise ImportRefused("Bloco fora de ordem: esperado o offset {}.".format(received))
+            raise ChunkOutOfOrder(received)
         folder = _batch_dir(batch["organization_id"], batch["project_id"], batch_id)
         folder.mkdir(parents=True, exist_ok=True)
         part = folder / "{}.part".format(row["id"])

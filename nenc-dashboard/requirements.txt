@@ -1,5 +1,8 @@
 streamlit>=1.36.0
 starlette>=0.36.0,<0.47.0
+# API de importacao da Jornada (api/main.py): FastAPI compativel com o Starlette acima
+fastapi>=0.115.0,<0.116.0
+uvicorn>=0.30.0
 plotly>=5.18.0
 pandas>=2.0.0,<3.0.0
 numpy>=1.24.0

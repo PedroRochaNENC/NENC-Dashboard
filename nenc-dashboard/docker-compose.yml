@@ -28,6 +28,38 @@ services:
       - nenc-network
 
   # ------------------------------------------------------------
+  # API de importacao da Jornada (FastAPI, mesmo codigo e banco)
+  # Recebe a pasta do projeto enviada por scripts/jornada_enviar.py e a
+  # deixa como importacao pendente; quem grava e a revisao no app.
+  # ------------------------------------------------------------
+  nenc-import-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nenc-import-api
+    restart: always
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file:
+      - .env
+    environment:
+      - NENC_DB_PATH=/app/data/prosodia.db
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    expose:
+      - "8000"
+    volumes:
+      - ./data:/app/data
+    # O HEALTHCHECK da imagem consulta o Streamlit (8501); aqui e a API.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/api/jornada/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nenc-network
+
+  # ------------------------------------------------------------
   # NencProsodiaWhatsapp-API (FastAPI)
   # ------------------------------------------------------------
   nenc-whatsapp-api:
@@ -68,6 +100,7 @@ services:
       - caddy_config:/config
     depends_on:
       - nenc-dashboard
+      - nenc-import-api
       - nenc-whatsapp-api
     networks:
       - nenc-network
