@@ -381,6 +381,30 @@ class DataTests(_Base):
         jornada_db._remove_from_knowledge_base.assert_called_with(project_id)
         self.assertIsNone(jornada_db.get_project(project_id))
 
+    def test_videos_keep_their_kind_and_the_original_hash(self):
+        project_id = self._project()
+        first = jornada_media.save_video(self.organization.id, project_id, "a.mp4", b"compactado-1")
+        again = jornada_media.save_video(self.organization.id, project_id, "a.mp4", b"compactado-2")
+        with self._as(self.first_admin):
+            media_id, created = jornada_db.add_media(
+                project_id, participant_code="Pt01", task="livre", store="2250", filename="a.mp4",
+                kind="heatmap", source_sha256="original", **first,
+            )
+            self.assertTrue(created)
+            # O mesmo original recompactado (bytes diferentes) nao entra de novo.
+            same_id, created_again = jornada_db.add_media(
+                project_id, participant_code="Pt01", task="livre", store="2250", filename="a.mp4",
+                kind="heatmap", source_sha256="original", **again,
+            )
+            self.assertEqual((same_id, created_again), (media_id, False))
+            with self.assertRaises(ValueError):
+                jornada_db.add_media(
+                    project_id, participant_code="Pt01", task="livre", store="2250", filename="b.mp4",
+                    kind="outro", sha256="x", size_bytes=1, rel_path="1/1/x.mp4",
+                )
+        media = jornada_db.list_media(project_id)
+        self.assertEqual([(m["kind"], m["source_sha256"]) for m in media], [("heatmap", "original")])
+
 
 class MigrationTests(unittest.TestCase):
     """Um banco da versao de 0dc853f abre sem perder nada."""

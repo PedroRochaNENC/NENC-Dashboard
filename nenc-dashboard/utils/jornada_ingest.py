@@ -18,6 +18,9 @@ Formatos reconhecidos:
   perfil e tempo até a decisão, escritas pela equipe;
 - `interviews`: transcrições (`arquivo, ep, identificacao, texto`);
 - `legacy_tabelas`: o `Banco_Tabelas` da versão antiga do módulo;
+- `field_log`: registro de campo ("Relação Coletas"), com o produto escolhido,
+  as marcas consideradas, o tempo de compra e as observações de cada
+  participante;
 - `image`: foto de gôndola, heatmap ou embalagem.
 """
 
@@ -65,6 +68,7 @@ KIND_LABELS = {
     "bs_enriched_xlsx": "Planilha enriquecida",
     "interviews": "Entrevistas",
     "legacy_tabelas": "Formato legado (Banco_Tabelas)",
+    "field_log": "Registro de campo (escolha e tempo de compra)",
     "image": "Imagem",
 }
 
@@ -323,6 +327,26 @@ def _numeric(frame: pd.DataFrame, columns) -> pd.DataFrame:
     return frame
 
 
+def _header_row(frame: pd.DataFrame, marker: str = "participante", limit: int = 12) -> Optional[int]:
+    """Linha do cabeçalho numa planilha feita à mão (a equipe deixa linhas em branco no topo)."""
+    for index in range(min(limit, len(frame))):
+        if marker in {fold(value) for value in frame.iloc[index].tolist()}:
+            return index
+    return None
+
+
+def _looks_like_field_log(content: bytes) -> bool:
+    """Registro de campo: um cabeçalho com PARTICIPANTE e uma coluna de produto escolhido."""
+    try:
+        frame = pd.read_excel(io.BytesIO(content), header=None, nrows=12, dtype=str)
+    except Exception:
+        return False
+    row = _header_row(frame)
+    if row is None:
+        return False
+    return any("escolhid" in fold(value) for value in frame.iloc[row].tolist())
+
+
 def detect_kind(filename: str, content: bytes) -> Optional[str]:
     """Tipo do arquivo pelo nome e pelo cabeçalho; None se nao reconhecer."""
 
@@ -335,6 +359,8 @@ def detect_kind(filename: str, content: bytes) -> Optional[str]:
         return None
     try:
         if suffix in (".xlsx", ".xls"):
+            if _looks_like_field_log(content):
+                return "field_log"
             columns = list(pd.read_excel(io.BytesIO(content), nrows=5).columns)
         else:
             columns = list(read_delimited(content[:20000]).columns)
@@ -602,6 +628,140 @@ def _parse_interviews(parsed: ParsedFile, frame: pd.DataFrame) -> None:
     parsed.meta.update(n_rows=int(len(table)))
 
 
+_FIELD_FLAGS = (("jornada livre", "livre"), ("jornada estimulada", "estimulada"),
+                ("embalagem", "embalagens"), ("embalagens", "embalagens"))
+
+
+def _field_column(columns, *keys: str, exact: bool = False, startswith: str = "") -> Optional[str]:
+    for column in columns:
+        name = fold(column)
+        if startswith and name.startswith(startswith):
+            return column
+        for key in keys:
+            if (name == key) if exact else (key in name):
+                return column
+    return None
+
+
+def _field_rows(frame: pd.DataFrame, sheet: str) -> Dict[str, Dict[str, object]]:
+    """Linhas de uma aba do registro de campo, por participante."""
+    header = _header_row(frame)
+    if header is None:
+        return {}
+    body = frame.iloc[header + 1:].copy()
+    body.columns = [normalize_label(value) for value in frame.iloc[header].tolist()]
+    body = body.loc[:, [column for column in body.columns if column]].fillna("")
+    columns = list(body.columns)
+    c_participant = _field_column(columns, "participante", exact=True)
+    if c_participant is None:
+        return {}
+    c_store = _field_column(columns, "loja", exact=True)
+    c_profile = _field_column(columns, "perfil", exact=True)
+    c_date = _field_column(columns, "dia", "data", exact=True)
+    c_chosen = _field_column(columns, "escolhid")
+    c_considered = _field_column(columns, "considerad")
+    c_time = _field_column(columns, "tempo de compra", "tempo compra")
+    c_fraction = _field_column(columns, startswith="%")
+    c_notes = _field_column(columns, "observac")
+    flags = [(task, _field_column(columns, key, exact=True)) for key, task in _FIELD_FLAGS]
+    stimulated = c_considered is not None or c_time is not None or "estimul" in fold(sheet)
+    rows: Dict[str, Dict[str, object]] = {}
+    for _, row in body.iterrows():
+        code = normalize_participant(row[c_participant])
+        if not code:
+            continue
+        cell = lambda column: normalize_label(row[column]) if column else ""  # noqa: E731
+        rows[code] = {
+            "stimulated": stimulated,
+            "store_label": cell(c_store),
+            "profile_group": cell(c_profile),
+            "date": cell(c_date)[:10],
+            "tasks": sorted({task for task, column in flags if column and fold(row[column]) in ("ok", "sim", "x", "1")}),
+            "chosen": cell(c_chosen),
+            "considered": cell(c_considered),
+            "time": cell(c_time),
+            "fraction": cell(c_fraction),
+            "notes": cell(c_notes),
+        }
+    return rows
+
+
+def _parse_field_log(parsed: ParsedFile, content: bytes) -> None:
+    """Registro de campo: uma linha por participante × tarefa com a escolha.
+
+    Quem está numa aba de jornada estimulada (com marcas consideradas ou tempo
+    de compra) tem a escolha atribuída à estimulada; quem só fez a jornada
+    livre tem a escolha da aba de controle atribuída à livre — a compra que fez
+    por conta própria. A fração da jornada livre na categoria vai para a linha
+    da livre de quem a fez; as observações gerais ficam no participante.
+    """
+    workbook = pd.ExcelFile(io.BytesIO(content))
+    control: Dict[str, Dict[str, object]] = {}
+    stimulated: Dict[str, Dict[str, object]] = {}
+    for sheet in workbook.sheet_names:
+        rows = _field_rows(workbook.parse(sheet, header=None, dtype=str), sheet)
+        for code, row in rows.items():
+            (stimulated if row["stimulated"] else control)[code] = row
+    if not control and not stimulated:
+        parsed.error("Nenhuma aba com as colunas PARTICIPANTE e produto escolhido.")
+        return
+
+    def order(code: str):
+        match = re.search(r"\d+", code)
+        return (int(match.group()) if match else 10 ** 6, code)
+
+    records, info = [], []
+    for code in sorted(set(control) | set(stimulated), key=order):
+        c, e = control.get(code, {}), stimulated.get(code, {})
+        tasks = set(c.get("tasks", [])) | set(e.get("tasks", []))
+        if e:
+            tasks.add("estimulada")
+        info.append({
+            "code": code,
+            "profile_group": e.get("profile_group") or c.get("profile_group") or "",
+            "field_notes": c.get("notes") or "",
+            "date": c.get("date") or e.get("date") or "",
+            "tasks_done": sorted(tasks),
+        })
+        if e:
+            label = e.get("store_label") or c.get("store_label") or ""
+            records.append({
+                "participant": code, "task": "estimulada", "store": store_key(label), "store_label": label,
+                "profile_group": e.get("profile_group") or c.get("profile_group") or "",
+                "chosen_text": e.get("chosen") or c.get("chosen") or "",
+                "chosen_fallback": c.get("chosen") or "" if e.get("chosen") else "",
+                "considered_text": e.get("considered") or "",
+                "purchase_time_text": e.get("time") or "",
+                "purchase_time_s": parse_duration_text(e.get("time")) if e.get("time") else math.nan,
+                "category_fraction_text": "",
+                "task_notes": e.get("notes") or "",
+            })
+        if c and ("livre" in tasks or not tasks):
+            label = c.get("store_label") or ""
+            records.append({
+                "participant": code, "task": "livre", "store": store_key(label), "store_label": label,
+                "profile_group": c.get("profile_group") or "",
+                # Quem fez a estimulada teve a escolha registrada lá; a livre fica sem escolha.
+                "chosen_text": "" if e else c.get("chosen") or "",
+                "chosen_fallback": "",
+                "considered_text": "",
+                "purchase_time_text": "",
+                "purchase_time_s": math.nan,
+                "category_fraction_text": c.get("fraction") or "",
+                "task_notes": "",
+            })
+    parsed.table = pd.DataFrame(records, columns=[
+        "participant", "task", "store", "store_label", "profile_group", "chosen_text", "chosen_fallback",
+        "considered_text", "purchase_time_text", "purchase_time_s", "category_fraction_text", "task_notes",
+    ])
+    parsed.meta.update(
+        participant_info=info,
+        n_participants=len(info),
+        n_choices=int((parsed.table["chosen_text"] != "").sum()),
+        tasks=sorted(set(parsed.table["task"])),
+    )
+
+
 def legacy_tabelas_csv(frame: pd.DataFrame) -> bytes:
     """Banco_Tabelas gravado pela versao antiga, de volta ao formato que o upload le.
 
@@ -653,6 +813,9 @@ def parse_upload(filename: str, content: bytes, overrides: Optional[Dict] = None
                 caption=overrides.get("caption") or PurePath(str(filename)).stem,
                 store=overrides.get("store", ""),
                 category=overrides.get("category", ""),
+                brand=overrides.get("brand", ""),
+                view=overrides.get("view", ""),
+                edited=bool(overrides.get("edited")),
             )
             return parsed
         if kind == "video":
@@ -665,6 +828,10 @@ def parse_upload(filename: str, content: bytes, overrides: Optional[Dict] = None
         if kind == "gaze_frames":
             parsed.kind = kind
             _parse_frames(parsed, content, overrides)
+            return parsed
+        if kind == "field_log":
+            parsed.kind = kind
+            _parse_field_log(parsed, content)
             return parsed
         if kind == "bs_enriched_xlsx":
             parsed.kind = kind

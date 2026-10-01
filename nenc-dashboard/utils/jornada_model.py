@@ -185,6 +185,9 @@ def build_model(bundle: Dict) -> Dict:
                     "caption": meta.get("caption") or parsed.meta.get("caption"),
                     "store": meta.get("store") or "",
                     "category": meta.get("category") or "",
+                    "brand": meta.get("brand") or "",
+                    "view": meta.get("view") or "",
+                    "edited": bool(meta.get("edited")),
                 }
             )
             continue

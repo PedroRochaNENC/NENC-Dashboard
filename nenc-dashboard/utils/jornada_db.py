@@ -53,6 +53,7 @@ PROJECT_FIELDS = (
 _DATA_FIELDS = {"marcas", "marca_foco", "settings_json", "quality_thresholds"}
 
 RECORDING_STATUSES = ("auto", "incluida", "excluida")
+MEDIA_KINDS = ("cena", "heatmap")
 UNIT_CHOICES = ("segundos", "amostras")
 AOI_KINDS = ("produto", "preco", "embalagem", "fora", "outro")
 
@@ -401,6 +402,10 @@ def init_db() -> None:
             ),
         ):
             _ensure_column(conn, "jc_analyses", column, definition)
+        # Video de cena (com o ponto do olhar) ou de heatmap; e o hash do
+        # original, para o script nao recompactar e reenviar o mesmo video.
+        _ensure_column(conn, "jc_media", "kind", "TEXT NOT NULL DEFAULT 'cena'")
+        _ensure_column(conn, "jc_media", "source_sha256", "TEXT")
 
         # A versao anterior gravava filhos com a organizacao da sessao, que em
         # "Todas" podia nao ser a do projeto. O reparo e idempotente.
@@ -1074,16 +1079,25 @@ def add_media(
     sha256: str,
     size_bytes: int,
     rel_path: str,
+    kind: str = "cena",
+    source_sha256: Optional[str] = None,
 ) -> Tuple[int, bool]:
-    """Registra um video. Devolve (id, criado); um video repetido nao duplica."""
+    """Registra um video. Devolve (id, criado); um video repetido nao duplica.
 
+    `kind` e "cena" (com o ponto do olhar) ou "heatmap". `source_sha256` e o
+    hash do arquivo original quando o video chegou recompactado: o mesmo
+    original enviado de novo e reconhecido mesmo que a compactacao mude bytes.
+    """
+
+    if kind not in MEDIA_KINDS:
+        raise ValueError("Tipo de video desconhecido: {}.".format(kind))
     actor = _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         project_org = _project_org(conn, project_id, organization_id)
         existing = conn.execute(
-            "SELECT id FROM jc_media WHERE project_id = ? AND sha256 = ?",
-            (project_id, sha256),
+            "SELECT id FROM jc_media WHERE project_id = ? AND (sha256 = ? OR (? IS NOT NULL AND source_sha256 = ?))",
+            (project_id, sha256, source_sha256, source_sha256),
         ).fetchone()
         if existing:
             return int(existing["id"]), False
@@ -1091,8 +1105,8 @@ def add_media(
             """
             INSERT INTO jc_media (
                 organization_id, project_id, participant_code, task, store, filename,
-                sha256, size_bytes, rel_path, created_by_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sha256, size_bytes, rel_path, created_by_user_id, kind, source_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 project_org,
@@ -1105,6 +1119,8 @@ def add_media(
                 int(size_bytes),
                 rel_path,
                 _actor_user_id(actor),
+                kind,
+                source_sha256,
             ),
         )
         media_id = int(cursor.lastrowid)
