@@ -196,9 +196,11 @@ def known_hashes(organization_id: int, project_id: int) -> Dict[str, List[str]]:
             pending += [value for value in (row["sha256"], row["source_sha256"]) if value]
         # Documentos gravados não ficam em jc_files (viram Contexto e base de
         # conhecimento): sem isto, cada envio mandaria o relatório de novo para a base.
+        # O que a revisão deixou de fora não conta: volta no próximo envio.
         documents = [r["sha256"] for r in conn.execute(
             "SELECT f.sha256 FROM jc_import_files f JOIN jc_import_batches b ON b.id = f.batch_id "
-            "WHERE b.project_id = ? AND b.status = 'gravada' AND f.role = 'documento'", (int(project_id),))]
+            "WHERE b.project_id = ? AND b.status = 'gravada' AND f.role = 'documento' AND f.status = 'gravado'",
+            (int(project_id),))]
     return {"files": sorted(set(files)), "media": sorted(set(media)), "pending": sorted(set(pending)),
             "documents": sorted(set(documents))}
 
@@ -509,7 +511,8 @@ def _apply(actor, project_id: int, batch: Dict, fixes: Dict[int, Dict], selected
         keep = {int(file_id) for file_id in selected}
         files = [f for f in files if f["id"] in keep]
 
-    items, seed, skipped, warnings = [], [], [], []
+    items, item_ids, seed, skipped, warnings = [], [], [], [], []
+    recorded: List[int] = []  # arquivos que entraram no projeto; os outros voltam num próximo envio
     report = {"files": 0, "duplicates": 0, "videos": 0, "documents": 0, "skipped": skipped, "warnings": warnings}
     briefing_set = bool((project or {}).get("briefing_text"))
     for entry in files:
@@ -530,22 +533,29 @@ def _apply(actor, project_id: int, batch: Dict, fixes: Dict[int, Dict], selected
                 source_sha256=entry.get("source_sha256"), **stored,
             )
             report["videos" if created else "duplicates"] += 1
+            recorded.append(entry["id"])
             continue
         if entry["role"] == "documento":
             text = path.read_text(encoding="utf-8", errors="replace")
             original = meta.get("original_name") or name
+            reached = False
             if meta.get("doc_type") == "briefing" and not briefing_set:
                 try:
                     jornada_db.update_project(project_id, briefing_text=text, briefing_filename=original)
-                    briefing_set = True
+                    briefing_set = reached = True
                 except auth.AuthorizationError:
                     warnings.append("{}: o Contexto só é editado por quem criou o projeto.".format(original))
             if send_document is not None:
                 try:
                     send_document(original, text, meta)
+                    reached = True
                 except Exception as error:  # a base fora do ar não impede o resto
                     warnings.append("{}: não foi para a base ({}).".format(original, error))
-            report["documents"] += 1
+            if reached:
+                report["documents"] += 1
+                recorded.append(entry["id"])
+            else:
+                skipped.append(original)
             continue
         content = path.read_bytes()
         parsed = parse_upload(name, content, {"kind": "image"} if entry["role"] == "imagem" else None)
@@ -557,12 +567,14 @@ def _apply(actor, project_id: int, batch: Dict, fixes: Dict[int, Dict], selected
             skipped.append(name)
             continue
         items.append(item)
+        item_ids.append(entry["id"])
         if parsed.kind == "bs_enriched_xlsx":
             seed.extend(parsed.meta.get("participant_info") or [])
     if items:
         result = jornada_db.add_files(project_id, items)
         report["files"] += len(result["added"])
         report["duplicates"] += len(result["duplicates"])
+        recorded.extend(item_ids)  # repetidos também já estão no projeto
     if seed:
         jornada_db.upsert_participants(project_id, seed, only_missing=True, source="importacao")
     with jornada_db._connect() as conn:
@@ -572,6 +584,9 @@ def _apply(actor, project_id: int, batch: Dict, fixes: Dict[int, Dict], selected
             (_now(), getattr(actor, "id", None) if isinstance(getattr(actor, "id", None), int) else None,
              _now(), int(batch_id)),
         )
+        conn.execute("UPDATE jc_import_files SET status = 'descartado' WHERE batch_id = ?", (int(batch_id),))
+        conn.executemany("UPDATE jc_import_files SET status = 'gravado' WHERE id = ?",
+                         [(int(file_id),) for file_id in recorded])
     jornada_db._audit("jornada.import.apply", "jc_import_batch", int(batch_id), batch["organization_id"],
                       write=True)
     _remove_dir(_batch_dir(batch["organization_id"], project_id, batch_id))

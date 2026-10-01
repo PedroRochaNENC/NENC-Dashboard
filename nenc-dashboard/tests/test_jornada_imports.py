@@ -196,6 +196,29 @@ class ApplyTests(_ImportBase):
         known = jornada_imports.known_hashes(self.org, self.project_id)
         self.assertIn("b" * 64, known["media"])
         self.assertIn(_sha(SAMPLES), known["files"])
+        self.assertEqual(known["documents"], [_sha("Objetivo do estudo: entender a gôndola.".encode("utf-8"))])
+
+    def test_what_the_review_left_out_is_sent_again_next_time(self):
+        batch_id = self._ready_batch()
+        files = {f["rel_path"]: f["id"] for f in jornada_imports.batch_files(self.project_id, batch_id)}
+        document = files["1.GESTAO/1.1 Documentação/Briefing.docx.txt"]
+        with self._as(self.first_admin):
+            report = jornada_imports.apply_batch(
+                self.project_id, batch_id, selected=[i for i in files.values() if i != document])
+        self.assertEqual(report["documents"], 0)
+        statuses = {f["rel_path"]: f["status"] for f in jornada_imports.batch_files(self.project_id, batch_id)}
+        self.assertEqual(statuses["1.GESTAO/1.1 Documentação/Briefing.docx.txt"], "descartado")
+        self.assertEqual(statuses["2.DADOS/2.3/DSP1234/DSP1234-INDIVIDUAL2.csv"], "gravado")
+        self.assertEqual(jornada_imports.known_hashes(self.org, self.project_id)["documents"], [])
+
+    def test_a_document_with_nowhere_to_go_is_not_counted(self):
+        with self._as(self.first_admin):
+            jornada_db.update_project(self.project_id, briefing_text="Contexto já escrito", briefing_filename="a.txt")
+        batch_id = self._ready_batch()
+        with self._as(self.first_admin):
+            report = jornada_imports.apply_batch(self.project_id, batch_id)  # sem base de conhecimento
+        self.assertEqual((report["documents"], report["skipped"]), (0, ["Briefing.docx"]))
+        self.assertEqual(jornada_db.get_project(self.project_id)["briefing_text"], "Contexto já escrito")
 
     def test_a_read_only_account_cannot_write_and_the_batch_stays_ready(self):
         batch_id = self._ready_batch()

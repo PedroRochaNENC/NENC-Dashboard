@@ -161,7 +161,7 @@ class SendTests(_ImportBase):
         self.assertEqual((video["sha256"], video["source_sha256"]), (_sha(FILES[CENA]), None))
         self.assertEqual(json.loads(video["meta_json"])["participant"], "Pt01")
         self.assertEqual(json.loads(batch["summary_json"])["enviados"], len(SENT))
-        self.assertTrue(any("jornada-compra-uploads" in line for line in self.lines))
+        self.assertTrue(any("Uploads > Importações pendentes" in line for line in self.lines))
 
     def test_sending_again_only_sends_what_is_new_and_reuses_the_hashes(self):
         self._run()

@@ -552,8 +552,8 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
         out("Nada novo: tudo o que a pasta tem já está no projeto ou esperando revisão.")
         return 0
     out("Pronto: {} arquivo(s) enviado(s) agora, {} já estavam no projeto.".format(sent, skipped))
-    out("Revise e grave no app: Jornada de Compra → Uploads → Importações pendentes")
-    out("  {}/jornada-compra-uploads (projeto {})".format(base_url, project["name"]))
+    out("Revise e grave no app: {} > Jornada de Compra > projeto {} > Uploads > Importações pendentes".format(
+        base_url, project["name"]))
     return 0
 
 
