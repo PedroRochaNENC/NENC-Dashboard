@@ -56,6 +56,29 @@ class UserPromptTests(unittest.TestCase):
         self.assertIn("<achados>", text)
         self.assertTrue(text.rstrip().endswith("mantenha as limitações."))
 
+    def test_choices_and_field_notes_go_inside_their_own_tags(self):
+        from tests.test_jornada_choice import _field_log
+
+        bundle = dict(self.bundle, files=self.bundle["files"] + [_file(9, "Relação Coletas.xlsx", _field_log())])
+        bundle["project"] = dict(bundle["project"], marcas="Alfa\nBeta\nGama Livre")
+        model = build_model(bundle)
+        metrics = compute_all(model, {})
+        text = prompts.build_jornada_project_user_prompt(bundle["project"], metrics, model=model)
+        block = text[text.index("<escolhas>"):text.index("</escolhas>")]
+        self.assertIn("Gama Livre", block)
+        self.assertFalse(metrics["attention_choice"].empty)
+        self.assertIn("Da atenção à escolha", block)
+        notes = text[text.index("<observacoes_campo>"):text.index("</observacoes_campo>")]
+        self.assertIn("compara preço", notes)
+        self.assertLess(text.index("<escolhas>"), text.index("<observacoes_campo>"))
+
+    def test_field_notes_have_a_ceiling(self):
+        long_notes = self.model["participants"].assign(field_notes="observação longa " * 400)
+        model = dict(self.model, participants=long_notes)
+        section = prompts._field_notes_section(model, self.metrics)
+        self.assertIn("[observações truncadas]", section)
+        self.assertLess(len(section), prompts.MAX_FIELD_NOTES_CHARS + 300)
+
     def test_numbers_are_formatted_like_the_screen(self):
         text = self._prompt()
         row = [line for line in text.splitlines() if line.startswith("| ") and "Marca A (foco)" in line][0]

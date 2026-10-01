@@ -100,6 +100,26 @@ class ExcelTests(unittest.TestCase):
         blank = dictionary[dictionary["descricao"] == ""]
         self.assertTrue(blank.empty, blank[["aba", "coluna"]].values.tolist())
 
+    def test_choices_and_times_go_as_plain_text_and_numbers(self):
+        from tests.test_jornada_choice import _field_log
+
+        bundle = dict(self.bundle, files=self.bundle["files"] + [_file(9, "Relação Coletas.xlsx", _field_log())])
+        bundle["project"] = dict(bundle["project"], marcas="Alfa\nBeta\nGama Livre")
+        model = build_model(bundle)
+        metrics = compute_all(model, {})
+        tables = jornada_export.excel_tables(bundle["project"], model, metrics, quality=self.quality)
+        choices = tables["Escolhas"].set_index(["participant", "task"])
+        self.assertEqual(choices.loc[("Pt03", "estimulada"), "chosen_brands"], "Gama Livre")
+        self.assertEqual(choices.loc[("Pt03", "estimulada"), "considered_brands"], "Alfa, Gama Livre")
+        self.assertNotIn("chosen_values", tables["Escolhas"].columns)
+        self.assertIn("campo", set(tables["Tempos"]["source"]))
+        self.assertFalse(tables["Escolha_Marca"].empty)
+        workbook = openpyxl.load_workbook(io.BytesIO(jornada_export.write_workbook(tables, 1000)), read_only=True)
+        self.assertIn("Escolhas", workbook.sheetnames)
+        dictionary = tables["Dicionario"]
+        blank = dictionary[dictionary["descricao"] == ""]
+        self.assertTrue(blank.empty, blank[["aba", "coluna"]].values.tolist())
+
     def test_an_empty_project_still_has_every_header(self):
         model = build_model(_bundle([]))
         metrics = compute_all(model, {})

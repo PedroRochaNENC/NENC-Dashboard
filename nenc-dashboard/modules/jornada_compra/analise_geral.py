@@ -3,8 +3,9 @@ Jornada de Compra — Análise Geral.
 
 A leitura consolidada do projeto, no molde da Análise Geral do NencBoost:
 resumo com os achados, gôndola (atenção por marca, funil, primeira olhada,
-presença, SKUs), navegação e decisão (atributos, preço, tempo até a decisão),
-embalagens, canal e perfil, amostra e qualidade — e, por fim, a IA e as
+presença, SKUs, foto e heatmap da loja), navegação e decisão (atributos, preço,
+tempo até a decisão), escolha (registro de campo), embalagens (com as fotos de
+cada marca), canal e perfil, amostra e qualidade — e, por fim, a IA e as
 exportações.
 
 Só entram as gravações incluídas; os filtros valem para todas as seções. Cada
@@ -25,8 +26,9 @@ from utils import jornada_charts as charts
 from utils import jornada_db
 from utils.ai_provider import get_openai_client, get_vector_store_id
 from utils.jornada_ai import AI_MODELS, chat_answer, generate_analysis, send_analysis_to_kb
-from utils.jornada_cache import get_project_metrics, get_project_model
+from utils.jornada_cache import get_image, get_project_metrics, get_project_model
 from utils.jornada_export import build_excel, filters_text
+from utils.jornada_gallery import brand_photos, report_images, store_heatmaps, store_photos
 from utils.jornada_ingest import TASK_LABELS
 from utils.jornada_metrics import ALL_STORES, TIME_SOURCE_LABELS, time_kpi
 from utils.jornada_model import RECORDING_STATUS_LABELS
@@ -43,6 +45,7 @@ SECTIONS = [
     "Resumo",
     "Gôndola",
     "Navegação e decisão",
+    "Escolha",
     "Embalagens",
     "Canal e perfil",
     "Amostra e qualidade",
@@ -55,6 +58,7 @@ SECTION_OF_FINDING = {
     "preco": "Navegação e decisão",
     "navegacao": "Navegação e decisão",
     "decisao": "Navegação e decisão",
+    "escolha": "Escolha",
     "embalagem": "Embalagens",
 }
 
@@ -69,6 +73,7 @@ if recordings.empty and model["pooled"].empty:
     st.stop()
 
 meta = model["meta"]
+images = model.get("images") or []
 focus_brand = meta.get("focus_brand") or ""
 brand_colors = charts.brand_color_map(meta.get("brands") or [], focus_brand)
 brand_order = list(brand_colors)
@@ -118,6 +123,12 @@ def _table(frame: pd.DataFrame, columns: dict, formats: dict = None, key: str = 
     view = view.rename(columns=columns)
     with st.expander("Ver tabela"):
         st.dataframe(view, hide_index=True, width="stretch", key=key or None)
+
+
+def _show_image(image: dict, caption: str = "", max_px: int = 1200) -> None:
+    content = get_image(project, image["file_id"], max_px)
+    if content:
+        st.image(content, caption=caption or image.get("caption") or image.get("filename"), width="stretch")
 
 
 def _analysis_label(analysis: dict) -> str:
@@ -172,7 +183,7 @@ if section == "Resumo":
     findings = metrics["findings"]
     if not findings:
         st.info("Sem achados para esta seleção.")
-    for area in ("Gôndola", "Navegação e decisão", "Embalagens"):
+    for area in ("Gôndola", "Navegação e decisão", "Escolha", "Embalagens"):
         items = [f for f in findings if SECTION_OF_FINDING.get(f["section"]) == area]
         if not items:
             continue
@@ -216,6 +227,22 @@ elif section == "Gôndola":
     n = int(cell_brand["n"].iloc[0]) if not cell_brand.empty else 0
     st.caption("n = {} participante(s){}".format(
         n, " — descritivo, sem teste estatístico" if n < 5 else ""))
+    cell_store = cell_brand["store"].iloc[0] if not cell_brand.empty else ALL_STORES
+    if cell_store != ALL_STORES:
+        photos, heatmaps = store_photos(images, cell_store), store_heatmaps(images, cell_store)
+        if photos or heatmaps:
+            with st.expander("Foto e heatmap da loja", expanded=True):
+                shown = [image for image in (photos[:1] + heatmaps[:1])]
+                for column, image in zip(st.columns(len(shown)), shown):
+                    with column:
+                        _show_image(image)
+                others = photos[1:] + heatmaps[1:]
+                if others and st.toggle("Ver as outras {} imagem(ns) da loja".format(len(others)),
+                                        key="jc_ag_store_photos"):
+                    for start in range(0, len(others), 4):
+                        for column, image in zip(st.columns(4), others[start:start + 4]):
+                            with column:
+                                _show_image(image, max_px=600)
 
     left, right = st.columns(2)
     with left:
@@ -395,6 +422,153 @@ elif section == "Navegação e decisão":
         )
 
 # ==================================================================
+# Escolha
+# ==================================================================
+elif section == "Escolha":
+    choices = metrics.get("choices")
+    choice = metrics["choice"]
+    if choices is None or choices.empty:
+        st.info("Ainda não há registro de campo neste projeto. Envie a `Relação Coletas.xlsx` em **Uploads** "
+                "(ou a pasta inteira pelo script) para ver o produto escolhido, as marcas consideradas e o "
+                "tempo de compra.")
+        st.stop()
+    st.caption(
+        "Produto escolhido segundo o registro de campo, com o texto normalizado pelas marcas do projeto. "
+        "Na jornada livre é a compra observada; na estimulada, a escolha pedida. Com poucos participantes "
+        "por loja, a leitura é descritiva."
+    )
+
+    def _yes(flag) -> str:
+        return "sim" if flag else "não"
+
+    st.subheader("Escolha por marca")
+    choice_task = None
+    if choice.empty:
+        st.info("Nenhuma escolha desta seleção cita uma marca do projeto. Confira as marcas em Dados do Projeto.")
+    else:
+        c1, c2 = st.columns([2, 1.6])
+        choice_task = c1.selectbox("Tarefa", list(dict.fromkeys(choice["task"])),
+                                   format_func=lambda t: TASK_LABELS.get(t, t), key="jc_ag_choice_task")
+        by = c2.radio("Comparar por", ["Loja", "Canal", "Perfil"], horizontal=True, key="jc_ag_choice_by")
+        task_rows = choice[choice["task"] == choice_task]
+        total = task_rows[task_rows["group_type"] == "total"]
+        st.caption("n = {} participante(s) com escolha registrada. Quem escolheu duas marcas conta nas duas.".format(
+            int(total["n"].iloc[0]) if not total.empty else 0))
+        left, right = st.columns([1, 1.3])
+        with left:
+            st.markdown("**Todas as lojas**")
+            st.plotly_chart(charts.emphasis_bars(total.assign(label=total["brand"]), "label", "share"),
+                            width="stretch", key="jc_ag_choice_total")
+        with right:
+            st.markdown("**Por {}**".format(by.lower()))
+            st.plotly_chart(charts.choice_heatmap(task_rows[task_rows["group_type"] == by.lower()], brand_order),
+                            width="stretch", key="jc_ag_choice_groups")
+        _table(
+            task_rows,
+            {"group_type": "Agrupamento", "group": "Grupo", "brand": "Marca", "chose_n": "Escolheram", "n": "n",
+             "share": "Fração"},
+            {"share": fmt_pct},
+            key="jc_tab_choice",
+        )
+        variants = metrics["variants"]
+        variants = variants[variants["task"] == choice_task] if not variants.empty else variants
+        if not variants.empty:
+            st.markdown("**Variante escolhida**")
+            st.caption("Entre quem escolheu cada marca, quantos levaram cada valor do atributo.")
+            rows = variants.assign(label=variants["brand"] + " · " + variants["value"],
+                                   is_focus=variants["brand"] == focus_brand)
+            st.plotly_chart(charts.emphasis_bars(rows, "label", "share"), width="stretch", key="jc_ag_variants")
+            _table(
+                variants,
+                {"brand": "Marca", "dimension": "Atributo", "value": "Valor", "chose_n": "Escolheram",
+                 "n_brand": "Escolheram a marca", "share": "Fração"},
+                {"share": fmt_pct},
+                key="jc_tab_variants",
+            )
+
+    st.subheader("Da atenção à escolha")
+    attention = metrics["attention_choice"]
+    if choice_task and not attention.empty:
+        attention = attention[attention["task"] == choice_task]
+    if attention.empty:
+        st.caption("Ninguém com escolha registrada nesta tarefa tem o olhar codificado na mesma gravação.")
+    else:
+        threshold = fmt_number(meta.get("examined_threshold_s", 1.0), 1)
+        for column, (label, field) in zip(st.columns(4), (
+            ("Notaram a marca escolhida", "looked"), ("Examinaram (≥ {} s)".format(threshold), "examined"),
+            ("Foi a 1ª marca notada", "first_noticed"), ("Foi a marca mais vista", "top_share"),
+        )):
+            hits = int(attention[field].sum())
+            column.metric(label, "{}/{}".format(hits, len(attention)), help=fmt_pct(hits / len(attention)))
+        st.dataframe(
+            pd.DataFrame({
+                "Participante": attention["participant"],
+                "Loja": attention["store_label"],
+                "Escolheu": attention["chosen_brand"],
+                "Notou": attention["looked"].map(_yes),
+                "Examinou": attention["examined"].map(_yes),
+                "1ª notada": attention["first_noticed"].map(_yes),
+                "Mais vista": attention["top_share"].map(_yes),
+                "Share da escolhida": attention["share"].map(fmt_pct),
+                "Posição na atenção": [
+                    "{}ª de {}".format(int(rank), int(total_brands)) if rank == rank else ""
+                    for rank, total_brands in zip(attention["share_rank"], attention["n_brands"])
+                ],
+            }),
+            hide_index=True, width="stretch",
+        )
+
+    consideration = metrics["consideration"]
+    if not consideration.empty:
+        st.subheader("Conjunto considerado e embalagens")
+        st.caption("Marcas que o participante disse ter considerado na compra e as embalagens citadas "
+                   "(registro de campo).")
+        st.dataframe(
+            pd.DataFrame({
+                "Tarefa": consideration["task_label"],
+                "Loja": consideration["store_label"],
+                "n": consideration["n"],
+                "Marcas consideradas (média)": consideration["considered_mean"].map(lambda v: fmt_number(v, 1)),
+                "Só uma marca": consideration["single_brand_n"],
+                "Embalagens citadas": consideration["packs"],
+            }),
+            hide_index=True, width="stretch",
+        )
+
+    times = metrics.get("times")
+    field_times = times[times["source"] == "campo"] if times is not None and not times.empty else pd.DataFrame()
+    if not field_times.empty:
+        st.subheader("Tempo de compra")
+        st.caption("Anotado em campo, na tarefa em que foi medido. O Tempo da planilha, a outra medida, está em "
+                   "Navegação e decisão.")
+        time_by = st.radio("Agrupar por", ["Loja", "Canal", "Perfil"], horizontal=True, key="jc_ag_choice_time_by")
+        st.plotly_chart(
+            charts.decision_strip(field_times.rename(columns={"seconds": "tempo_decisao_s"}),
+                                  {"Loja": "store_label", "Perfil": "profile", "Canal": "channel"}[time_by]),
+            width="stretch", key="jc_ag_choice_time",
+        )
+
+    with st.expander("Escolhas por participante"):
+        view = choices.sort_values(["task", "store_label", "participant"])
+        st.dataframe(
+            pd.DataFrame({
+                "Participante": view["participant"],
+                "Tarefa": view["task_label"],
+                "Loja": view["store_label"],
+                "Perfil": view["profile"],
+                "Escolha (campo)": view["chosen_text"],
+                "Marca": view["chosen_brands"].map(", ".join),
+                "Variante": view["chosen_values_text"],
+                "Consideradas": view["considered_brands"].map(lambda brands: ", ".join(brands or [])),
+                "Embalagens": view["packs"].map(lambda packs: ", ".join(str(p) for p in packs or [])),
+                "Tempo de compra": view["purchase_time_s"].map(fmt_seconds),
+                "Fração na categoria": view["category_fraction"].map(fmt_pct),
+                "Observações": view["task_notes"],
+            }),
+            hide_index=True, width="stretch",
+        )
+
+# ==================================================================
 # Embalagens
 # ==================================================================
 elif section == "Embalagens":
@@ -402,38 +576,53 @@ elif section == "Embalagens":
     elements = packaging.get("elements", pd.DataFrame())
     if elements is None or elements.empty:
         st.info("Não há dados de embalagem (agregados por perfil) neste projeto.")
-        st.stop()
-    groups = list(dict.fromkeys(elements["profile"]))
-    default = groups.index("Todos os perfis") if "Todos os perfis" in groups else 0
-    group = st.selectbox("Perfil", groups, index=default, key="jc_ag_pack_group")
-    rows = elements[elements["profile"] == group]
-    coverage = packaging["coverage"]
-    cov = coverage[coverage["profile"] == group]
-    if not cov.empty and cov["aoi_coverage"].notna().any():
-        st.caption(
-            "n = {} · os elementos mapeados somam {} do tempo gravado; o resto ficou fora de "
-            "qualquer elemento.".format(int(cov["n_group"].iloc[0]), fmt_pct(cov["aoi_coverage"].iloc[0]))
+    else:
+        groups = list(dict.fromkeys(elements["profile"]))
+        default = groups.index("Todos os perfis") if "Todos os perfis" in groups else 0
+        group = st.selectbox("Perfil", groups, index=default, key="jc_ag_pack_group")
+        rows = elements[elements["profile"] == group]
+        coverage = packaging["coverage"]
+        cov = coverage[coverage["profile"] == group]
+        if not cov.empty and cov["aoi_coverage"].notna().any():
+            st.caption(
+                "n = {} · os elementos mapeados somam {} do tempo gravado; o resto ficou fora de "
+                "qualquer elemento.".format(int(cov["n_group"].iloc[0]), fmt_pct(cov["aoi_coverage"].iloc[0]))
+            )
+        st.markdown("**Onde o olhar cai em cada embalagem**")
+        st.caption("Fração do olhar de cada marca que cada elemento levou.")
+        st.plotly_chart(charts.packaging_heatmap(rows), width="stretch")
+        st.markdown("**Quantos viram cada elemento**")
+        st.plotly_chart(charts.packaging_heatmap(rows, value="reach"), width="stretch")
+        _table(
+            rows,
+            {"brand": "Marca", "element_label": "Elemento", "reach": "Alcance", "element_share": "Share na marca",
+             "dwell_per_participant_s": "Tempo por participante (s)",
+             "dwell_per_looker_s": "Tempo por quem olhou (s)", "ttff_mean_s": "TTFF médio (s)", "n_group": "n"},
+            {"reach": fmt_pct, "element_share": fmt_pct, "dwell_per_participant_s": lambda v: fmt_number(v, 2),
+             "dwell_per_looker_s": lambda v: fmt_number(v, 2), "ttff_mean_s": lambda v: fmt_number(v, 1)},
+            key="jc_tab_pack",
         )
-    st.markdown("**Onde o olhar cai em cada embalagem**")
-    st.caption("Fração do olhar de cada marca que cada elemento levou.")
-    st.plotly_chart(charts.packaging_heatmap(rows), width="stretch")
-    st.markdown("**Quantos viram cada elemento**")
-    st.plotly_chart(charts.packaging_heatmap(rows, value="reach"), width="stretch")
-    _table(
-        rows,
-        {"brand": "Marca", "element_label": "Elemento", "reach": "Alcance", "element_share": "Share na marca",
-         "dwell_per_participant_s": "Tempo por participante (s)", "dwell_per_looker_s": "Tempo por quem olhou (s)",
-         "ttff_mean_s": "TTFF médio (s)", "n_group": "n"},
-        {"reach": fmt_pct, "element_share": fmt_pct, "dwell_per_participant_s": lambda v: fmt_number(v, 2),
-         "dwell_per_looker_s": lambda v: fmt_number(v, 2), "ttff_mean_s": lambda v: fmt_number(v, 1)},
-        key="jc_tab_pack",
-    )
-    brands_table = packaging.get("brands", pd.DataFrame())
-    if brands_table is not None and not brands_table.empty:
-        st.markdown("**Marca / logo visto, por perfil**")
-        logos = brands_table.assign(label=brands_table["brand"] + " · " + brands_table["profile"],
-                                    is_focus=brands_table["brand"] == focus_brand)
-        st.plotly_chart(charts.emphasis_bars(logos, "label", "logo_reach"), width="stretch")
+        brands_table = packaging.get("brands", pd.DataFrame())
+        if brands_table is not None and not brands_table.empty:
+            st.markdown("**Marca / logo visto, por perfil**")
+            logos = brands_table.assign(label=brands_table["brand"] + " · " + brands_table["profile"],
+                                        is_focus=brands_table["brand"] == focus_brand)
+            st.plotly_chart(charts.emphasis_bars(logos, "label", "logo_reach"), width="stretch")
+
+    photographed = [name for name in dict.fromkeys(brand_order + [i.get("brand") for i in images if i.get("brand")])
+                    if brand_photos(images, name)]
+    if photographed:
+        st.subheader("Fotos das embalagens")
+        st.caption("A versão editada primeiro; depois frente, verso e laterais.")
+        for tab, name in zip(st.tabs(photographed), photographed):
+            with tab:
+                photos = brand_photos(images, name)
+                for start in range(0, len(photos), 4):
+                    for column, image in zip(st.columns(4), photos[start:start + 4]):
+                        with column:
+                            _show_image(image, caption="editada" if image.get("edited") else (image.get("view") or
+                                                                                               image.get("caption")),
+                                        max_px=700)
 
 # ==================================================================
 # Canal e perfil
@@ -713,8 +902,15 @@ else:
             with st.spinner("Montando os arquivos…"):
                 quality = run_quality(model, project)
                 media = jornada_db.list_media(project_id)
-                pdf, pdf_name = build_pdf(project, model, metrics, analysis=chosen_analysis, quality=quality)
-                pptx, pptx_name = build_pptx(project, model, metrics, analysis=chosen_analysis, quality=quality)
+                # Uma imagem por loja e uma por marca, já reduzidas para não inchar os arquivos.
+                stores = list(zip(model["stores"]["store"], model["stores"]["label"]))
+                pictures = [dict(item, content=get_image(project, item["file_id"], 1600))
+                            for item in report_images(images, stores, brand_order)]
+                pictures = [item for item in pictures if item["content"]]
+                pdf, pdf_name = build_pdf(project, model, metrics, analysis=chosen_analysis, quality=quality,
+                                          images=pictures)
+                pptx, pptx_name = build_pptx(project, model, metrics, analysis=chosen_analysis, quality=quality,
+                                             images=pictures)
                 excel, excel_name = build_excel(
                     project, model, metrics, quality=quality, analyses=analyses, media=media,
                 )

@@ -32,6 +32,7 @@ from utils.excel_export import (
     write_workbook,
 )
 from utils.jornada_ingest import METRIC_COLUMNS, TASK_LABELS
+from utils.jornada_model import CHOICE_COLUMNS, TIME_COLUMNS
 
 # Folga para o aviso de corte caber na celula.
 _TEXT_LIMIT = EXCEL_CELL_MAX_CHARS - 200
@@ -86,7 +87,16 @@ SHEET_DESCRIPTIONS = {
     "Atributos": "Fração da atenção por valor de atributo (ex.: Diurno × Noturno).",
     "Resumo_Gravacao": "Por gravação: atenção à categoria, marcas vistas, marca foco e tempo "
                        "até a decisão.",
-    "Tempo_Decisao": "Tempo até a decisão por loja, canal e perfil (descritivo).",
+    "Tempo_Decisao": "Tempo até a decisão por tarefa e fonte, por loja, canal e perfil (descritivo).",
+    "Tempos": "Cada tempo até a decisão com a tarefa e a fonte: tempo de compra (registro de campo) "
+              "ou Tempo da planilha enriquecida.",
+    "Escolhas": "Escolha de cada participante por tarefa, do registro de campo: o texto anotado e a "
+                "leitura normalizada pelas marcas do projeto.",
+    "Escolha_Marca": "Quantos escolheram cada marca, por tarefa e por loja, canal e perfil.",
+    "Variantes": "Entre quem escolheu cada marca, quantos levaram cada valor de atributo.",
+    "Atencao_Escolha": "Para quem tem escolha e olhar codificado na mesma gravação: a marca escolhida foi "
+                       "notada, examinada, a primeira e a mais vista?",
+    "Consideracao": "Tamanho do conjunto de marcas considerado e embalagens citadas, por tarefa e loja.",
     "Comparacoes": "Comparações entre grupos: médias, δ de Cliff e p quando a amostra permite.",
     "Elementos_Embalagem": "Elementos de cada embalagem por perfil (dos agregados).",
     "Marcas_Embalagem": "Atenção a cada embalagem por perfil e alcance do logo.",
@@ -432,6 +442,19 @@ def _recordings_sheet(model: Dict, quality: Optional[Dict], media: Sequence[Dict
     return recordings
 
 
+def _choices_sheet(choices: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Escolhas por participante e tarefa; as listas viram texto separado por vírgula."""
+
+    columns = [column for column in CHOICE_COLUMNS if column != "chosen_values"]
+    if choices is None or choices.empty:
+        return pd.DataFrame(columns=columns)
+    out = choices.drop(columns=["chosen_values"], errors="ignore").copy()
+    for column in ("chosen_brands", "considered_brands", "packs"):
+        if column in out:
+            out[column] = out[column].map(lambda items: ", ".join(str(item) for item in items or []))
+    return _clean(out, columns)
+
+
 def _dictionary(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     rows = []
     for sheet, frame in tables.items():
@@ -491,6 +514,12 @@ def excel_tables(
         "Atributos": _clean(metrics.get("attributes")),
         "Resumo_Gravacao": _clean(metrics.get("recording_summary")),
         "Tempo_Decisao": _clean(metrics.get("decision")),
+        "Tempos": _clean(metrics.get("times"), TIME_COLUMNS),
+        "Escolhas": _choices_sheet(metrics.get("choices")),
+        "Escolha_Marca": _clean(metrics.get("choice")),
+        "Variantes": _clean(metrics.get("variants")),
+        "Atencao_Escolha": _clean(metrics.get("attention_choice")),
+        "Consideracao": _clean(metrics.get("consideration")),
         "Comparacoes": _clean(metrics.get("comparisons"), COMPARISON_COLUMNS),
         "Elementos_Embalagem": _clean(packaging.get("elements"), PACKAGING_COLUMNS["elements"]),
         "Marcas_Embalagem": _clean(packaging.get("brands"), PACKAGING_COLUMNS["brands"]),

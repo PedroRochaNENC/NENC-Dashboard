@@ -72,6 +72,29 @@ class DeckTests(unittest.TestCase):
         for got, expected in zip(values, first_cell["share_mean"]):
             self.assertAlmostEqual(got, expected)
 
+    def test_choices_and_pictures_get_their_slides(self):
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        from tests.test_jornada_choice import _field_log
+        from tests.test_jornada_import_review import _png
+
+        bundle = dict(self.bundle, files=self.bundle["files"] + [_file(9, "Relação Coletas.xlsx", _field_log())])
+        bundle["project"] = dict(bundle["project"], marcas="Alfa\nBeta\nGama Livre")
+        model = build_model(bundle)
+        pictures = [{"group": "loja", "title": "Heatmap · DSP 1234", "content": _png()},
+                    {"group": "marca", "title": "Embalagem · Alfa", "content": _png()}]
+        data, _ = jornada_pptx.build_pptx(bundle["project"], model, compute_all(model, {}), images=pictures)
+        deck = Presentation(io.BytesIO(data))
+        titles = _titles(deck)
+        for expected in ("Escolha — Jornada Estimulada", "Da atenção à escolha", "A gôndola de cada loja",
+                         "As embalagens"):
+            self.assertIn(expected, titles)
+        placed = [shape for slide in deck.slides for shape in slide.shapes
+                  if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+        self.assertEqual(len(placed), 2)
+        # Sem distorção: a proporção da imagem (640 × 480) se mantém.
+        self.assertAlmostEqual(placed[0].width / placed[0].height, 640 / 480, places=2)
+
     def test_a_missing_value_leaves_the_bar_blank(self):
         slide = jornada_pptx._Deck("rodapé").slide("Teste")
         chart = jornada_pptx._bar_chart(slide, (0, 0, jornada_pptx.Inches(4), jornada_pptx.Inches(3)),

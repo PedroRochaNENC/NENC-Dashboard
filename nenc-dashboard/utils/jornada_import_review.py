@@ -12,7 +12,6 @@ que o upload manual da mesma tela usa.
 """
 
 import base64
-import io
 from pathlib import PurePosixPath
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -21,6 +20,7 @@ import streamlit as st
 
 from utils import auth, jornada_db, jornada_imports
 from utils.jornada_format import fmt_pct, fmt_seconds
+from utils.jornada_gallery import downscale
 from utils.jornada_ingest import KIND_LABELS, TASK_LABELS, parse_upload
 from utils.jornada_model import build_model
 
@@ -147,16 +147,8 @@ def video_rows(files: Sequence[Dict], existing_media: set) -> pd.DataFrame:
 
 def thumbnail(content: bytes, size: int = 160) -> str:
     """Miniatura em data URI para a grade (as fotos originais passam de 1 MB)."""
-    try:
-        from PIL import Image
-
-        with Image.open(io.BytesIO(content)) as image:
-            image.thumbnail((size, size))
-            buffer = io.BytesIO()
-            image.convert("RGB").save(buffer, format="JPEG", quality=70)
-    except Exception:
-        return ""
-    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    small = downscale(content, size, quality=70)
+    return "data:image/jpeg;base64," + base64.b64encode(small).decode("ascii") if small else ""
 
 
 def image_rows(files: Sequence[Dict], thumbnails: Dict[int, str], existing: set) -> pd.DataFrame:

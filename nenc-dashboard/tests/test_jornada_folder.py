@@ -95,7 +95,9 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(self._entry("heatmap-1234.png", entries).meta, {"category": "heatmap", "store": "1234"})
         gondola = self._entry("DSP-1234/Gondola.jpeg", entries)
         self.assertEqual((gondola.meta["category"], gondola.meta["store"]), ("gondola", "1234"))
-        self.assertEqual(self._entry("Gondola-editada.jpg", entries).meta["store"], "atacado")
+        edited_gondola = self._entry("Gondola-editada.jpg", entries).meta
+        self.assertEqual((edited_gondola["store"], edited_gondola.get("edited")), ("atacado", True))
+        self.assertNotIn("edited", gondola.meta)
         package = self._entry("Frente 1.jpeg", entries)
         self.assertEqual((package.meta["brand"], package.meta["view"]), ("Marca A", "frente"))
         self.assertTrue(self._entry("marca_a-editada.jpeg", entries).meta["edited"])

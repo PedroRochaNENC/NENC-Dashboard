@@ -313,7 +313,8 @@ def _apply_role(role: str, child: str, name: str, folded_name: str, extension: s
     if role == "fotos_gondola":
         if extension not in IMAGE_EXTENSIONS:
             return "ignorado", {}, "arquivo que não é imagem na pasta de fotos"
-        return _image("gondola", store=config.store_for(child) if child else "", store_label=child)
+        return _image("gondola", store=config.store_for(child) if child else "", store_label=child,
+                      edited=True if "edit" in folded_name else None)
     if role == "fotos_embalagem":
         if extension not in IMAGE_EXTENSIONS:
             return "ignorado", {}, "arquivo que não é imagem na pasta de fotos"

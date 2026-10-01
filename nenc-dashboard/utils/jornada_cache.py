@@ -49,6 +49,20 @@ def get_project_model(project: Dict[str, Any]) -> Dict[str, Any]:
     return _model(*_key(project))
 
 
+@st.cache_data(max_entries=128, ttl=_TTL_SECONDS, show_spinner=False)
+def _image(project_id: int, organization_id: int, data_version: int, file_id: int, max_px: int) -> bytes:
+    from utils.jornada_gallery import downscale
+
+    content = jornada_db.get_file_content(project_id, file_id)
+    return downscale(content, max_px) if content else b""
+
+
+def get_image(project: Dict[str, Any], file_id: int, max_px: int = 1200) -> bytes:
+    """Imagem do projeto reduzida (JPEG) para a tela ou para o arquivo exportado; vazio se faltar."""
+
+    return _image(*_key(project), int(file_id), int(max_px))
+
+
 def get_project_metrics(project: Dict[str, Any], filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Métricas do projeto para um conjunto de filtros (dict serializável)."""
 

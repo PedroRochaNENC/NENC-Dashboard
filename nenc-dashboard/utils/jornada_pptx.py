@@ -3,7 +3,9 @@ Apresentação (PPTX) da Análise Geral da Jornada de Compra.
 
 16:9 e fundo branco, com gráficos nativos do PowerPoint (botão direito →
 Editar dados mexe nos números) e tabelas nativas. Mesmo recorte e mesmos
-números da página e do PDF; as tabelas completas ficam no Excel.
+números da página e do PDF; as tabelas completas ficam no Excel. As imagens
+do estudo (uma por loja, uma por marca) entram depois da gôndola e das
+embalagens, inteiras e sem distorção.
 
 Cor por função: a marca foco em violeta NENC e as demais em cinza (quem diz a
 marca é o rótulo, não a cor); o funil usa a rampa de acento do claro para o
@@ -539,7 +541,7 @@ def _key_numbers(deck: _Deck, project: Dict, model: Dict, metrics: Dict) -> None
 def _findings(deck: _Deck, metrics: Dict) -> None:
     findings = metrics.get("findings") or []
     areas = (("Gôndola", ("gondola",)), ("Navegação e decisão", ("preco", "navegacao", "decisao")),
-             ("Embalagens", ("embalagem",)))
+             ("Escolha", ("escolha",)), ("Embalagens", ("embalagem",)))
     items: List[Tuple[str, str]] = []
     for area, sections in areas:
         chosen = [f for f in findings if f.get("section") in sections][:6]
@@ -549,6 +551,37 @@ def _findings(deck: _Deck, metrics: Dict) -> None:
                       for f in chosen]
     deck.flow("Principais achados", items or [("p", "Sem achados para este recorte.")],
               subtitle="Frases geradas das métricas, com o n de cada célula.", size=15)
+
+
+def _picture(slide, content: bytes, box) -> None:
+    """Imagem inteira dentro da caixa, centralizada, sem distorcer."""
+    from PIL import Image
+
+    left, top, width, height = box
+    with Image.open(io.BytesIO(content)) as image:
+        ratio = image.width / image.height
+    if width / height > ratio:
+        w, h = int(height * ratio), int(height)
+    else:
+        w, h = int(width), int(width / ratio)
+    slide.shapes.add_picture(io.BytesIO(content), int(left + (width - w) / 2), int(top + (height - h) / 2), w, h)
+
+
+def _pictures(deck: _Deck, pictures: Sequence[Dict], title: str, subtitle: str = "") -> None:
+    """Duas imagens por slide, com a legenda embaixo."""
+    gap = Inches(0.3)
+    width = int((CONTENT_WIDTH - gap) / 2)
+    height = BODY_BOTTOM - BODY_TOP - Inches(0.45)
+    for start in range(0, len(pictures), 2):
+        slide = deck.slide(title if start == 0 else "{} (continuação)".format(title), subtitle if start == 0 else "")
+        for index, item in enumerate(pictures[start:start + 2]):
+            left = LEFT + index * (width + gap)
+            try:
+                _picture(slide, item["content"], (left, BODY_TOP, width, height))
+            except Exception:
+                continue
+            _textbox(slide, left, BODY_TOP + height + Inches(0.08), width, Inches(0.3), item["title"], size=11,
+                     color=SECONDARY, align=PP_ALIGN.CENTER)
 
 
 def _gondola(deck: _Deck, metrics: Dict, focus: str) -> None:
@@ -693,6 +726,66 @@ def _navigation(deck: _Deck, model: Dict, metrics: Dict) -> None:
                [1.5, 1.85, 1.15, 0.45, 1.15])
 
 
+def _choice(deck: _Deck, metrics: Dict) -> None:
+    choices = _frame(metrics.get("choices"))
+    choice = _frame(metrics.get("choice"))
+    if choices.empty:
+        return
+    subtitle = ("Registro de campo, normalizado pelas marcas do projeto. Livre = compra observada; estimulada = "
+                "escolha pedida. Quem escolheu duas marcas conta nas duas.")
+    for _, rows in choice.groupby("task", sort=False):
+        total = rows[rows["group_type"] == "total"].sort_values("share", ascending=False)
+        if total.empty:
+            continue
+        task_label = rows["task_label"].iloc[0]
+        n = int(total["n"].iloc[0])
+        slide = deck.slide("Escolha — {}".format(task_label), subtitle)
+        _bar_chart(slide, (LEFT, BODY_TOP, Inches(5.6), BODY_BOTTOM - BODY_TOP), total["brand"].tolist(),
+                   total["share"].tolist(), highlight=total["is_focus"].astype(bool).tolist(), maximum=1.0,
+                   title="Todas as lojas · n={}{}".format(n, " (descritivo)" if n < 5 else ""))
+        stores = rows[(rows["group_type"] == "loja") & (rows["chose_n"] > 0)].head(MAX_TABLE_ROWS)
+        _textbox(slide, LEFT + Inches(6.0), BODY_TOP, Inches(6.0), Inches(0.35), "Por loja", size=13, bold=True)
+        _table(slide, LEFT + Inches(6.0), BODY_TOP + Inches(0.45), ["Loja", "Marca", "Escolheram", "Fração"],
+               [[row["group"], row["brand"], "{}/{}".format(int(row["chose_n"]), int(row["n"])), _pct(row["share"])]
+                for _, row in stores.iterrows()],
+               [2.1, 1.7, 1.2, 1.0])
+        # Canal em texto, abaixo da tabela: na mesma tabela as lojas empurravam os canais para fora.
+        channels = rows[rows["group_type"] == "canal"]
+        lines = ["{} — {}".format(channel, " · ".join(
+            "{} {}/{}".format(row["brand"], int(row["chose_n"]), int(row["n"])) for _, row in part.iterrows()))
+            for channel, part in channels.groupby("group", sort=False)]
+        if lines:
+            top = BODY_TOP + Inches(0.45) + Inches(0.34 * (len(stores) + 1)) + Inches(0.2)
+            box = _textbox(slide, LEFT + Inches(6.0), top, Inches(6.0), BODY_BOTTOM - top)
+            _write_items(box.text_frame, [("h", "Por canal")] + [("b", line) for line in lines], 12)
+    attention = _frame(metrics.get("attention_choice"))
+    consideration = _frame(metrics.get("consideration"))
+    if attention.empty and consideration.empty:
+        return
+    slide = deck.slide("Da atenção à escolha",
+                       "Quem tem escolha e olhar codificado na mesma gravação: a marca escolhida foi notada, "
+                       "examinada, a primeira e a mais vista?")
+    top = BODY_TOP
+    if not attention.empty:
+        n = len(attention)
+        _kpis(slide, top, [
+            ("Notaram a escolhida", "{}/{}".format(int(attention["looked"].sum()), n)),
+            ("Examinaram", "{}/{}".format(int(attention["examined"].sum()), n)),
+            ("Foi a 1ª notada", "{}/{}".format(int(attention["first_noticed"].sum()), n)),
+            ("Foi a mais vista", "{}/{}".format(int(attention["top_share"].sum()), n)),
+        ])
+        top += Inches(1.6)
+    if not consideration.empty:
+        _textbox(slide, LEFT, top, CONTENT_WIDTH, Inches(0.35), "Conjunto considerado e embalagens citadas",
+                 size=13, bold=True)
+        _table(slide, LEFT, top + Inches(0.45),
+               ["Tarefa", "Loja", "n", "Marcas consideradas (média)", "Só uma marca", "Embalagens citadas"],
+               [[row["task_label"], row["store_label"], int(row["n"]), _num(row["considered_mean"]),
+                 int(row["single_brand_n"]), _dash(row["packs"])]
+                for _, row in consideration.head(8).iterrows()],
+               [2.0, 1.8, 0.6, 2.2, 1.4, 4.1])
+
+
 def _packaging(deck: _Deck, metrics: Dict, focus: str) -> None:
     packaging = metrics.get("packaging") or {}
     elements = _frame(packaging.get("elements"))
@@ -818,8 +911,12 @@ def build_pptx(
     analysis: Optional[Dict] = None,
     quality: Optional[Dict] = None,
     generated_at: Optional[str] = None,
+    images: Optional[List[Dict]] = None,
 ) -> Tuple[bytes, str]:
-    """Apresentação da Análise Geral no recorte da página; devolve os bytes e o nome."""
+    """Apresentação da Análise Geral no recorte da página; devolve os bytes e o nome.
+
+    `images` vem de `jornada_gallery.report_images`, com `content` (bytes já reduzidos).
+    """
 
     generated_at = generated_at or datetime.now().strftime("%d/%m/%Y %H:%M")
     focus = (model.get("meta") or {}).get("focus_brand") or ""
@@ -827,9 +924,15 @@ def build_pptx(
     _cover(deck, project, model, metrics, generated_at)
     _key_numbers(deck, project, model, metrics)
     _findings(deck, metrics)
+    pictures = images or []
     _gondola(deck, metrics, focus)
+    _pictures(deck, [item for item in pictures if item.get("group") == "loja"], "A gôndola de cada loja",
+              "Heatmap da loja quando existe; senão, a foto da gôndola.")
     _navigation(deck, model, metrics)
+    _choice(deck, metrics)
     _packaging(deck, metrics, focus)
+    _pictures(deck, [item for item in pictures if item.get("group") == "marca"], "As embalagens",
+              "A versão editada de cada marca quando existe; senão, a frente.")
     _channel(deck, metrics)
     _sample(deck, model, metrics, quality)
     if analysis and analysis.get("analysis_text"):
