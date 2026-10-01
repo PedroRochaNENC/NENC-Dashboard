@@ -84,7 +84,7 @@ def _database_path() -> Path:
 def _connect() -> Iterator[sqlite3.Connection]:
     database_path = _database_path()
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(database_path))
+    conn = sqlite3.connect(str(database_path), timeout=auth.SQLITE_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
