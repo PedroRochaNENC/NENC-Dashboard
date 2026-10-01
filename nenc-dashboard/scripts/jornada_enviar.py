@@ -560,7 +560,8 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="replace")
+            # Linha a linha: com a saída num arquivo de log, o progresso aparece na hora.
+            stream.reconfigure(errors="replace", line_buffering=True)
         except (AttributeError, ValueError):
             pass
     return run()
