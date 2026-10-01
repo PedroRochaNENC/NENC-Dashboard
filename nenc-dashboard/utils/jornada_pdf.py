@@ -16,6 +16,7 @@ from utils import pdf_report
 from utils.jornada_export import export_filename, filters_text
 from utils.jornada_format import fmt_number, fmt_pct
 from utils.jornada_ingest import TASK_LABELS
+from utils.jornada_metrics import decision_by_store, time_kpi
 from utils.jornada_taxonomy import fold
 
 FINDING_AREAS = (
@@ -85,14 +86,12 @@ def _cover(pdf, project: Dict, model: Dict, metrics: Dict, generated_at: str) ->
     sample = metrics.get("sample") or {}
     recordings = _frame(model.get("recordings"))
     uncoded = int((recordings["status"] == "nao_codificada").sum()) if not recordings.empty else 0
-    summary = _frame(metrics.get("recording_summary"))
-    decision = summary["tempo_decisao_s"].dropna() if "tempo_decisao_s" in summary else pd.Series(dtype=float)
+    time_label, time_value = time_kpi(metrics)
     pdf_report.kpi_row(pdf, [
         ("Participantes na análise", str(sample.get("participants", 0))),
         ("Gravações incluídas", str(sample.get("recordings", 0))),
         ("Não codificadas (fora)", str(uncoded)),
-        ("Tempo até a decisão (mediana)",
-         "{} s".format(fmt_number(decision.median(), 1)) if len(decision) else "—"),
+        (time_label, "{} s".format(fmt_number(time_value, 1)) if time_value == time_value else "—"),
     ])
     brand = _frame(metrics.get("brand"))
     if focus and not brand.empty and brand["is_focus"].any():
@@ -219,21 +218,22 @@ def _navigation(pdf, metrics: Dict) -> None:
         )
     if not decision.empty:
         pdf_report.heading(pdf, "Tempo até a decisão", level=2)
-        stores = decision[decision["group_type"] == "loja"]
+        stores = decision_by_store(decision)
         if not stores.empty:
             pdf_report.hbar_chart(
                 pdf,
-                [(row["group"], row["median_s"], False) for _, row in stores.iterrows()],
+                [(row["label"], row["median_s"], False) for _, row in stores.iterrows()],
                 value_format=lambda v: "{} s".format(fmt_number(v, 1)),
-                title="Mediana por loja, em segundos",
+                title="Mediana por tarefa e loja, em segundos (tempo de compra; planilha onde não há)",
+                label_width=70,
             )
         pdf_report.simple_table(
             pdf,
-            ["Agrupamento", "Grupo", "n", "Mediana (s)", "1º quartil", "3º quartil", "Mín", "Máx"],
-            [[str(row["group_type"]).capitalize(), row["group"], int(row["n"]), _num(row["median_s"]),
-              _num(row["q1_s"]), _num(row["q3_s"]), _num(row["min_s"]), _num(row["max_s"])]
+            ["Tarefa", "Fonte", "Agrupamento", "Grupo", "n", "Mediana (s)", "Mín", "Máx"],
+            [[row["task_label"], row["source_label"], str(row["group_type"]).capitalize(), row["group"],
+              int(row["n"]), _num(row["median_s"]), _num(row["min_s"]), _num(row["max_s"])]
              for _, row in decision.iterrows()],
-            [28, 52, 10, 20, 18, 18, 17, 17],
+            [34, 38, 22, 34, 8, 18, 13, 13],
         )
 
 

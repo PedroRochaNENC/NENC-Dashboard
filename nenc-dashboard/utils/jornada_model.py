@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from utils.jornada_choice import describe_values, parse_choice, parse_considered, parse_fraction
 from utils.jornada_ingest import (
     METRIC_COLUMNS,
     TASK_LABELS,
@@ -160,6 +161,7 @@ def build_model(bundle: Dict) -> Dict:
 
     individual_parts = []
     pooled_parts = []
+    field_parts = []
     frames: Dict[str, Dict] = {}
     frame_stamps: Dict[str, np.ndarray] = {}
     participant_info: Dict[str, Dict] = {}
@@ -219,6 +221,17 @@ def build_model(bundle: Dict) -> Dict:
                     if info.get(field) and not target.get(field):
                         target[field] = info[field]
             continue
+        if parsed.kind == "field_log":
+            table = parsed.table.copy()
+            table["source_file_id"] = item["id"]
+            field_parts.append(table)
+            for info in parsed.meta.get("participant_info") or []:
+                target = participant_info.setdefault(info["code"], {})
+                # O registro de campo mais recente vence: é ele que a equipe corrige.
+                for field_name in ("profile_group", "field_notes", "date", "tasks_done"):
+                    if info.get(field_name):
+                        target[field_name] = info[field_name]
+            continue
         if parsed.kind == "bs_pooled":
             table = parsed.table.copy()
             table["source_file_id"] = item["id"]
@@ -246,9 +259,11 @@ def build_model(bundle: Dict) -> Dict:
 
     def _profile(code: str) -> str:
         row = participants_db.get(code) or {}
-        return normalize_label(row.get("profile")) or normalize_label(
-            (participant_info.get(code) or {}).get("profile")
-        )
+        seeded = participant_info.get(code) or {}
+        group = ((settings.get("groups") or {}).get(seeded.get("profile_group") or "") or {})
+        # Manual > planilha enriquecida > grupo do registro de campo (PERFIL n) mapeado no projeto.
+        return (normalize_label(row.get("profile")) or normalize_label(seeded.get("profile"))
+                or normalize_label(group.get("profile")))
 
     def _store_label(store: str) -> str:
         configured = (configured_stores.get(store) or {}).get("label")
@@ -482,11 +497,16 @@ def build_model(bundle: Dict) -> Dict:
                 "channel": ", ".join(sorted({
                     r["channel"] for r in recording_rows if r["participant"] == code and r["channel"]
                 })),
+                "profile_group": seeded.get("profile_group") or "",
+                "field_notes": normalize_label(seeded.get("field_notes")),
+                "tasks_done": ", ".join(TASK_LABELS.get(t, t) for t in seeded.get("tasks_done") or []),
+                "field_date": seeded.get("date") or "",
             }
         )
     participants = pd.DataFrame(
         participant_rows,
-        columns=["participant", "profile", "tempo_informado", "tempo_decisao_s", "notes", "stores", "channel"],
+        columns=["participant", "profile", "tempo_informado", "tempo_decisao_s", "notes", "stores", "channel",
+                 "profile_group", "field_notes", "tasks_done", "field_date"],
     )
 
     store_keys = sorted(set(store_labels) | set(configured_stores) | set(recordings.get("store", pd.Series(dtype=str))))
@@ -519,6 +539,10 @@ def build_model(bundle: Dict) -> Dict:
                        row["participant"], row["task_label"], row["store_label"]),
                    row["recording_key"])
 
+    choices = _build_choices(field_parts, brands, dimensions, catalog, recordings, _store_label, _channel,
+                             _profile, issues)
+    times = _build_times(choices, participants, recordings, participant_info, _store_label, _channel, _profile)
+
     return {
         "recordings": recordings,
         "gaze": gaze,
@@ -526,6 +550,8 @@ def build_model(bundle: Dict) -> Dict:
         "pooled": pooled,
         "catalog": catalog,
         "participants": participants,
+        "choices": choices,
+        "times": times,
         "stores": stores,
         "coverage": coverage,
         "images": images,
@@ -673,6 +699,120 @@ def _cross_check(rows: pd.DataFrame, gaze: pd.DataFrame, task: str, store: str, 
                "O agregado TODOS de {} não confere com a soma individual em {} AOI(s).".format(
                    TASK_LABELS.get(task, task), len(mismatched)),
                "{}|{}".format(task, store))
+
+
+CHOICE_COLUMNS = [
+    "participant", "task", "task_label", "store", "store_label", "channel", "profile", "profile_group",
+    "chosen_text", "chosen_brands", "chosen_brand", "chosen_values", "chosen_values_text", "chosen_lines",
+    "considered_text", "considered_brands", "considered_count", "packs", "purchase_time_s",
+    "category_fraction", "category_note", "task_notes", "recording_key", "has_gaze", "source_file_id",
+]
+TIME_COLUMNS = ["participant", "task", "task_label", "store", "store_label", "channel", "profile", "source", "seconds"]
+TIME_SOURCES = {"campo": "tempo de compra (registro de campo)", "planilha": "Tempo da planilha"}
+
+
+def _build_choices(parts, brands, dimensions, catalog, recordings, store_label, channel, profile,
+                   issues: List[Dict]) -> pd.DataFrame:
+    """Escolha de cada participante por tarefa, com o texto de campo normalizado."""
+
+    if not parts:
+        return pd.DataFrame(columns=CHOICE_COLUMNS)
+    frame, repeated = _latest_rows(pd.concat(parts, ignore_index=True), ["participant", "task"])
+    if repeated:
+        _issue(issues, "info", "registro_repetido",
+               "{} escolha(s) apareceram em mais de um registro de campo; valeu o mais recente.".format(repeated))
+    lines = sorted({line for line in catalog.get("line", pd.Series(dtype=str)) if line}) if not catalog.empty else []
+    included = (set(recordings.loc[recordings["status"] == "incluida", "recording_key"])
+                if not recordings.empty else set())
+    rows = []
+    for record in frame.to_dict("records"):
+        choice = parse_choice(record["chosen_text"], brands, dimensions, lines, record.get("chosen_fallback") or "")
+        considered_text = record.get("considered_text") or ""
+        considered = parse_considered(considered_text, brands, dimensions) if considered_text else None
+        fraction, note = parse_fraction(record.get("category_fraction_text"))
+        key = recording_key(record["participant"], record["task"], record["store"])
+        chosen = choice["brands"]
+        considered_set = list(dict.fromkeys((considered["brands"] if considered else []) + chosen))
+        if record["chosen_text"] and not chosen:
+            _issue(issues, "warn", "escolha_sem_marca",
+                   "{} · {}: \"{}\" não cita nenhuma marca do projeto.".format(
+                       record["participant"], TASK_LABELS.get(record["task"], record["task"]), record["chosen_text"]),
+                   key)
+        rows.append({
+            "participant": record["participant"],
+            "task": record["task"],
+            "task_label": TASK_LABELS.get(record["task"], record["task"]),
+            "store": record["store"],
+            "store_label": store_label(record["store"]) if record["store"] else record.get("store_label", ""),
+            "channel": channel(record["store"]) if record["store"] else "",
+            "profile": profile(record["participant"]),
+            "profile_group": record.get("profile_group") or "",
+            "chosen_text": record["chosen_text"],
+            "chosen_brands": chosen,
+            "chosen_brand": chosen[0] if len(chosen) == 1 else ("várias" if chosen else ""),
+            "chosen_values": choice["values"],
+            "chosen_values_text": describe_values(choice["values"]),
+            "chosen_lines": ", ".join(choice["lines"]),
+            "considered_text": considered_text,
+            "considered_brands": considered["brands"] if considered else [],
+            "considered_count": len(considered_set) if considered else math.nan,
+            "packs": considered["packs"] if considered else [],
+            "purchase_time_s": record.get("purchase_time_s", math.nan),
+            "category_fraction": fraction,
+            "category_note": note,
+            "task_notes": record.get("task_notes") or "",
+            "recording_key": key,
+            "has_gaze": key in included,
+            "source_file_id": record.get("source_file_id"),
+        })
+    return pd.DataFrame(rows, columns=CHOICE_COLUMNS)
+
+
+def _build_times(choices: pd.DataFrame, participants: pd.DataFrame, recordings: pd.DataFrame,
+                 participant_info: Dict, store_label, channel, profile) -> pd.DataFrame:
+    """Tempos até a decisão, cada um com a tarefa e a fonte.
+
+    O tempo de compra do registro de campo pertence à tarefa da linha (a
+    estimulada). O "Tempo" da planilha não diz a tarefa: ela é a do tempo de
+    compra igual (até 1 s de diferença), senão a única tarefa de gôndola que a
+    pessoa fez, senão fica em branco — nunca cai numa célula por suposição.
+    """
+
+    rows = []
+    field: Dict[Tuple[str, str], float] = {}
+    stores: Dict[Tuple[str, str], str] = {}
+    for record in choices.to_dict("records"):
+        stores[(record["participant"], record["task"])] = record["store"]
+        seconds = record["purchase_time_s"]
+        if seconds == seconds and seconds is not None:
+            field[(record["participant"], record["task"])] = float(seconds)
+            rows.append({"participant": record["participant"], "task": record["task"], "store": record["store"],
+                         "source": "campo", "seconds": float(seconds)})
+    if not recordings.empty:
+        for record in recordings.to_dict("records"):
+            stores.setdefault((record["participant"], record["task"]), record["store"])
+    for person in participants.to_dict("records"):
+        seconds = person["tempo_decisao_s"]
+        if seconds != seconds or seconds is None:
+            continue
+        code = person["participant"]
+        matches = [task for (who, task), value in field.items() if who == code and abs(value - seconds) <= 1.0]
+        if matches:
+            task = matches[0]
+        else:
+            done = [t for t in (participant_info.get(code) or {}).get("tasks_done") or [] if t in ("livre", "estimulada")]
+            if not done and not recordings.empty:
+                done = sorted({t for t in recordings.loc[recordings["participant"] == code, "task"]
+                               if t in ("livre", "estimulada")})
+            task = done[0] if len(done) == 1 else ""
+        rows.append({"participant": code, "task": task, "store": stores.get((code, task), ""),
+                     "source": "planilha", "seconds": float(seconds)})
+    for row in rows:
+        row["task_label"] = TASK_LABELS.get(row["task"], row["task"] or "sem tarefa")
+        row["store_label"] = store_label(row["store"]) if row["store"] else ""
+        row["channel"] = channel(row["store"]) if row["store"] else ""
+        row["profile"] = profile(row["participant"])
+    return pd.DataFrame(rows, columns=TIME_COLUMNS)
 
 
 def _coverage(recordings: pd.DataFrame, participants: pd.DataFrame, pooled: pd.DataFrame) -> pd.DataFrame:

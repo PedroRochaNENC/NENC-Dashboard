@@ -300,10 +300,11 @@ def _navigation_section(metrics: Dict) -> str:
               _pct(row["price_fraction"])] for _, row in price.iterrows()]))
     decision = _frame(metrics.get("decision"))
     if not decision.empty:
-        blocks.append("### Tempo até a decisão (s)\n" + _table(
-            ["Agrupamento", "Grupo", "n", "Mediana", "1º quartil", "3º quartil", "Mín", "Máx"],
-            [[row["group_type"], row["group"], int(row["n"]), _num(row["median_s"]), _num(row["q1_s"]),
-              _num(row["q3_s"]), _num(row["min_s"]), _num(row["max_s"])] for _, row in decision.iterrows()]))
+        blocks.append("### Tempo até a decisão (s), por tarefa e fonte\n" + _table(
+            ["Tarefa", "Fonte", "Agrupamento", "Grupo", "n", "Mediana", "1º quartil", "3º quartil", "Mín", "Máx"],
+            [[row.get("task_label", ""), row.get("source_label", ""), row["group_type"], row["group"],
+              int(row["n"]), _num(row["median_s"]), _num(row["q1_s"]), _num(row["q3_s"]), _num(row["min_s"]),
+              _num(row["max_s"])] for _, row in decision.iterrows()]))
     return _section("Navegação e Decisão", "navegacao_decisao", "\n\n".join(blocks)) if blocks else ""
 
 

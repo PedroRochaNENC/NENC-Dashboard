@@ -28,7 +28,7 @@ from utils.jornada_ai import AI_MODELS, chat_answer, generate_analysis, send_ana
 from utils.jornada_cache import get_project_metrics, get_project_model
 from utils.jornada_export import build_excel, filters_text
 from utils.jornada_ingest import TASK_LABELS
-from utils.jornada_metrics import ALL_STORES
+from utils.jornada_metrics import ALL_STORES, TIME_SOURCE_LABELS, time_kpi
 from utils.jornada_model import RECORDING_STATUS_LABELS
 from utils.jornada_pdf import build_pdf
 from utils.jornada_pptx import build_pptx
@@ -152,10 +152,8 @@ if section == "Resumo":
     k1.metric("Participantes na análise", sample["participants"])
     k2.metric("Gravações incluídas", sample["recordings"])
     k3.metric("Não codificadas (fora)", uncoded)
-    decision = metrics["decision"]
-    overall_decision = metrics["recording_summary"]["tempo_decisao_s"].dropna()
-    k4.metric("Tempo até a decisão (mediana)",
-              "{} s".format(fmt_number(overall_decision.median(), 1)) if len(overall_decision) else "—")
+    time_label, time_value = time_kpi(metrics)
+    k4.metric(time_label, "{} s".format(fmt_number(time_value, 1)) if time_value == time_value else "—")
 
     if focus_brand and not brand.empty:
         focus_rows = brand[brand["is_focus"]]
@@ -350,14 +348,33 @@ elif section == "Navegação e decisão":
 
     st.subheader("Tempo até a decisão")
     summary = metrics["recording_summary"]
-    by = st.radio("Agrupar por", ["Loja", "Perfil", "Canal"], horizontal=True, key="jc_ag_decision_by")
+    times = metrics.get("times")
+    combos = (list(dict.fromkeys(zip(times["task"], times["source"])))
+              if times is not None and not times.empty else [])
+    combos = [combo for combo in combos if combo[0]]
+    t1, t2 = st.columns([2, 1.4])
+    combo = t1.selectbox(
+        "Medida", combos,
+        format_func=lambda item: "{} · {}".format(TASK_LABELS.get(item[0], item[0]),
+                                                   TIME_SOURCE_LABELS.get(item[1], item[1])),
+        key="jc_ag_decision_measure",
+        help="O tempo de compra vem do registro de campo; o Tempo da planilha, da planilha enriquecida. "
+             "Cada um aparece só na tarefa a que pertence.",
+    ) if combos else None
+    by = t2.radio("Agrupar por", ["Loja", "Perfil", "Canal"], horizontal=True, key="jc_ag_decision_by")
     column = {"Loja": "store_label", "Perfil": "profile", "Canal": "channel"}[by]
-    st.plotly_chart(charts.decision_strip(summary, column), width="stretch")
+    if combo is not None:
+        chosen = times[(times["task"] == combo[0]) & (times["source"] == combo[1])]
+        st.plotly_chart(charts.decision_strip(chosen.rename(columns={"seconds": "tempo_decisao_s"}), column),
+                        width="stretch")
+    else:
+        st.plotly_chart(charts.decision_strip(summary, column), width="stretch")
     decision = metrics["decision"]
     _table(
         decision,
-        {"group_type": "Agrupamento", "group": "Grupo", "n": "n", "median_s": "Mediana (s)",
-         "q1_s": "1º quartil (s)", "q3_s": "3º quartil (s)", "min_s": "Mín (s)", "max_s": "Máx (s)"},
+        {"task_label": "Tarefa", "source_label": "Fonte", "group_type": "Agrupamento", "group": "Grupo",
+         "n": "n", "median_s": "Mediana (s)", "q1_s": "1º quartil (s)", "q3_s": "3º quartil (s)",
+         "min_s": "Mín (s)", "max_s": "Máx (s)"},
         {c: (lambda v: fmt_number(v, 1)) for c in ("median_s", "q1_s", "q3_s", "min_s", "max_s")},
         key="jc_tab_decision",
     )

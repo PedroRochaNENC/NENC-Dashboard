@@ -32,6 +32,7 @@ from pptx.util import Inches, Pt
 from utils.jornada_export import export_filename, filters_text
 from utils.jornada_format import fmt_number, fmt_pct
 from utils.jornada_ingest import TASK_LABELS
+from utils.jornada_metrics import decision_by_store, time_kpi
 from utils.jornada_taxonomy import fold
 from utils.pdf_report import numeric_column
 
@@ -510,13 +511,12 @@ def _key_numbers(deck: _Deck, project: Dict, model: Dict, metrics: Dict) -> None
     sample = metrics.get("sample") or {}
     recordings = _frame(model.get("recordings"))
     uncoded = int((recordings["status"] == "nao_codificada").sum()) if not recordings.empty else 0
-    summary = _frame(metrics.get("recording_summary"))
-    decision = summary["tempo_decisao_s"].dropna() if "tempo_decisao_s" in summary else pd.Series(dtype=float)
+    time_label, time_value = time_kpi(metrics)
     _kpis(slide, BODY_TOP, [
         ("Participantes na análise", str(sample.get("participants", 0))),
         ("Gravações incluídas", str(sample.get("recordings", 0))),
         ("Não codificadas (fora)", str(uncoded)),
-        ("Tempo até a decisão (mediana)", "{} s".format(fmt_number(decision.median(), 1)) if len(decision) else "—"),
+        (time_label, "{} s".format(fmt_number(time_value, 1)) if time_value == time_value else "—"),
     ])
     top = BODY_TOP + Inches(1.55)
     focus = (model.get("meta") or {}).get("focus_brand") or ""
@@ -677,15 +677,20 @@ def _navigation(deck: _Deck, model: Dict, metrics: Dict) -> None:
 
     decision = _frame(metrics.get("decision"))
     if not decision.empty:
-        slide = deck.slide("Tempo até a decisão", "Mediana por loja, em segundos; a tabela traz canal e perfil.")
-        stores = decision[decision["group_type"] == "loja"]
+        slide = deck.slide(
+            "Tempo até a decisão",
+            "Mediana por tarefa e loja, em segundos: o tempo de compra do registro de campo e, onde ele não "
+            "existe, o Tempo da planilha.",
+        )
+        stores = decision_by_store(decision)
         if not stores.empty:
-            _bar_chart(slide, (LEFT, BODY_TOP, Inches(5.6), Inches(3.2)), stores["group"].tolist(),
-                       stores["median_s"].tolist(), number_format='0.0" s"', title="Mediana por loja")
-        _table(slide, LEFT + Inches(6.0), BODY_TOP, ["Agrupamento", "Grupo", "n", "Mediana (s)", "Mín", "Máx"],
-               [[str(row["group_type"]).capitalize(), row["group"], int(row["n"]), _num(row["median_s"]),
-                 _num(row["min_s"]), _num(row["max_s"])] for _, row in decision.head(MAX_TABLE_ROWS).iterrows()],
-               [1.25, 1.75, 0.5, 1.1, 0.75, 0.75])
+            _bar_chart(slide, (LEFT, BODY_TOP, Inches(5.6), Inches(3.4)), stores["label"].tolist(),
+                       stores["median_s"].tolist(), number_format='0.0" s"', title="Mediana por tarefa e loja")
+        table = decision[decision["group_type"] == "loja"]
+        _table(slide, LEFT + Inches(6.0), BODY_TOP, ["Tarefa", "Fonte", "Loja", "n", "Mediana (s)"],
+               [[row["task_label"], row["source_label"], row["group"], int(row["n"]), _num(row["median_s"])]
+                for _, row in table.head(MAX_TABLE_ROWS).iterrows()],
+               [1.5, 1.85, 1.15, 0.45, 1.15])
 
 
 def _packaging(deck: _Deck, metrics: Dict, focus: str) -> None:
