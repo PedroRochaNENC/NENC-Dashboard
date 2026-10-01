@@ -15,13 +15,15 @@ Rotas (todas sob `/api/jornada`):
 - `GET  /health`
 - `GET  /projects` — id e nome dos projetos da organização;
 - `POST /imports` — abre um lote: `{"project_id", "source_label", "client"}`;
-  devolve o id e os hashes que o projeto já tem, para o script não reenviar;
+  retoma o lote que ficou recebendo (envio interrompido) e devolve o id, se
+  foi retomado e os hashes que o projeto já tem, para o script não reenviar;
 - `GET  /imports/{id}/files/status?path=...` — quanto de um arquivo já chegou;
 - `PUT  /imports/{id}/files` — um bloco (corpo bruto, até 8 MB) com os
   cabeçalhos `X-File-Path` e `X-File-Meta` (UTF-8 percent-encoded),
   `X-File-Role`, `X-File-Sha256`, `X-File-Size`, `X-Chunk-Offset` e,
   opcional, `X-Source-Sha256` (hash do original de um vídeo compactado);
-- `POST /imports/{id}/close` — fecha para revisão: `{"summary", "ignored"}`.
+- `POST /imports/{id}/close` — fecha para revisão: `{"summary", "ignored"}`;
+  lote sem arquivo nenhum é descartado em vez de virar pendência vazia.
 """
 
 import hmac
@@ -43,7 +45,6 @@ from utils.jornada_imports import CHUNK_MAX_BYTES, ChunkOutOfOrder, ImportRefuse
 PREFIX = "/api/jornada"
 MIN_TOKEN_LENGTH = 32
 _TOKEN_KEY = re.compile(r"NENC_IMPORT_TOKEN_(\d+)")
-
 
 
 @asynccontextmanager
@@ -111,8 +112,8 @@ def projects(organization_id: int = Depends(organization)) -> List[Dict[str, Any
 
 @app.post(PREFIX + "/imports")
 def new_import(body: NewImport, organization_id: int = Depends(organization)) -> Dict[str, Any]:
-    batch_id = jornada_imports.create_batch(organization_id, body.project_id, body.source_label, body.client)
-    return {"batch_id": batch_id, "known": jornada_imports.known_hashes(organization_id, body.project_id)}
+    opened = jornada_imports.open_batch(organization_id, body.project_id, body.source_label, body.client)
+    return dict(opened, known=jornada_imports.known_hashes(organization_id, body.project_id))
 
 
 @app.get(PREFIX + "/imports/{batch_id}/files/status")

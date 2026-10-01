@@ -69,12 +69,17 @@ class ApiTests(_Base):
         opened = self.client.post("/api/jornada/imports", headers=self._auth(),
                                   json={"project_id": self.project_id, "source_label": "X:/Estudo"}).json()
         batch_id = opened["batch_id"]
-        self.assertEqual(opened["known"], {"files": [], "media": [], "pending": []})
+        self.assertEqual(opened["known"], {"files": [], "media": [], "pending": [], "documents": []})
+        self.assertFalse(opened["resumed"])
         data = "frame,timestamp,x,y\n0,0.0,1,1\n1,0.05,1,1\n".encode("utf-8") * 10
         path = "2.DADOS/Pasta com acentuação/Pt01-JLivre-DSP1234.csv"
         first = self._put(batch_id, path, data, 0, 100, role="quadros")
         self.assertEqual(first.status_code, 200, first.text)
         self.assertFalse(first.json()["complete"])
+        # O script caiu e rodou de novo: a API devolve o mesmo lote.
+        again = self.client.post("/api/jornada/imports", headers=self._auth(),
+                                 json={"project_id": self.project_id}).json()
+        self.assertEqual((again["batch_id"], again["resumed"]), (batch_id, True))
         skipped = self._put(batch_id, path, data, 300, 100, role="quadros")
         self.assertEqual(skipped.status_code, 409)
         self.assertEqual(skipped.json()["expected_offset"], 100)

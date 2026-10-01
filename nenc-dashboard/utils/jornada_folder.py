@@ -69,6 +69,16 @@ CONFIG_ROLES = (
     "documento",
 )
 
+# O que a API de importação aceita (o script confere antes de enviar). O padrão
+# é o mesmo do upload pela tela, `jornada_db.MAX_FILE_BYTES`.
+CHUNK_BYTES = 8 * 1024 * 1024
+FILE_LIMITS = {
+    "video_cena": 500 * 1024 * 1024,
+    "video_heatmap": 500 * 1024 * 1024,
+    "documento": 5 * 1024 * 1024,  # o texto extraído, não o arquivo original
+}
+DEFAULT_FILE_LIMIT = 25 * 1024 * 1024
+
 DATA_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx", ".xls"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov"}
@@ -349,6 +359,11 @@ def scan_project(root: Path, config: Optional[FolderConfig] = None) -> List[Entr
         entries.append(Entry(rel.as_posix(), path.stat().st_size, role, meta, reason))
     _keep_latest_reports(entries)
     return entries
+
+
+def file_limit(role: str) -> int:
+    """Maior arquivo que a importação aceita para o papel, em bytes."""
+    return FILE_LIMITS.get(role, DEFAULT_FILE_LIMIT)
 
 
 def summarize(entries: Sequence[Entry]) -> Dict[str, Dict[str, int]]:

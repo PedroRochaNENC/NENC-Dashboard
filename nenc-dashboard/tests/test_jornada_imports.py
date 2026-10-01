@@ -18,7 +18,7 @@ from unittest.mock import patch
 from tests.test_jornada_choice import _field_log
 from tests.test_jornada_db import _Base
 from tests.test_jornada_model import SAMPLES
-from utils import auth, jornada_db, jornada_imports, jornada_media
+from utils import auth, jornada_db, jornada_folder, jornada_imports, jornada_media
 from utils.jornada_imports import ImportRefused
 
 
@@ -119,6 +119,37 @@ class ReceiveTests(_ImportBase):
             actions = [row[0] for row in database.execute(
                 "SELECT action FROM audit_log WHERE actor_user_id IS NULL ORDER BY id")]
         self.assertEqual(actions[-2:], ["jornada.import.received", "jornada.import.closed"])
+
+    def test_an_open_batch_is_resumed_and_a_changed_file_starts_over(self):
+        first = jornada_imports.open_batch(self.org, self.project_id, "X:/Estudo")
+        self.assertFalse(first["resumed"])
+        batch_id = first["batch_id"]
+        old = b"versao antiga do arquivo"
+        jornada_imports.receive_chunk(self.org, batch_id, rel_path="a.csv", role="dados", sha256=_sha(old),
+                                      size=len(old), offset=0, data=old[:5])
+        # Envio interrompido: o próximo continua no mesmo lote.
+        self.assertEqual(jornada_imports.open_batch(self.org, self.project_id, "X:/Estudo"),
+                         {"batch_id": batch_id, "resumed": True})
+        new = b"versao nova"
+        with self.assertRaises(ImportRefused):  # mudou, mas não recomeçou do zero
+            jornada_imports.receive_chunk(self.org, batch_id, rel_path="a.csv", role="dados", sha256=_sha(new),
+                                          size=len(new), offset=5, data=new[5:])
+        self._send(batch_id, "a.csv", "dados", new)
+        self.assertTrue(jornada_imports.file_status(self.org, batch_id, "a.csv")["complete"])
+        stored = sorted(path.name for path in jornada_imports.inbox_root().rglob("*.*"))
+        self.assertEqual(len(stored), 1)
+        self.assertTrue(stored[0].endswith(".bin"))
+        jornada_imports.close_batch(self.org, batch_id)
+        self.assertFalse(jornada_imports.open_batch(self.org, self.project_id)["resumed"])
+        self.assertNotEqual(jornada_imports.create_batch(self.org, self.project_id), batch_id)
+
+    def test_a_batch_closed_without_files_is_discarded(self):
+        batch_id = jornada_imports.create_batch(self.org, self.project_id)
+        self.assertEqual(jornada_imports.close_batch(self.org, batch_id)["status"], "descartada")
+        self.assertEqual(jornada_imports.list_batches(self.project_id), [])
+
+    def test_the_script_and_the_screen_share_the_size_limit(self):
+        self.assertEqual(jornada_folder.DEFAULT_FILE_LIMIT, jornada_db.MAX_FILE_BYTES)
 
 
 class ApplyTests(_ImportBase):

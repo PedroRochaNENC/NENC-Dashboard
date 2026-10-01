@@ -26,19 +26,13 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from utils import auth, jornada_db, jornada_media
-from utils.jornada_folder import ROLES
+from utils.jornada_folder import CHUNK_BYTES, ROLES, file_limit
 from utils.jornada_ingest import normalize_participant, parse_upload, store_key
 
 STATUSES = ("recebendo", "pronta", "gravando", "gravada", "descartada", "expirada")
 OPEN_STATUSES = ("recebendo", "pronta")
 UPLOAD_ROLES = tuple(role for role in ROLES if role != "ignorado")
-CHUNK_MAX_BYTES = 8 * 1024 * 1024
-FILE_MAX_BYTES = {
-    "video_cena": 500 * 1024 * 1024,
-    "video_heatmap": 500 * 1024 * 1024,
-    "documento": 5 * 1024 * 1024,
-}
-DEFAULT_FILE_MAX_BYTES = jornada_db.MAX_FILE_BYTES
+CHUNK_MAX_BYTES = CHUNK_BYTES  # limites por arquivo: jornada_folder.file_limit
 BATCH_MAX_BYTES = 10 * 1024 * 1024 * 1024
 _IMAGE_CATEGORY = {"gondola": "gôndola", "heatmap": "heatmap", "embalagem": "embalagem", "outra": "outra"}
 
@@ -140,22 +134,47 @@ def expire_stale(now: Optional[datetime] = None) -> int:
     return len(rows)
 
 
-def create_batch(organization_id: int, project_id: int, source_label: str = "",
-                 client_info: Optional[Dict] = None) -> int:
+def open_batch(organization_id: int, project_id: int, source_label: str = "",
+               client_info: Optional[Dict] = None, resume: bool = True) -> Dict[str, object]:
+    """Lote para um envio: retoma o que ficou recebendo ou abre outro.
+
+    Um envio interrompido deixa o lote em `recebendo`. Retomá-lo evita que os
+    arquivos que já chegaram fiquem presos num lote que nunca fecha: o script
+    pula o que já está lá e o protocolo de blocos continua o arquivo do meio.
+    """
     jornada_db.init_db()
     expire_stale()
+    label = str(source_label or "")[:300]
+    client = json.dumps(client_info or {}, ensure_ascii=False)[:2000]
     with jornada_db._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         _project_of_org(conn, organization_id, project_id)
-        cursor = conn.execute(
-            "INSERT INTO jc_import_batches (organization_id, project_id, status, source_label, client_json, "
-            "created_at, updated_at) VALUES (?, ?, 'recebendo', ?, ?, ?, ?)",
-            (int(organization_id), int(project_id), str(source_label or "")[:300],
-             json.dumps(client_info or {}, ensure_ascii=False)[:2000], _now(), _now()),
-        )
-        batch_id = int(cursor.lastrowid)
-    auth.audit_system_event(organization_id, "jornada.import.received", "jc_import_batch", batch_id,
+        row = conn.execute(
+            "SELECT id FROM jc_import_batches WHERE organization_id = ? AND project_id = ? "
+            "AND status = 'recebendo' ORDER BY id DESC LIMIT 1",
+            (int(organization_id), int(project_id)),
+        ).fetchone() if resume else None
+        if row is not None:
+            batch_id = int(row["id"])
+            conn.execute("UPDATE jc_import_batches SET source_label = ?, client_json = ?, updated_at = ? WHERE id = ?",
+                         (label, client, _now(), batch_id))
+        else:
+            cursor = conn.execute(
+                "INSERT INTO jc_import_batches (organization_id, project_id, status, source_label, client_json, "
+                "created_at, updated_at) VALUES (?, ?, 'recebendo', ?, ?, ?, ?)",
+                (int(organization_id), int(project_id), label, client, _now(), _now()),
+            )
+            batch_id = int(cursor.lastrowid)
+    action = "jornada.import.resumed" if row is not None else "jornada.import.received"
+    auth.audit_system_event(organization_id, action, "jc_import_batch", batch_id,
                             {"origem": "api", "project_id": int(project_id)})
-    return batch_id
+    return {"batch_id": batch_id, "resumed": row is not None}
+
+
+def create_batch(organization_id: int, project_id: int, source_label: str = "",
+                 client_info: Optional[Dict] = None) -> int:
+    """Sempre um lote novo (a API usa `open_batch`, que retoma)."""
+    return int(open_batch(organization_id, project_id, source_label, client_info, resume=False)["batch_id"])
 
 
 def known_hashes(organization_id: int, project_id: int) -> Dict[str, List[str]]:
@@ -175,7 +194,13 @@ def known_hashes(organization_id: int, project_id: int) -> Dict[str, List[str]]:
             (int(project_id),),
         ):
             pending += [value for value in (row["sha256"], row["source_sha256"]) if value]
-    return {"files": sorted(set(files)), "media": sorted(set(media)), "pending": sorted(set(pending))}
+        # Documentos gravados não ficam em jc_files (viram Contexto e base de
+        # conhecimento): sem isto, cada envio mandaria o relatório de novo para a base.
+        documents = [r["sha256"] for r in conn.execute(
+            "SELECT f.sha256 FROM jc_import_files f JOIN jc_import_batches b ON b.id = f.batch_id "
+            "WHERE b.project_id = ? AND b.status = 'gravada' AND f.role = 'documento'", (int(project_id),))]
+    return {"files": sorted(set(files)), "media": sorted(set(media)), "pending": sorted(set(pending)),
+            "documents": sorted(set(documents))}
 
 
 def _clean_rel_path(rel_path: str) -> str:
@@ -212,18 +237,31 @@ def receive_chunk(
     if len(sha256) != 64 or any(c not in "0123456789abcdef" for c in sha256):
         raise ImportRefused("sha256 inválido.")
     size, offset = int(size), int(offset)
-    limit = FILE_MAX_BYTES.get(role, DEFAULT_FILE_MAX_BYTES)
+    limit = file_limit(role)
     if size <= 0 or size > limit:
         raise ImportRefused("Tamanho fora do limite para {} ({} MB).".format(role, limit // (1024 * 1024)))
     if len(data) > CHUNK_MAX_BYTES:
         raise ImportRefused("Bloco maior que {} MB.".format(CHUNK_MAX_BYTES // (1024 * 1024)))
     rel_path = _clean_rel_path(rel_path)
     with jornada_db._connect() as conn:
+        # Um bloco por vez no lote: ler o quanto chegou e anexar no disco precisa ser atômico.
+        conn.execute("BEGIN IMMEDIATE")
         batch = _batch_of_org(conn, organization_id, batch_id)
         if batch["status"] != "recebendo":
             raise ImportRefused("A importação não está mais recebendo arquivos ({}).".format(batch["status"]))
+        folder = _batch_dir(batch["organization_id"], batch["project_id"], batch_id)
         row = conn.execute("SELECT * FROM jc_import_files WHERE batch_id = ? AND rel_path = ?",
                            (int(batch_id), rel_path)).fetchone()
+        if row is not None and (row["sha256"] != sha256 or int(row["size_bytes"]) != size):
+            if offset != 0:
+                raise ImportRefused("O arquivo mudou no meio do envio; recomece este arquivo do início.")
+            # Mudou entre um envio e outro (lote retomado): recomeça do zero.
+            conn.execute("DELETE FROM jc_import_files WHERE id = ?", (row["id"],))
+            conn.commit()
+            for suffix in (".part", ".bin"):
+                (folder / "{}{}".format(row["id"], suffix)).unlink(missing_ok=True)
+            conn.execute("BEGIN IMMEDIATE")
+            row = None
         if row is None:
             if offset != 0:
                 raise ImportRefused("O primeiro bloco precisa começar no offset 0.")
@@ -239,8 +277,6 @@ def receive_chunk(
             )
             row = conn.execute("SELECT * FROM jc_import_files WHERE id = ?", (cursor.lastrowid,)).fetchone()
         row = dict(row)
-        if row["sha256"] != sha256 or int(row["size_bytes"]) != size:
-            raise ImportRefused("O arquivo mudou no meio do envio; recomece este arquivo.")
         if row["status"] == "completo":
             return {"file_id": row["id"], "received": int(row["size_bytes"]), "complete": True}
         received = int(row["received_bytes"])
@@ -248,7 +284,6 @@ def receive_chunk(
             return {"file_id": row["id"], "received": received, "complete": False}
         if offset != received:
             raise ChunkOutOfOrder(received)
-        folder = _batch_dir(batch["organization_id"], batch["project_id"], batch_id)
         folder.mkdir(parents=True, exist_ok=True)
         part = folder / "{}.part".format(row["id"])
         with part.open("ab") as handle:
@@ -303,15 +338,19 @@ def close_batch(organization_id: int, batch_id: int, summary: Optional[Dict] = N
         if incomplete:
             raise ImportRefused("Arquivos incompletos: {}.".format(", ".join(incomplete[:5])))
         count = conn.execute("SELECT COUNT(*) FROM jc_import_files WHERE batch_id = ?", (int(batch_id),)).fetchone()[0]
+        # Sem arquivo novo não há o que revisar: o lote não vira pendência vazia.
+        status = "pronta" if count else "descartada"
         conn.execute(
-            "UPDATE jc_import_batches SET status = 'pronta', summary_json = ?, ignored_json = ?, closed_at = ?, "
+            "UPDATE jc_import_batches SET status = ?, summary_json = ?, ignored_json = ?, closed_at = ?, "
             "updated_at = ? WHERE id = ?",
-            (json.dumps(summary or {}, ensure_ascii=False)[:20000],
+            (status, json.dumps(summary or {}, ensure_ascii=False)[:20000],
              json.dumps(list(ignored)[:2000], ensure_ascii=False), _now(), _now(), int(batch_id)),
         )
+    if not count:
+        _remove_dir(_batch_dir(batch["organization_id"], batch["project_id"], batch_id))
     auth.audit_system_event(organization_id, "jornada.import.closed", "jc_import_batch", batch_id,
                             {"origem": "api", "arquivos": int(count)})
-    return {"batch_id": int(batch_id), "files": int(count), "status": "pronta"}
+    return {"batch_id": int(batch_id), "files": int(count), "status": status}
 
 
 # ---------------------------------------------------------------------------
