@@ -54,10 +54,11 @@ não diz é completado ali.
 | Quadros do rastreador | `frame,timestamp,x,y` de uma gravação (Kexxu) | `Pt04-JEstimulada-ASSAI.csv` |
 | Blickshift individual | Gaze Statistics participante × AOI (`;`, decimal com vírgula) | `DSP2250-INDIVIDUAL2.csv` |
 | Blickshift agregado | O mesmo export por grupo | `..._Gaze Statistics_PERFIL 1.csv` |
-| Planilha enriquecida | Colunas do Blickshift mais canal, perfil e tempo até a decisão | `...-todos.xlsx` |
+| Planilha enriquecida | Colunas do Blickshift mais canal, perfil e o "Tempo" da planilha | `...-todos.xlsx` |
+| Registro de campo | Abas Controle e Estimuladas: produto escolhido, marcas consideradas, tempo de compra, observações | `Relação Coletas.xlsx` |
 | Entrevistas | `arquivo, ep, identificacao, texto` | `entrevistas.csv` |
 | Formato antigo | `Banco_Tabelas` da versão anterior do módulo | `Banco_Tabelas.csv` |
-| Imagem | Foto de gôndola, heatmap ou embalagem | `.png`, `.jpg` |
+| Imagem | Foto de gôndola (com a loja), heatmap ou embalagem (com a marca) | `.png`, `.jpg` |
 
 As tabelas `Banco_PorMarca`, `Banco_medias`, `Banco_TBVisualShare`,
 `Banco_ANOVA` e `Banco_Consolidado` da versão anterior são recusadas com
@@ -67,6 +68,82 @@ Projeto → Versão anterior**, com o `Banco_Tabelas` pronto para baixar e reenv
 
 Vídeos (`.mp4`, `.mov`, até 200 MB) têm seção própria em Uploads e ficam no
 disco do servidor, fora do banco — ver [docs/OPERATIONS.md](docs/OPERATIONS.md).
+Cada gravação pode ter o vídeo de cena (`-out.mp4`) e o de heatmap; o player de
+Participantes troca entre os dois.
+
+### Enviar a pasta inteira do projeto
+
+Para um estudo completo, o script `scripts/jornada_enviar.py` lê a pasta do
+projeto no computador de quem a tem (ex.: `X:\ALS\1234-Estudo`) e envia de uma
+vez exports, quadros, vídeos de cena e de heatmap, fotos, registro de campo e o
+texto do relatório. Nada entra direto na análise: o envio aparece em **Uploads →
+Importações pendentes**, onde alguém com escrita confere a prévia (inclusive as
+escolhas como a análise vai lê-las) e grava ou descarta.
+
+1. Crie o projeto no app, com as marcas. O script não cria projeto e para se
+   não achar um com o nome da pasta (ou o de `--projeto`).
+2. Peça o token da organização a quem administra o servidor e guarde-o num
+   arquivo fora do repositório, ou na variável `NENC_IMPORT_TOKEN`. Nunca o
+   coloque na linha de comando nem no Git.
+3. Instale o [ffmpeg](https://ffmpeg.org/download.html) e deixe-o no `PATH`
+   (ou passe `--ffmpeg C:\caminho\ffmpeg.exe`): os vídeos vão compactados.
+4. Dentro de `nenc-dashboard`, com a `.venv` do repositório, simule e envie:
+
+```powershell
+..\.venv\Scripts\python scripts\jornada_enviar.py "X:\ALS\1234-Estudo" --simular
+..\.venv\Scripts\python scripts\jornada_enviar.py "X:\ALS\1234-Estudo" --token-arquivo C:\nenc\token.txt
+```
+
+- `--simular` mostra o que vai e o que fica de fora, com o motivo, sem rede e
+  sem token. Confira antes do primeiro envio de um projeto.
+- Rodar de novo envia só o que o projeto ainda não tem; um envio interrompido
+  continua de onde parou. Os hashes e os vídeos compactados ficam em cache em
+  `%LOCALAPPDATA%\nenc\jornada_cache`.
+- Vídeos: H.264 até 720p, com a mesma linha do tempo (o salto para a primeira
+  olhada continua certo); no 1060, cerca de 35% menores. Sem ffmpeg, vão os
+  originais, até 500 MB cada. `--sem-heatmap`, `--sem-videos` e `--sem-compactar`
+  reduzem o envio.
+- Documentos: vai só o texto do relatório mais recente (a maior versão `V<n>`)
+  e dos documentos preenchidos; modelos vazios ficam de fora. Na revisão, o
+  briefing preenchido vira o Contexto do projeto se ele estiver vazio, e o
+  texto pode ir para a base de conhecimento da Jornada.
+- **Nunca saem do computador**: fotos de participantes e planilhas de
+  recrutamento (dado pessoal), backups dos dados originais, cópias de trabalho,
+  arquivos do Blickshift e travas do Office.
+
+Estrutura reconhecida (nomes comparados sem acento e sem caixa):
+
+| Caminho | Vai como |
+| --- | --- |
+| `2.DADOS/2.3*/**` (`.csv`, `.xlsx`; sem os `-convertido`) | exports de eye tracking |
+| `2.DADOS/2.2*/Eyetracking/**.csv` e `**-out.mp4` | quadros e vídeos de cena |
+| `2.DADOS/2.2*/Videos Processados Heatmap/**.mp4` | vídeos de heatmap |
+| `**/heatmap-<loja>.png` | heatmap da loja |
+| `4.ARQUIVOS AUXILIARES/Fotos Gôndolas/<loja>/*` | fotos de gôndola |
+| `4.ARQUIVOS AUXILIARES/Fotos pacotes/<marca>/*` | fotos de embalagem (vista e "editada" pelo nome) |
+| `**/Relação Coletas*.xlsx` | registro de campo |
+| `1.GESTAO_PROJETOS/1.1*/*` e o fluxo experimental | briefing (texto) |
+| `3.DRAFTS RELATÓRIOS/3.2*/*V<n>.pptx` | relatório (texto da versão mais recente) |
+
+Pasta fora do padrão? Um `jornada_import.toml` opcional na raiz do projeto
+acrescenta pastas, nomes de loja e de marca e exclusões:
+
+```toml
+ignorar = ["**/rascunho*"]
+
+[lojas]          # subpasta ou rótulo -> código da loja
+"DSP-2250" = "2250"
+
+[marcas]         # subpasta de fotos de embalagem -> marca
+"GL" = "Gama Livre"
+
+[pastas]         # pastas extras por papel, relativas à raiz
+dados = ["2.DADOS/Outros exports"]
+fotos_gondola = ["Fotos lojas"]
+```
+
+Papéis aceitos em `[pastas]`: `dados`, `quadros`, `video_cena`, `video_heatmap`,
+`fotos_gondola`, `fotos_embalagem`, `registro_campo` e `documento`.
 
 ### Unidades e o que entra na análise
 
@@ -87,10 +164,19 @@ a tabela equivalente.
 - **Gôndola**: share visual por marca (média por participante; a ponderada
   pelo tempo fica na tabela), funil notou → examinou → retornou, primeira marca
   notada, tempo até a primeira olhada (absoluto e relativo à primeira marca
-  vista), índice de presença (share ÷ fração da gôndola) e ranking de produtos.
+  vista), índice de presença (share ÷ fração da gôndola), ranking de produtos e
+  a foto e o heatmap da loja de cada célula.
 - **Navegação e decisão**: atributos das AOIs (ex.: Diurno × Noturno) com a
-  presença de cada valor na gôndola, etiquetas de preço e tempo até a decisão.
-- **Embalagens**: elementos por perfil (dados agregados), com o alcance do logo.
+  presença de cada valor na gôndola, etiquetas de preço e tempo até a decisão
+  por tarefa e fonte — o tempo de compra do registro de campo e o "Tempo" da
+  planilha enriquecida aparecem separados, cada um na sua tarefa.
+- **Escolha** (com registro de campo): marca escolhida por tarefa, loja, canal e
+  perfil, com a contagem ("4/6"); variante; da atenção à escolha (a marca
+  escolhida foi notada, examinada, a primeira, a mais vista?); conjunto
+  considerado e embalagens citadas; tempo de compra. Na jornada livre a escolha
+  é a compra observada; o texto da equipe é normalizado pelas marcas do projeto.
+- **Embalagens**: elementos por perfil (dados agregados), com o alcance do logo
+  e as fotos de cada marca (a versão editada primeiro).
 - **Canal e perfil**: comparações com δ de Cliff e permutação exata quando cada
   grupo tem 5 ou mais participantes; abaixo disso, descritivo. Variáveis que
   andam juntas na amostra (ex.: canal = tarefa) são avisadas e não são
@@ -100,7 +186,8 @@ a tabela equivalente.
   base de conhecimento só por clique. A IA recebe as métricas calculadas, nunca
   os dados brutos.
 - **Exportar**: PDF (relatório), PPTX (gráficos nativos editáveis) e Excel para
-  Power BI, sempre no recorte da página. Cada download vai para o `audit_log`.
+  Power BI, sempre no recorte da página; o PDF e o PPTX levam a seção Escolha e
+  uma imagem por loja e por marca. Cada download vai para o `audit_log`.
 
 ### Excel para Power BI
 
@@ -117,7 +204,9 @@ Gravacoes[recording_key]
   ├── Olhar_AOI_bruto[recording_key]
   ├── Marca_por_Gravacao[recording_key]
   ├── Resumo_Gravacao[recording_key]
+  ├── Escolhas[recording_key]
   └── Qualidade[recording_key]
+Participantes[participant] ── Tempos[participant]
 Catalogo_AOI[aoi_key]
   ├── Olhar_AOI[aoi_key]
   └── Agregados_Grupo[aoi_key]
@@ -147,12 +236,19 @@ No servidor, a partir do diretório `nenc-dashboard/`:
 
 ```bash
 git pull origin main
-docker compose up -d --build nenc-dashboard
+docker compose up -d --build nenc-dashboard nenc-import-api
 docker compose logs -f --tail=50 nenc-dashboard
 ```
 
-Nomear o serviço é proposital: sem isso o compose reconstrói também
+Nomear os serviços é proposital: sem isso o compose reconstrói também
 `nenc-whatsapp-api`, que vem de outro repositório (`../../whatsapp-api`).
+
+`nenc-import-api` é a API que recebe a pasta enviada pelo script da Jornada
+(FastAPI, mesma imagem, mesmo banco). O Caddy manda
+`insights.nenc.in/api/jornada/*` para ela e o resto para o dashboard; depois de
+mudar o `Caddyfile`, recarregue o proxy sem derrubá-lo
+(`docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`). Tokens,
+inbox e expiração estão em [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 O healthcheck consulta `/_stcore/health` a cada 30s; `docker compose ps`
 mostra `healthy` quando a aplicação sobe.

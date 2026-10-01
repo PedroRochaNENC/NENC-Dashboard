@@ -243,6 +243,13 @@ class ApplyTests(_ImportBase):
         self.assertEqual(jornada_imports.list_batches(self.project_id), [])
         self.assertFalse(any(jornada_imports.inbox_root().rglob("*.bin")))
 
+    def test_files_missing_from_the_inbox_are_reported(self):
+        batch_id = self._ready_batch()
+        self.assertEqual(jornada_imports.missing_files(self.project_id, batch_id), [])
+        for path in jornada_imports.inbox_root().rglob("*.bin"):
+            path.unlink()
+        self.assertEqual(len(jornada_imports.missing_files(self.project_id, batch_id)), 5)
+
     def test_stale_batches_expire(self):
         batch_id = jornada_imports.create_batch(self.org, self.project_id)
         self._send(batch_id, "a.csv", "dados", b"abc")

@@ -418,6 +418,14 @@ def _open_batch(conn, project_id: int, batch_id: int) -> Dict:
     return dict(row)
 
 
+def missing_files(project_id: int, batch_id: int) -> List[str]:
+    """Arquivos completos do lote que não estão no inbox (ex.: banco restaurado sem a pasta)."""
+    with jornada_db._connect() as conn:
+        batch = _open_batch(conn, project_id, batch_id)
+    return [item["rel_path"] for item in batch_files(project_id, batch_id)
+            if item["status"] == "completo" and not _file_path(batch, item["id"]).exists()]
+
+
 def read_file(project_id: int, batch_id: int, file_id: int) -> bytes:
     """Conteúdo de um arquivo pendente (dados, imagens, documentos) para a prévia."""
     with jornada_db._connect() as conn:

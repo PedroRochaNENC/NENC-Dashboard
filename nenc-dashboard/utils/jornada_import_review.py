@@ -358,6 +358,13 @@ def render(project: Dict, user) -> None:
         st.divider()
         return
 
+    missing = jornada_imports.missing_files(project["id"], batch_id)
+    if missing:
+        st.error("{} arquivo(s) desta importação não estão mais no servidor (ex.: {}). Descarte-a e envie a "
+                 "pasta de novo.".format(len(missing), missing[0]))
+        _discard_controls(project, batch)
+        st.divider()
+        return
     files = [item for item in jornada_imports.batch_files(project["id"], batch_id) if item["status"] == "completo"]
     by_role: Dict[str, List[Dict]] = {}
     for item in files:
