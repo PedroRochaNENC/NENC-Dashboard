@@ -27,6 +27,9 @@ FILES = {
     "2.DADOS/2.2.Dados Processados/Eyetracking/Jornadas Livres-1234/Pt01-JLivre-DSP1234-out.mp4": b"v",
     "2.DADOS/2.2.Dados Processados/Eyetracking/Jornadas Livres-1234/sem-nome.csv": b"f",
     "2.DADOS/2.2.Dados Processados/Videos Processados Heatmap/Embalagens/Pt02-Emb-Atacado.mp4": b"v",
+    # O nome não diz a tarefa ("Simulada", como no 1060); a pasta diz.
+    "2.DADOS/2.2.Dados Processados/Videos Processados Heatmap/Jornadas Estimuladas-Atacado/"
+    "Pt14-Simulada-Atacado.mp4": b"v",
     "2.DADOS/2.3.Dados Consolidados (finais para análise)/DGSP1234/DGSP1234-INDIVIDUAL2.csv": b"d",
     "2.DADOS/2.3.Dados Consolidados (finais para análise)/DGSP1234/DGSP1234.bsproj": b"b",
     "2.DADOS/2.3.Dados Consolidados (finais para análise)/DGSP1234/DGSP1234_Data/a.dat": b"b",
@@ -92,6 +95,10 @@ class ScanTests(unittest.TestCase):
                          ("Pt01", "livre", "1234"))
         heatmap = self._entry("Pt02-Emb-Atacado.mp4", entries)
         self.assertEqual((heatmap.meta["task"], heatmap.meta["store"]), ("embalagens", "atacado"))
+        unnamed = self._entry("Pt14-Simulada-Atacado.mp4", entries)
+        self.assertEqual((unnamed.role, unnamed.meta["task"], unnamed.meta["task_from_folder"]),
+                         ("video_heatmap", "estimulada", "Jornadas Estimuladas-Atacado"))
+        self.assertNotIn("task_from_folder", heatmap.meta)
         self.assertEqual(self._entry("heatmap-1234.png", entries).meta, {"category": "heatmap", "store": "1234"})
         gondola = self._entry("DSP-1234/Gondola.jpeg", entries)
         self.assertEqual((gondola.meta["category"], gondola.meta["store"]), ("gondola", "1234"))

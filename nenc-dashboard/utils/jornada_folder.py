@@ -32,7 +32,7 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - o Docker e a .venv usam 3.11+
     tomllib = None
 
-from utils.jornada_ingest import parse_recording_filename, store_key
+from utils.jornada_ingest import parse_recording_filename, store_key, task_key
 from utils.jornada_taxonomy import fold
 
 CONFIG_NAME = "jornada_import.toml"
@@ -179,12 +179,31 @@ def load_config(root: Path) -> FolderConfig:
 # Classificação
 # ---------------------------------------------------------------------------
 
-def _recording_meta(name: str) -> Optional[Dict[str, object]]:
+def folder_task(folders: Sequence[str]) -> Tuple[str, str]:
+    """Tarefa da pasta mais próxima com nome de tarefa, e o nome dessa pasta ("", "" se nenhuma).
+
+    No 1060, dois heatmaps se chamam "Pt14-Simulada-Assai" dentro de "Jornadas
+    Estimuladas-Assai": o nome não diz a tarefa, a pasta diz.
+    """
+    for folder in reversed(list(folders)):
+        task = task_key(folder)
+        if task:
+            return task, folder
+    return "", ""
+
+
+def _recording_meta(name: str, folders: Sequence[str] = ()) -> Optional[Dict[str, object]]:
+    """Participante, tarefa e loja pelo nome; a tarefa que o nome não diz vem da pasta."""
     info = parse_recording_filename(name)
     if not info:
         return None
-    return {"participant": info["participant"], "task": info["task"], "store": info["store"],
+    meta = {"participant": info["participant"], "task": info["task"], "store": info["store"],
             "store_label": info.get("store_label", "")}
+    if not meta["task"]:
+        task, folder = folder_task(folders)
+        if task:
+            meta.update(task=task, task_from_folder=folder)
+    return meta
 
 
 def _view(folded_name: str) -> str:
@@ -243,7 +262,7 @@ def _classify(rel: PurePosixPath, config: FolderConfig) -> Tuple[str, Dict[str, 
 
     role, child = _config_role(rel, config)
     if role:
-        return _apply_role(role, child, name, folded_name, extension, config)
+        return _apply_role(role, child, name, folded_name, extension, config, parts[:-1])
 
     in_23 = any(part.startswith("2.3") for part in folded_dirs)
     in_22 = any(part.startswith("2.2") for part in folded_dirs)
@@ -261,10 +280,10 @@ def _classify(rel: PurePosixPath, config: FolderConfig) -> Tuple[str, Dict[str, 
         return "ignorado", {}, "tipo de arquivo não usado nos consolidados"
     if in_22:
         if any("heatmap" in part for part in folded_dirs):
-            return _apply_role("video_heatmap", "", name, folded_name, extension, config)
+            return _apply_role("video_heatmap", "", name, folded_name, extension, config, parts[:-1])
         if any("eyetracking" in part for part in folded_dirs):
             role = "quadros" if extension == ".csv" else "video_cena"
-            return _apply_role(role, "", name, folded_name, extension, config)
+            return _apply_role(role, "", name, folded_name, extension, config, parts[:-1])
         return "ignorado", {}, "pasta de dados processados sem regra"
     if in_management:
         if any(part.startswith("1.1") for part in folded_dirs) and extension in DOCUMENT_EXTENSIONS:
@@ -291,7 +310,7 @@ def _classify(rel: PurePosixPath, config: FolderConfig) -> Tuple[str, Dict[str, 
 
 
 def _apply_role(role: str, child: str, name: str, folded_name: str, extension: str,
-                config: FolderConfig) -> Tuple[str, Dict[str, object], str]:
+                config: FolderConfig, folders: Sequence[str] = ()) -> Tuple[str, Dict[str, object], str]:
     """Papel decidido (pela estrutura ou pelo toml): confere a extensão e deduz o que o nome diz."""
     if role == "dados":
         return ("dados", {}, "") if extension in DATA_EXTENSIONS else (
@@ -306,7 +325,7 @@ def _apply_role(role: str, child: str, name: str, folded_name: str, extension: s
         wanted = {".csv"} if role == "quadros" else VIDEO_EXTENSIONS
         if extension not in wanted:
             return "ignorado", {}, "tipo de arquivo inesperado na pasta de {}".format(ROLE_LABELS[role].lower())
-        meta = _recording_meta(name)
+        meta = _recording_meta(name, folders)
         if meta is None:
             return "ignorado", {}, "nome sem participante, tarefa e loja (ex.: Pt04-JEstimulada-ASSAI)"
         return role, meta, ""

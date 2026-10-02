@@ -243,6 +243,18 @@ class ApplyTests(_ImportBase):
         self.assertEqual(jornada_imports.list_batches(self.project_id), [])
         self.assertFalse(any(jornada_imports.inbox_root().rglob("*.bin")))
 
+    def test_a_recording_without_task_in_the_name_takes_it_from_the_folder(self):
+        batch_id = jornada_imports.create_batch(self.org, self.project_id)
+        self._send(batch_id, "2.DADOS/2.2/Videos Processados Heatmap/Jornadas Estimuladas-1234/Pt14-Simulada-DSP1234.mp4",
+                   "video_heatmap", b"heat", meta={"participant": "Pt14", "task": "", "store": "1234"})
+        jornada_imports.close_batch(self.org, batch_id)
+        [item] = jornada_imports.batch_files(self.project_id, batch_id)
+        self.assertEqual(item["meta"]["task"], "estimulada")
+        with self._as(self.first_admin):
+            report = jornada_imports.apply_batch(self.project_id, batch_id)
+        self.assertEqual((report["videos"], report["skipped"]), (1, []))
+        self.assertEqual(jornada_db.list_media(self.project_id)[0]["task"], "estimulada")
+
     def test_files_missing_from_the_inbox_are_reported(self):
         batch_id = self._ready_batch()
         self.assertEqual(jornada_imports.missing_files(self.project_id, batch_id), [])

@@ -26,7 +26,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from utils import auth, jornada_db, jornada_media
-from utils.jornada_folder import CHUNK_BYTES, ROLES, file_limit
+from utils.jornada_folder import CHUNK_BYTES, ROLES, file_limit, folder_task
 from utils.jornada_ingest import normalize_participant, parse_upload, store_key
 
 STATUSES = ("recebendo", "pronta", "gravando", "gravada", "descartada", "expirada")
@@ -401,6 +401,12 @@ def batch_files(project_id: int, batch_id: int) -> List[Dict]:
     for row in rows:
         item = dict(row)
         item["meta"] = json.loads(item.pop("meta_json") or "{}")
+        # Gravação cujo nome não disse a tarefa (enviada por uma versão anterior do
+        # script): a pasta do caminho resolve, como no leitor da pasta.
+        if item["role"] in ("quadros", "video_cena", "video_heatmap") and not item["meta"].get("task"):
+            task, folder = folder_task(PurePosixPath(item["rel_path"]).parts[:-1])
+            if task:
+                item["meta"].update(task=task, task_from_folder=folder)
         files.append(item)
     return files
 
