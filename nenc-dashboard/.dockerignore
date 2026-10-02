@@ -25,4 +25,5 @@ plan-prosodiaEyeTracking.prompt.prompt.md
 
 # Videos da Jornada vivem no volume ./data (ou NENC_MEDIA_DIR), nunca na imagem.
 jornada_media
+jornada_inbox
 static/video_*

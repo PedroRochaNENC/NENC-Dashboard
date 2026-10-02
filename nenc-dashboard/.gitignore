@@ -5,5 +5,7 @@ __pycache__/
 .env
 # Videos da Jornada de Compra (volume de dados) e copias temporarias servidas
 jornada_media/
+# Importacoes da Jornada esperando revisao (volume de dados)
+jornada_inbox/
 static/video_*.mp4
 static/video_*.mp4.part

@@ -32,6 +32,7 @@ from utils.excel_export import (
     write_workbook,
 )
 from utils.jornada_ingest import METRIC_COLUMNS, TASK_LABELS
+from utils.jornada_model import CHOICE_COLUMNS, TIME_COLUMNS
 
 # Folga para o aviso de corte caber na celula.
 _TEXT_LIMIT = EXCEL_CELL_MAX_CHARS - 200
@@ -86,7 +87,16 @@ SHEET_DESCRIPTIONS = {
     "Atributos": "Fração da atenção por valor de atributo (ex.: Diurno × Noturno).",
     "Resumo_Gravacao": "Por gravação: atenção à categoria, marcas vistas, marca foco e tempo "
                        "até a decisão.",
-    "Tempo_Decisao": "Tempo até a decisão por loja, canal e perfil (descritivo).",
+    "Tempo_Decisao": "Tempo até a decisão por tarefa e fonte, por loja, canal e perfil (descritivo).",
+    "Tempos": "Cada tempo até a decisão com a tarefa e a fonte: tempo de compra (registro de campo) "
+              "ou Tempo da planilha enriquecida.",
+    "Escolhas": "Escolha de cada participante por tarefa, do registro de campo: o texto anotado e a "
+                "leitura normalizada pelas marcas do projeto.",
+    "Escolha_Marca": "Quantos escolheram cada marca, por tarefa e por loja, canal e perfil.",
+    "Variantes": "Entre quem escolheu cada marca, quantos levaram cada valor de atributo.",
+    "Atencao_Escolha": "Para quem tem escolha e olhar codificado na mesma gravação: a marca escolhida foi "
+                       "notada, examinada, a primeira e a mais vista?",
+    "Consideracao": "Tamanho do conjunto de marcas considerado e embalagens citadas, por tarefa e loja.",
     "Comparacoes": "Comparações entre grupos: médias, δ de Cliff e p quando a amostra permite.",
     "Elementos_Embalagem": "Elementos de cada embalagem por perfil (dos agregados).",
     "Marcas_Embalagem": "Atenção a cada embalagem por perfil e alcance do logo.",
@@ -122,6 +132,36 @@ COLUMN_DESCRIPTIONS = {
     "name": "Nome do projeto.",
     # participantes
     "tempo_informado": "Tempo até a decisão como anotado na planilha (texto).",
+    "profile_group": "Grupo do participante no registro de campo (ex.: PERFIL 1).",
+    "field_notes": "Observações gerais da equipe de campo sobre o participante.",
+    "tasks_done": "Tarefas que o participante fez, segundo o registro de campo.",
+    "field_date": "Dia da coleta, segundo o registro de campo.",
+    # escolha (registro de campo)
+    "chosen_text": "Produto escolhido como a equipe anotou.",
+    "chosen_brands": "Marcas do projeto citadas no produto escolhido.",
+    "chosen_brand": "Marca escolhida (várias, quando o participante levou mais de uma marca).",
+    "chosen_values": "Valores de atributo do produto escolhido (JSON).",
+    "chosen_values_text": "Valores de atributo do produto escolhido (ex.: tipo: Noturno).",
+    "chosen_lines": "Linha do produto escolhido (ex.: Toda Protegida).",
+    "considered_text": "Marcas consideradas durante a compra, como a equipe anotou.",
+    "considered_brands": "Marcas do projeto citadas entre as consideradas.",
+    "considered_count": "Quantas marcas o participante considerou (inclui a escolhida).",
+    "packs": "Tamanhos de embalagem citados, em unidades.",
+    "purchase_time_s": "Tempo de compra anotado pela equipe de campo, em segundos.",
+    "category_fraction": "Fração da jornada livre gasta na categoria, anotada pela equipe.",
+    "category_note": "Anotação da equipe no lugar da fração, quando não é número.",
+    "task_notes": "Observações da equipe de campo sobre a tarefa.",
+    "has_gaze": "Há gravação codificada (olhar) do participante nesta tarefa e loja.",
+    "seconds": "Tempo até a decisão, em segundos.",
+    "source_label": "Fonte do tempo por extenso.",
+    "chose_n": "Participantes que escolheram a marca (ou o valor).",
+    "n_brand": "Participantes que escolheram a marca.",
+    "looked": "A marca escolhida foi olhada na gravação da tarefa.",
+    "top_share": "A marca escolhida foi a de maior share na gravação.",
+    "share_rank": "Posição da marca escolhida no share da gravação (1 = a mais vista).",
+    "n_brands": "Marcas na gôndola da gravação.",
+    "considered_mean": "Média de marcas consideradas.",
+    "single_brand_n": "Participantes que consideraram uma marca só.",
     "tempo_decisao_s": "Tempo até a decisão, em segundos.",
     "notes": "Observações da equipe.",
     # gravacoes
@@ -156,7 +196,7 @@ COLUMN_DESCRIPTIONS = {
     "shelf_weight": "Peso manual da AOI na gôndola (vazio = 1 por AOI).",
     "include": "A AOI entra na análise.",
     "is_focus": "É a marca foco do projeto.",
-    "source": "Origem da classificação: auto ou manual.",
+    "source": "Origem: auto ou manual no catálogo; campo (registro de campo) ou planilha nos tempos.",
     "is_outside": "Linha de tempo fora de qualquer AOI.",
     # olhar
     "dwell_s": "Tempo total olhando, em segundos.",
@@ -185,7 +225,8 @@ COLUMN_DESCRIPTIONS = {
     "share_mean": "Share visual: média, por participante, da fração da atenção às marcas.",
     "share_weighted": "Share ponderada pelo tempo: Σ tempo na marca ÷ Σ tempo nas marcas.",
     "reach": "Alcance: fração dos participantes que olharam.",
-    "examined": "Fração que olhou pelo menos o limiar de exame (1 s por padrão).",
+    "examined": "Fração que olhou pelo menos o limiar de exame (1 s por padrão); em olhar × escolha, "
+                "se a marca escolhida foi examinada.",
     "examined_n": "Gravações com tempo em segundos (base do examinou).",
     "examined_given_noticed": "Entre quem notou, fração que examinou.",
     "revisit": "Fração que voltou a uma AOI da marca (2+ visitas na mesma AOI).",
@@ -194,7 +235,8 @@ COLUMN_DESCRIPTIONS = {
     "ttff_q3": "3º quartil do TTFF, em segundos.",
     "ttff_n": "Participantes com TTFF (olharam).",
     "rel_ttff_median": "Mediana do TTFF relativo à primeira marca vista, em segundos.",
-    "first_noticed": "Fração dos participantes cuja primeira olhada foi na marca (empates dividem).",
+    "first_noticed": "Fração dos participantes cuja primeira olhada foi na marca (empates dividem); em "
+                     "olhar × escolha, se a marca escolhida foi a primeira notada.",
     "first_noticed_n": "Participantes que olharam alguma marca.",
     "dwell_mean_s": "Tempo médio por participante, em segundos.",
     "visits_mean": "Visitas médias por participante.",
@@ -400,6 +442,19 @@ def _recordings_sheet(model: Dict, quality: Optional[Dict], media: Sequence[Dict
     return recordings
 
 
+def _choices_sheet(choices: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Escolhas por participante e tarefa; as listas viram texto separado por vírgula."""
+
+    columns = [column for column in CHOICE_COLUMNS if column != "chosen_values"]
+    if choices is None or choices.empty:
+        return pd.DataFrame(columns=columns)
+    out = choices.drop(columns=["chosen_values"], errors="ignore").copy()
+    for column in ("chosen_brands", "considered_brands", "packs"):
+        if column in out:
+            out[column] = out[column].map(lambda items: ", ".join(str(item) for item in items or []))
+    return _clean(out, columns)
+
+
 def _dictionary(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     rows = []
     for sheet, frame in tables.items():
@@ -459,6 +514,12 @@ def excel_tables(
         "Atributos": _clean(metrics.get("attributes")),
         "Resumo_Gravacao": _clean(metrics.get("recording_summary")),
         "Tempo_Decisao": _clean(metrics.get("decision")),
+        "Tempos": _clean(metrics.get("times"), TIME_COLUMNS),
+        "Escolhas": _choices_sheet(metrics.get("choices")),
+        "Escolha_Marca": _clean(metrics.get("choice")),
+        "Variantes": _clean(metrics.get("variants")),
+        "Atencao_Escolha": _clean(metrics.get("attention_choice")),
+        "Consideracao": _clean(metrics.get("consideration")),
         "Comparacoes": _clean(metrics.get("comparisons"), COMPARISON_COLUMNS),
         "Elementos_Embalagem": _clean(packaging.get("elements"), PACKAGING_COLUMNS["elements"]),
         "Marcas_Embalagem": _clean(packaging.get("brands"), PACKAGING_COLUMNS["brands"]),

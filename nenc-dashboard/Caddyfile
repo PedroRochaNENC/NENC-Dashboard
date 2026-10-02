@@ -2,9 +2,18 @@
 # Configuração do Caddy - Reverse Proxy com SSL Automático
 # ============================================================
 
-# Dashboard NENC
+# Dashboard NENC (e a API de importacao da Jornada em /api/jornada)
 insights.nenc.in {
-    reverse_proxy nenc-dashboard:8501
+    handle /api/jornada/* {
+        # O script envia blocos de ate 8 MB.
+        request_body {
+            max_size 10MB
+        }
+        reverse_proxy nenc-import-api:8000
+    }
+    handle {
+        reverse_proxy nenc-dashboard:8501
+    }
 }
 
 # API WhatsApp Prosodia

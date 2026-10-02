@@ -2,13 +2,14 @@
 Relatório em PDF da Análise Geral da Jornada de Compra.
 
 Segue as seções da página, no recorte dela: capa com os números-chave,
-achados, gôndola, navegação e decisão, embalagens, canal e perfil, amostra e
-qualidade, a análise de IA escolhida (quando há) e as limitações. As tabelas
-completas ficam no Excel; aqui vai o que se lê.
+achados, gôndola (com a imagem de cada loja), navegação e decisão, escolha,
+embalagens (com a foto de cada marca), canal e perfil, amostra e qualidade, a
+análise de IA escolhida (quando há) e as limitações. As tabelas completas
+ficam no Excel; aqui vai o que se lê.
 """
 
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -16,11 +17,13 @@ from utils import pdf_report
 from utils.jornada_export import export_filename, filters_text
 from utils.jornada_format import fmt_number, fmt_pct
 from utils.jornada_ingest import TASK_LABELS
+from utils.jornada_metrics import decision_by_store, time_kpi
 from utils.jornada_taxonomy import fold
 
 FINDING_AREAS = (
     ("Gôndola", ("gondola",)),
     ("Navegação e decisão", ("preco", "navegacao", "decisao")),
+    ("Escolha", ("escolha",)),
     ("Embalagens", ("embalagem",)),
 )
 STATUS_TITLES = {
@@ -49,6 +52,12 @@ def _num(value, digits: int = 1) -> str:
 
 def _frame(value) -> pd.DataFrame:
     return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
+
+
+def _pictures(pdf, pictures: Sequence[Dict], title: str) -> None:
+    if pictures:
+        pdf_report.heading(pdf, title, level=2)
+        pdf_report.image_grid(pdf, [(item["content"], item["title"]) for item in pictures])
 
 
 def _by_cell_desc(frame: pd.DataFrame, column: str) -> pd.DataFrame:
@@ -85,14 +94,12 @@ def _cover(pdf, project: Dict, model: Dict, metrics: Dict, generated_at: str) ->
     sample = metrics.get("sample") or {}
     recordings = _frame(model.get("recordings"))
     uncoded = int((recordings["status"] == "nao_codificada").sum()) if not recordings.empty else 0
-    summary = _frame(metrics.get("recording_summary"))
-    decision = summary["tempo_decisao_s"].dropna() if "tempo_decisao_s" in summary else pd.Series(dtype=float)
+    time_label, time_value = time_kpi(metrics)
     pdf_report.kpi_row(pdf, [
         ("Participantes na análise", str(sample.get("participants", 0))),
         ("Gravações incluídas", str(sample.get("recordings", 0))),
         ("Não codificadas (fora)", str(uncoded)),
-        ("Tempo até a decisão (mediana)",
-         "{} s".format(fmt_number(decision.median(), 1)) if len(decision) else "—"),
+        (time_label, "{} s".format(fmt_number(time_value, 1)) if time_value == time_value else "—"),
     ])
     brand = _frame(metrics.get("brand"))
     if focus and not brand.empty and brand["is_focus"].any():
@@ -133,7 +140,7 @@ def _findings(pdf, metrics: Dict) -> None:
                 len(items) - MAX_FINDINGS_PER_AREA), size=8, color=pdf_report.MUTED)
 
 
-def _gondola(pdf, metrics: Dict) -> None:
+def _gondola(pdf, metrics: Dict, pictures: Sequence[Dict] = ()) -> None:
     brand = _frame(metrics.get("brand"))
     if brand.empty:
         return
@@ -184,6 +191,7 @@ def _gondola(pdf, metrics: Dict) -> None:
               _num(row["dwell_mean_s"], 2)] for _, row in top.iterrows()],
             [44, 58, 26, 16, 16, 20],
         )
+    _pictures(pdf, pictures, "A gôndola de cada loja")
 
 
 def _navigation(pdf, metrics: Dict) -> None:
@@ -219,28 +227,91 @@ def _navigation(pdf, metrics: Dict) -> None:
         )
     if not decision.empty:
         pdf_report.heading(pdf, "Tempo até a decisão", level=2)
-        stores = decision[decision["group_type"] == "loja"]
+        stores = decision_by_store(decision)
         if not stores.empty:
             pdf_report.hbar_chart(
                 pdf,
-                [(row["group"], row["median_s"], False) for _, row in stores.iterrows()],
+                [(row["label"], row["median_s"], False) for _, row in stores.iterrows()],
                 value_format=lambda v: "{} s".format(fmt_number(v, 1)),
-                title="Mediana por loja, em segundos",
+                title="Mediana por tarefa e loja, em segundos (tempo de compra; planilha onde não há)",
+                label_width=70,
             )
         pdf_report.simple_table(
             pdf,
-            ["Agrupamento", "Grupo", "n", "Mediana (s)", "1º quartil", "3º quartil", "Mín", "Máx"],
-            [[str(row["group_type"]).capitalize(), row["group"], int(row["n"]), _num(row["median_s"]),
-              _num(row["q1_s"]), _num(row["q3_s"]), _num(row["min_s"]), _num(row["max_s"])]
+            ["Tarefa", "Fonte", "Agrupamento", "Grupo", "n", "Mediana (s)", "Mín", "Máx"],
+            [[row["task_label"], row["source_label"], str(row["group_type"]).capitalize(), row["group"],
+              int(row["n"]), _num(row["median_s"]), _num(row["min_s"]), _num(row["max_s"])]
              for _, row in decision.iterrows()],
-            [28, 52, 10, 20, 18, 18, 17, 17],
+            [34, 38, 22, 34, 8, 18, 13, 13],
         )
 
 
-def _packaging(pdf, metrics: Dict, focus: str) -> None:
+def _choice(pdf, metrics: Dict) -> None:
+    choices = _frame(metrics.get("choices"))
+    choice = _frame(metrics.get("choice"))
+    if choices.empty:
+        return
+    pdf_report.heading(pdf, "Escolha")
+    pdf_report.paragraph(
+        pdf,
+        "Produto escolhido segundo o registro de campo, normalizado pelas marcas do projeto. Na jornada "
+        "livre é a compra observada; na estimulada, a escolha pedida. Quem escolheu duas marcas conta nas duas.",
+        size=9,
+    )
+    pdf.ln(2)
+    for _, rows in choice.groupby("task", sort=False):
+        total = rows[rows["group_type"] == "total"].sort_values("share", ascending=False)
+        if total.empty:
+            continue
+        n = int(total["n"].iloc[0])
+        pdf_report.hbar_chart(
+            pdf,
+            [(row["brand"], row["share"], bool(row["is_focus"])) for _, row in total.iterrows()],
+            value_format=fmt_pct,
+            max_value=1.0,
+            title="{} · todas as lojas · n={}".format(rows["task_label"].iloc[0], n),
+            note="Descritivo: menos de 5 participantes." if n < 5 else "",
+        )
+        groups = rows[rows["group_type"].isin(["loja", "canal"])]
+        pdf_report.simple_table(
+            pdf,
+            ["Por", "Grupo", "Marca", "Escolheram", "Fração"],
+            [[str(row["group_type"]).capitalize(), row["group"], row["brand"],
+              "{}/{}".format(int(row["chose_n"]), int(row["n"])), _pct(row["share"])]
+             for _, row in groups.iterrows()],
+            [20, 52, 48, 30, 30],
+        )
+    attention = _frame(metrics.get("attention_choice"))
+    if not attention.empty:
+        pdf_report.heading(pdf, "Da atenção à escolha", level=2)
+        pdf_report.paragraph(
+            pdf,
+            "Dos {} participantes com escolha e olhar codificado na mesma gravação, {} notaram a marca "
+            "escolhida, {} a examinaram, {} a notaram primeiro e {} a viram mais que as outras.".format(
+                len(attention), int(attention["looked"].sum()), int(attention["examined"].sum()),
+                int(attention["first_noticed"].sum()), int(attention["top_share"].sum())),
+            size=9,
+        )
+        pdf.ln(1)
+    consideration = _frame(metrics.get("consideration"))
+    if not consideration.empty:
+        pdf_report.heading(pdf, "Conjunto considerado e embalagens", level=2)
+        pdf_report.simple_table(
+            pdf,
+            ["Tarefa", "Loja", "n", "Consideradas (média)", "Só uma marca", "Embalagens citadas"],
+            [[row["task_label"], row["store_label"], int(row["n"]), _num(row["considered_mean"]),
+              int(row["single_brand_n"]), _dash(row["packs"])] for _, row in consideration.iterrows()],
+            [32, 30, 10, 30, 20, 58],
+        )
+
+
+def _packaging(pdf, metrics: Dict, focus: str, pictures: Sequence[Dict] = ()) -> None:
     packaging = metrics.get("packaging") or {}
     elements = _frame(packaging.get("elements"))
     if elements.empty:
+        if pictures:
+            pdf_report.heading(pdf, "Embalagens")
+            _pictures(pdf, pictures, "As embalagens")
         return
     brands = _frame(packaging.get("brands"))
     coverage = _frame(packaging.get("coverage"))
@@ -287,6 +358,7 @@ def _packaging(pdf, metrics: Dict, focus: str) -> None:
                 max_value=1.0,
                 title="Logo de {} visto, por perfil".format(focus),
             )
+    _pictures(pdf, pictures, "As embalagens")
 
 
 def _channel(pdf, metrics: Dict) -> None:
@@ -392,8 +464,13 @@ def build_pdf(
     analysis: Optional[Dict] = None,
     quality: Optional[Dict] = None,
     generated_at: Optional[str] = None,
+    images: Optional[List[Dict]] = None,
 ) -> Tuple[bytes, str]:
-    """Relatório da Análise Geral no recorte da página; devolve os bytes e o nome."""
+    """Relatório da Análise Geral no recorte da página; devolve os bytes e o nome.
+
+    `images` vem de `jornada_gallery.report_images`, cada uma com `content`
+    (bytes já reduzidos): as de loja entram na Gôndola, as de marca em Embalagens.
+    """
 
     generated_at = generated_at or datetime.now().strftime("%d/%m/%Y %H:%M")
     focus = (model.get("meta") or {}).get("focus_brand") or ""
@@ -401,9 +478,11 @@ def build_pdf(
     pdf.add_page()
     _cover(pdf, project, model, metrics, generated_at)
     _findings(pdf, metrics)
-    _gondola(pdf, metrics)
+    pictures = images or []
+    _gondola(pdf, metrics, [item for item in pictures if item.get("group") == "loja"])
     _navigation(pdf, metrics)
-    _packaging(pdf, metrics, focus)
+    _choice(pdf, metrics)
+    _packaging(pdf, metrics, focus, [item for item in pictures if item.get("group") == "marca"])
     _channel(pdf, metrics)
     _sample(pdf, model, metrics, quality)
     if analysis and analysis.get("analysis_text"):

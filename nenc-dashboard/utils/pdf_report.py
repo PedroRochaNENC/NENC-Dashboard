@@ -6,9 +6,11 @@ reticências e marcador saem certos. O que fica fora dele (≥, δ, setas) é
 trocado por um equivalente legível antes de codificar, em vez de virar "?".
 
 Tudo é desenhado com primitivas (texto, linhas e retângulos): nada de imagem
-de gráfico, então o arquivo é leve e o texto continua selecionável.
+de gráfico, então o arquivo é leve e o texto continua selecionável. Fotos do
+estudo entram como imagem (`image_grid`), já reduzidas por quem chama.
 """
 
+import io
 import math
 import re
 from typing import Callable, Iterable, List, Optional, Sequence, Tuple
@@ -405,6 +407,49 @@ def simple_table(
         pdf.set_draw_color(*RULE)
         pdf.line(pdf.l_margin, y, pdf.l_margin + sum(widths), y)
     pdf.ln(3)
+
+
+def image_grid(
+    pdf: FPDF,
+    items: Sequence[Tuple[bytes, str]],
+    *,
+    columns: int = 2,
+    gap: float = 4.0,
+    max_height: float = 80.0,
+) -> None:
+    """Imagens lado a lado com legenda; a linha que não cabe vai inteira para a página seguinte.
+
+    `items` = (bytes da imagem, legenda). Imagem que o PIL não abre fica de fora.
+    """
+    from PIL import Image
+
+    width = (CONTENT_WIDTH - gap * (columns - 1)) / columns
+    sized = []
+    for content, caption in items:
+        try:
+            with Image.open(io.BytesIO(content)) as image:
+                ratio = image.height / image.width
+        except Exception:
+            continue
+        w, h = width, width * ratio
+        if h > max_height:
+            w, h = max_height / ratio, max_height
+        sized.append((content, caption, w, h))
+    for start in range(0, len(sized), columns):
+        row = sized[start:start + columns]
+        tallest = max(h for *_, h in row)
+        height = tallest + 7
+        ensure_space(pdf, height)
+        top = pdf.get_y()
+        for index, (content, caption, w, h) in enumerate(row):
+            left = pdf.l_margin + index * (width + gap)
+            pdf.image(io.BytesIO(content), x=left, y=top, w=w, h=h)
+            pdf.set_xy(left, top + tallest + 1)  # legendas da linha na mesma altura
+            pdf.set_font(FONT, "", 8)
+            pdf.set_text_color(*MUTED)
+            pdf.cell(width, 4, _fit(pdf, caption, width))
+        pdf.set_text_color(*INK)
+        pdf.set_xy(pdf.l_margin, top + height + 2)
 
 
 def measured_widths(

@@ -116,13 +116,17 @@ def _now() -> datetime:
 def _timestamp(value: Optional[datetime] = None) -> str:
     return (value or _now()).replace(microsecond=0).isoformat()
 
+SQLITE_TIMEOUT_SECONDS = 30
+
 @contextmanager
 def connection(database_path: Optional[os.PathLike] = None) -> Iterator[sqlite3.Connection]:
     """Open a connection with foreign-key enforcement and transactional cleanup."""
 
     path = _database_path(database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    database = sqlite3.connect(str(path))
+    # O app e a API de importacao escrevem no mesmo arquivo: quem chega
+    # durante a escrita do outro espera em vez de falhar com "database is locked".
+    database = sqlite3.connect(str(path), timeout=SQLITE_TIMEOUT_SECONDS)
     database.row_factory = sqlite3.Row
     database.execute("PRAGMA foreign_keys = ON")
     try:
@@ -1396,6 +1400,25 @@ def audit_business_access(
             target_type,
             target_id,
         )
+
+def audit_system_event(
+    organization_id: int,
+    action: str,
+    target_type: str,
+    target_id: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    database_path: Optional[os.PathLike] = None,
+) -> None:
+    """Registra o que um processo do servidor fez sem conta logada.
+
+    A API de importacao autentica pelo token da organizacao, nao por usuario:
+    o registro diz o que entrou e de onde. O autor de verdade aparece quando
+    alguem revisa e grava a importacao no app.
+    """
+
+    initialize_auth_schema(database_path)
+    with connection(database_path) as database:
+        _audit(database, organization_id, None, action, target_type, target_id, metadata)
 
 def audit_authorization_denied(
     actor: Optional[User],

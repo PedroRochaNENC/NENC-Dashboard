@@ -269,6 +269,25 @@ class JornadaReportTests(unittest.TestCase):
                          "Os dados do projeto mudaram"):
             self.assertIn(expected, text)
 
+    def test_choices_and_pictures_go_into_the_report(self):
+        from tests.test_jornada_choice import _field_log
+        from tests.test_jornada_import_review import _png
+
+        bundle = dict(self.bundle, files=self.bundle["files"] + [_file(9, "Relação Coletas.xlsx", _field_log())])
+        bundle["project"] = dict(bundle["project"], marcas="Alfa\nBeta\nGama Livre")
+        model = build_model(bundle)
+        from utils.jornada_gallery import downscale
+
+        # Bytes diferentes: o fpdf2 reaproveita uma imagem repetida.
+        pictures = [{"group": "loja", "title": "Heatmap · DSP 1234", "content": _png()},
+                    {"group": "marca", "title": "Embalagem · Alfa", "content": downscale(_png(), 320)}]
+        data, _ = build_pdf(bundle["project"], model, compute_all(model, {}), images=pictures)
+        text = _pdf_text(data)
+        for expected in ("Escolha", "Gama Livre", "Da atenção à escolha", "Conjunto considerado",
+                         "A gôndola de cada loja", "Heatmap · DSP 1234", "As embalagens", "Embalagem · Alfa"):
+            self.assertIn(expected, text)
+        self.assertEqual(data.count(b"/Subtype /Image"), 2)
+
     def test_an_empty_project_still_gives_a_report(self):
         model = build_model(_bundle([]))
         data, _ = build_pdf({"id": 5, "name": "Vazio"}, model, compute_all(model, {}))

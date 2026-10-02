@@ -53,6 +53,7 @@ PROJECT_FIELDS = (
 _DATA_FIELDS = {"marcas", "marca_foco", "settings_json", "quality_thresholds"}
 
 RECORDING_STATUSES = ("auto", "incluida", "excluida")
+MEDIA_KINDS = ("cena", "heatmap")
 UNIT_CHOICES = ("segundos", "amostras")
 AOI_KINDS = ("produto", "preco", "embalagem", "fora", "outro")
 
@@ -69,6 +70,7 @@ _CHILD_TABLES = (
     "jc_recordings",
     "jc_aoi_catalog",
     "jc_media",
+    "jc_import_batches",
 )
 
 
@@ -84,7 +86,7 @@ def _database_path() -> Path:
 def _connect() -> Iterator[sqlite3.Connection]:
     database_path = _database_path()
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(database_path))
+    conn = sqlite3.connect(str(database_path), timeout=auth.SQLITE_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
@@ -371,6 +373,42 @@ def init_db() -> None:
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 UNIQUE (project_id, sha256)
             );
+
+            -- Importacoes enviadas pelo script (utils/jornada_imports.py): os
+            -- arquivos esperam revisao no inbox, fora do banco.
+            CREATE TABLE IF NOT EXISTS jc_import_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                project_id INTEGER NOT NULL REFERENCES jc_projects(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'recebendo',
+                source_label TEXT,
+                client_json TEXT,
+                summary_json TEXT,
+                ignored_json TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                closed_at TEXT,
+                decided_at TEXT,
+                decided_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS jc_import_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id INTEGER NOT NULL REFERENCES jc_import_batches(id) ON DELETE CASCADE,
+                rel_path TEXT NOT NULL,
+                role TEXT NOT NULL,
+                meta_json TEXT NOT NULL DEFAULT '{}',
+                sha256 TEXT NOT NULL,
+                source_sha256 TEXT,
+                size_bytes INTEGER NOT NULL,
+                received_bytes INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'recebendo',
+                created_at TEXT,
+                UNIQUE (batch_id, rel_path)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_jc_import_batches_project
+                ON jc_import_batches(project_id, status);
             """
         )
 
@@ -401,6 +439,10 @@ def init_db() -> None:
             ),
         ):
             _ensure_column(conn, "jc_analyses", column, definition)
+        # Video de cena (com o ponto do olhar) ou de heatmap; e o hash do
+        # original, para o script nao recompactar e reenviar o mesmo video.
+        _ensure_column(conn, "jc_media", "kind", "TEXT NOT NULL DEFAULT 'cena'")
+        _ensure_column(conn, "jc_media", "source_sha256", "TEXT")
 
         # A versao anterior gravava filhos com a organizacao da sessao, que em
         # "Todas" podia nao ser a do projeto. O reparo e idempotente.
@@ -599,6 +641,12 @@ def delete_project(project_id: int) -> bool:
     _audit("jornada.project.delete", "jc_project", project_id, project_org, write=True)
     _remove_from_knowledge_base(project_id)
     _remove_media_files(project_org, project_id, [row["rel_path"] for row in media_rows])
+    try:
+        from utils import jornada_imports
+
+        jornada_imports.remove_project_inbox(project_org, project_id)
+    except Exception:
+        pass
     return True
 
 
@@ -1074,16 +1122,25 @@ def add_media(
     sha256: str,
     size_bytes: int,
     rel_path: str,
+    kind: str = "cena",
+    source_sha256: Optional[str] = None,
 ) -> Tuple[int, bool]:
-    """Registra um video. Devolve (id, criado); um video repetido nao duplica."""
+    """Registra um video. Devolve (id, criado); um video repetido nao duplica.
 
+    `kind` e "cena" (com o ponto do olhar) ou "heatmap". `source_sha256` e o
+    hash do arquivo original quando o video chegou recompactado: o mesmo
+    original enviado de novo e reconhecido mesmo que a compactacao mude bytes.
+    """
+
+    if kind not in MEDIA_KINDS:
+        raise ValueError("Tipo de video desconhecido: {}.".format(kind))
     actor = _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
         project_org = _project_org(conn, project_id, organization_id)
         existing = conn.execute(
-            "SELECT id FROM jc_media WHERE project_id = ? AND sha256 = ?",
-            (project_id, sha256),
+            "SELECT id FROM jc_media WHERE project_id = ? AND (sha256 = ? OR (? IS NOT NULL AND source_sha256 = ?))",
+            (project_id, sha256, source_sha256, source_sha256),
         ).fetchone()
         if existing:
             return int(existing["id"]), False
@@ -1091,8 +1148,8 @@ def add_media(
             """
             INSERT INTO jc_media (
                 organization_id, project_id, participant_code, task, store, filename,
-                sha256, size_bytes, rel_path, created_by_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sha256, size_bytes, rel_path, created_by_user_id, kind, source_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 project_org,
@@ -1105,6 +1162,8 @@ def add_media(
                 int(size_bytes),
                 rel_path,
                 _actor_user_id(actor),
+                kind,
+                source_sha256,
             ),
         )
         media_id = int(cursor.lastrowid)

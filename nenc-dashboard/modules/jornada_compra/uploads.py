@@ -7,6 +7,10 @@ avisos) antes de ser gravado; o que o nome do arquivo não diz é completado
 ali, e a correção fica guardada junto do arquivo.
 
 Os vídeos têm seção própria: vão para o disco do servidor, não para o banco.
+
+A pasta inteira do projeto chega pelo script `scripts/jornada_enviar.py` e
+fica em "Importações pendentes" (utils/jornada_import_review.py) até alguém
+conferir e gravar.
 """
 
 import hashlib
@@ -19,7 +23,8 @@ from utils.icons import page_title
 
 user = auth.require_module_write("jornada_compra")
 
-from utils import jornada_db, jornada_media
+from utils import jornada_db, jornada_import_review, jornada_imports, jornada_media
+from utils.jornada_import_review import TASK_OPTIONS, completion_fields
 from utils.jornada_ingest import (
     KIND_LABELS,
     TASK_LABELS,
@@ -33,9 +38,6 @@ from utils.jornada_ui import active_project
 jornada_db.init_db()
 project = active_project()
 project_id = project["id"]
-
-_TASK_OPTIONS = [""] + list(TASK_LABELS)
-_IMAGE_CATEGORIES = ["", "gôndola", "heatmap", "embalagem", "outra"]
 
 
 def _sha(content: bytes) -> str:
@@ -92,6 +94,8 @@ page_title(
     "Exports do Blickshift, quadros das gravações, planilha da equipe, imagens e vídeos.",
 )
 
+jornada_import_review.render(project, user)
+
 existing_files = jornada_db.list_files(project_id)
 existing_hashes = {item["sha256"] for item in existing_files}
 
@@ -114,9 +118,15 @@ with st.expander("O que enviar"):
         "`frame,timestamp,x,y`): dão a duração, a taxa de amostragem e a conversão de "
         "amostras em segundos. Envie todos.\n"
         "- **Planilha enriquecida** (`.xlsx` com LOJA, CANAL, Perfil, Tempo): preenche "
-        "perfil, canal e tempo até a decisão de cada participante.\n"
-        "- **Imagens**: fotos de gôndola, heatmaps e embalagens, para a galeria de estímulos.\n"
+        "perfil, canal e o Tempo da planilha de cada participante.\n"
+        "- **Registro de campo** (`Relação Coletas.xlsx`, abas Controle e Estimuladas): "
+        "produto escolhido, marcas consideradas, tempo de compra e observações.\n"
+        "- **Imagens**: fotos de gôndola, heatmaps e embalagens (com a marca), mostradas "
+        "nas seções Gôndola e Embalagens.\n"
         "- **Entrevistas** (`arquivo, ep, identificacao, texto`).\n\n"
+        "**A pasta inteira do projeto** vai de uma vez pelo script "
+        "`scripts/jornada_enviar.py`, no computador que tem a pasta (veja o README); o que "
+        "ele envia aparece no topo desta página, em Importações pendentes.\n\n"
         "Não envie fotos de participantes: são dado pessoal e não entram na análise."
     )
 
@@ -175,53 +185,14 @@ if uploaded:
 
     # O que o nome do arquivo nao disse, completado em campos explicitos: a
     # grade serve para conferir e escolher o que entra, nao para digitar.
-    corrections: Dict[int, Dict[str, str]] = {}
-    to_complete = [
-        index
-        for index, (_, _, parsed) in payloads.items()
-        if parsed.ok and (parsed.meta.get("needs") or parsed.kind == "image")
-    ]
-    if to_complete:
-        st.markdown("**Completar antes de gravar**")
-        for index in to_complete:
-            name, _, parsed = payloads[index]
-            needs = parsed.meta.get("needs") or []
-            columns = st.columns([3, 2, 2, 2])
-            columns[0].markdown(
-                '<div style="padding-top:1.9rem;font-size:.85rem">{}</div>'.format(name),
-                unsafe_allow_html=True,
-            )
-            values: Dict[str, str] = {}
-            if parsed.kind == "image":
-                values["category"] = columns[1].selectbox(
-                    "Categoria", _IMAGE_CATEGORIES, key="jc_fix_cat_{}_{}".format(nonce, index)
-                )
-                values["store"] = columns[2].text_input(
-                    "Loja (opcional)", key="jc_fix_store_{}_{}".format(nonce, index)
-                )
-            else:
-                if "task" in needs:
-                    values["task"] = columns[1].selectbox(
-                        "Tarefa",
-                        _TASK_OPTIONS,
-                        format_func=lambda key: TASK_LABELS.get(key, "— escolha —"),
-                        key="jc_fix_task_{}_{}".format(nonce, index),
-                    )
-                if "store" in needs:
-                    values["store"] = columns[2].text_input(
-                        "Loja", key="jc_fix_store_{}_{}".format(nonce, index)
-                    )
-                if "group" in needs:
-                    values["group"] = columns[3].text_input(
-                        "Grupo", placeholder="PERFIL 1, TODOS...",
-                        key="jc_fix_group_{}_{}".format(nonce, index),
-                    )
-                if "participant" in needs:
-                    values["participant"] = columns[3].text_input(
-                        "Participante", placeholder="Pt01",
-                        key="jc_fix_part_{}_{}".format(nonce, index),
-                    )
-            corrections[index] = values
+    corrections = completion_fields(
+        [
+            (index, name, parsed)
+            for index, (name, _, parsed) in payloads.items()
+            if parsed.ok and (parsed.meta.get("needs") or parsed.kind == "image")
+        ],
+        "jc_fix_{}".format(nonce),
+    )
 
     selected = edited[edited["incluir"]]
     st.caption(
@@ -234,48 +205,18 @@ if uploaded:
         skipped = []
         for index in selected.index:
             name, content, parsed = payloads[index]
-            fix = corrections.get(index, {})
-            needs = parsed.meta.get("needs") or []
-            missing = [
-                field for field in needs
-                if not str(fix.get(field) or "").strip() and field != "store"
-            ]
-            if missing:
-                skipped.append(name)
-                continue
-            overrides = {"kind": parsed.kind}
-            if fix.get("task"):
-                overrides["task"] = fix["task"]
-            if parsed.kind != "image" and "store" in needs:
-                # A chave da loja e a mesma normalizacao do leitor: digitar
-                # "DSP 2250" cai na loja "2250" que os outros arquivos usam.
-                overrides["store"] = store_key(fix.get("store", ""))
-                overrides["store_label"] = str(fix.get("store", "")).strip()
-            if fix.get("group"):
-                overrides["group"] = fix["group"].strip().upper()
-            if fix.get("participant"):
-                overrides["participant"] = normalize_participant(fix["participant"])
             if parsed.kind == "interviews" and parsed.table is not None:
                 interview_rows.extend(parsed.table.to_dict("records"))
                 continue
+            # Mesmo formato que a revisão das importações grava; a loja digitada
+            # passa pela normalização do leitor ("DSP 2250" cai na loja "2250").
+            item = jornada_imports.file_item(name, content, parsed, corrections.get(index, {}))
+            if item is None:
+                skipped.append(name)
+                continue
             if parsed.kind == "bs_enriched_xlsx":
                 seed.extend(parsed.meta.get("participant_info") or [])
-            detected = {
-                key: parsed.meta.get(key)
-                for key in ("participant", "task", "store", "store_label", "group", "n_rows",
-                            "participants", "tasks", "stores")
-                if parsed.meta.get(key) not in (None, "", [], {})
-            }
-            meta = {"overrides": overrides, "detected": detected}
-            if parsed.kind == "gaze_frames":
-                meta["frames"] = parsed.meta.get("frames")
-            if parsed.kind == "image":
-                meta.update(
-                    caption=name.rsplit(".", 1)[0],
-                    category=fix.get("category") or "",
-                    store=store_key(fix.get("store", "")),
-                )
-            items.append({"filename": name, "kind": parsed.kind, "content": content, "meta": meta})
+            items.append(item)
 
         if skipped:
             st.warning(
@@ -313,9 +254,9 @@ if uploaded:
 st.divider()
 st.subheader("Vídeos das gravações")
 st.markdown(
-    "Vídeos com o olhar sobreposto (`Pt04-JEstimulada-LOJA-out.mp4`). Ficam no disco do "
-    "servidor, fora do banco, e abrem na página **Participantes** — inclusive no momento "
-    "da primeira olhada de cada marca."
+    "Vídeos com o olhar sobreposto (`Pt04-JEstimulada-LOJA-out.mp4`) e vídeos de heatmap "
+    "do Blickshift. Ficam no disco do servidor, fora do banco, e abrem na página "
+    "**Participantes** — inclusive no momento da primeira olhada de cada marca."
 )
 video_key = "jc_video_upload_{}_{}".format(project_id, _nonce("jc_video_upload_nonce"))
 videos = st.file_uploader(
@@ -333,6 +274,8 @@ if videos:
             {
                 "incluir": bool(key.get("participant") and key.get("task")),
                 "arquivo": video.name,
+                # O vídeo de cena sai do rastreador como "-out"; o heatmap, sem o sufixo.
+                "tipo": "cena" if "-out" in video.name else "heatmap",
                 "participante": key.get("participant", ""),
                 "tarefa": key.get("task", ""),
                 "loja": key.get("store_label", ""),
@@ -348,7 +291,8 @@ if videos:
         disabled=["arquivo", "tamanho (MB)"],
         column_config={
             "incluir": st.column_config.CheckboxColumn("Incluir", width="small"),
-            "tarefa": st.column_config.SelectboxColumn("Tarefa", options=_TASK_OPTIONS),
+            "tipo": st.column_config.SelectboxColumn("Tipo", options=list(jornada_db.MEDIA_KINDS)),
+            "tarefa": st.column_config.SelectboxColumn("Tarefa", options=TASK_OPTIONS),
         },
     )
     chosen = edited_videos[edited_videos["incluir"]]
@@ -371,6 +315,7 @@ if videos:
                     task=row["tarefa"],
                     store=store_key(row["loja"]),
                     filename=video.name,
+                    kind=row["tipo"] if row["tipo"] in jornada_db.MEDIA_KINDS else "cena",
                     **stored,
                 )
             except (auth.AuthorizationError, ValueError, OSError) as error:
@@ -460,6 +405,7 @@ if media:
         [
             {
                 "id": item["id"],
+                "tipo": item.get("kind") or "cena",
                 "participante": item["participant_code"],
                 "tarefa": TASK_LABELS.get(item["task"], item["task"]),
                 "loja": item["store"],

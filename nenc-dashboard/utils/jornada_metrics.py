@@ -29,6 +29,7 @@ de permutação só roda com amostra que o sustente.
 
 import itertools
 import math
+from collections import Counter
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
@@ -178,7 +179,8 @@ def apply_filters(model: Dict, filters: Optional[Dict] = None) -> Dict:
     for key, column in (("stores", "store"), ("tasks", "task"), ("profiles", "profile"),
                         ("channels", "channel")):
         chosen = filters.get(key)
-        if chosen:
+        # Projeto só com registro de campo não tem gravações (nem colunas) para recortar.
+        if chosen and column in included.columns:
             included = included[included[column].isin(chosen)]
     keys = set(included["recording_key"]) if not included.empty else set()
     if not gaze.empty:
@@ -496,9 +498,30 @@ def attribute_table(gaze: pd.DataFrame, recordings: pd.DataFrame, dimensions: Se
     return pd.DataFrame(rows, columns=columns)
 
 
+def _decision_time_lookup(participants: pd.DataFrame, times: Optional[pd.DataFrame]) -> Dict:
+    """Tempo até a decisão por participante × tarefa: o de campo primeiro, depois o da planilha.
+
+    Sem a tabela de tempos (modelo antigo), cai no tempo do participante, sem tarefa.
+    """
+    if times is None:
+        tempo = dict(zip(participants["participant"], participants["tempo_decisao_s"])) if not participants.empty else {}
+        return {"by_participant": tempo}
+    lookup: Dict = {}
+    for source in ("planilha", "campo"):  # campo por último: sobrescreve
+        rows = times[times["source"] == source] if not times.empty else times
+        for row in rows.to_dict("records"):
+            if row["task"]:
+                lookup[(row["participant"], row["task"])] = row["seconds"]
+    return {"by_task": lookup}
+
+
 def recording_summary(gaze: pd.DataFrame, recordings: pd.DataFrame, participants: pd.DataFrame,
-                      focus_brand: str = "") -> pd.DataFrame:
-    """Por gravação: tempo na categoria, marcas vistas, share da marca foco, tempo até a decisão."""
+                      focus_brand: str = "", times: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """Por gravação: tempo na categoria, marcas vistas, share da marca foco, tempo até a decisão.
+
+    O tempo até a decisão é o da mesma tarefa da gravação (ver `jornada_model._build_times`):
+    um tempo de compra da estimulada nunca aparece numa gravação da jornada livre.
+    """
 
     columns = ["recording_key", "participant", "task", "store", "store_label", "channel", "profile",
                "category_share", "category_dwell_s", "brands_looked", "visits_total",
@@ -507,7 +530,7 @@ def recording_summary(gaze: pd.DataFrame, recordings: pd.DataFrame, participants
         return pd.DataFrame(columns=columns)
     shelf = gaze[gaze["kind"].isin(("produto", "preco"))] if not gaze.empty else gaze
     per = per_recording_brand(gaze, recordings) if not gaze.empty else pd.DataFrame()
-    tempo = dict(zip(participants["participant"], participants["tempo_decisao_s"])) if not participants.empty else {}
+    lookup = _decision_time_lookup(participants, times)
     rows = []
     for record in recordings.to_dict("records"):
         key = record["recording_key"]
@@ -524,28 +547,186 @@ def recording_summary(gaze: pd.DataFrame, recordings: pd.DataFrame, participants
             "visits_total": own["visits"].sum() if not own.empty else 0,
             "focus_share": focus["share"].iloc[0] if not focus.empty else math.nan,
             "focus_ttff_s": focus["ttff_s"].iloc[0] if not focus.empty else math.nan,
-            "tempo_decisao_s": tempo.get(record["participant"], math.nan),
+            "tempo_decisao_s": (lookup["by_task"].get((record["participant"], record["task"]), math.nan)
+                                if "by_task" in lookup
+                                else lookup["by_participant"].get(record["participant"], math.nan)),
         })
     return pd.DataFrame(rows, columns=columns)
 
 
-def decision_table(summary: pd.DataFrame) -> pd.DataFrame:
-    """Tempo até a decisão por loja, canal e perfil (descritivo)."""
+TIME_SOURCE_LABELS = {"campo": "tempo de compra (campo)", "planilha": "Tempo da planilha"}
 
-    columns = ["group_type", "group", "n", "median_s", "q1_s", "q3_s", "min_s", "max_s"]
-    data = summary.dropna(subset=["tempo_decisao_s"]) if not summary.empty else summary
+
+def decision_table(times: pd.DataFrame) -> pd.DataFrame:
+    """Tempo até a decisão por tarefa e fonte, e dentro delas por loja, canal e perfil (descritivo).
+
+    Usa a tabela de tempos do modelo, que não depende de gravação codificada:
+    a estimulada das lojas sem AOI entra pelo tempo de compra do registro de campo.
+    """
+
+    columns = ["task", "task_label", "source", "source_label", "group_type", "group", "n", "median_s",
+               "q1_s", "q3_s", "min_s", "max_s"]
+    data = times.dropna(subset=["seconds"]) if times is not None and not times.empty else pd.DataFrame()
     if data.empty:
         return pd.DataFrame(columns=columns)
-    data = data.drop_duplicates("participant")
     rows = []
-    for group_type, column in (("loja", "store_label"), ("canal", "channel"), ("perfil", "profile")):
-        for group, values in data.groupby(column):
-            if not group:
-                continue
-            seconds = values["tempo_decisao_s"]
-            rows.append({"group_type": group_type, "group": group, "n": int(len(seconds)),
-                         "median_s": seconds.median(), "q1_s": seconds.quantile(0.25),
-                         "q3_s": seconds.quantile(0.75), "min_s": seconds.min(), "max_s": seconds.max()})
+    for (task, source), task_rows in data.groupby(["task", "source"], sort=False):
+        task_rows = task_rows.drop_duplicates("participant")
+        for group_type, column in (("loja", "store_label"), ("canal", "channel"), ("perfil", "profile")):
+            for group, values in task_rows.groupby(column):
+                if not group:
+                    continue
+                seconds = values["seconds"]
+                rows.append({"task": task, "task_label": TASK_LABELS.get(task, task or "sem tarefa"),
+                             "source": source, "source_label": TIME_SOURCE_LABELS.get(source, source),
+                             "group_type": group_type, "group": group, "n": int(len(seconds)),
+                             "median_s": seconds.median(), "q1_s": seconds.quantile(0.25),
+                             "q3_s": seconds.quantile(0.75), "min_s": seconds.min(), "max_s": seconds.max()})
+    frame = pd.DataFrame(rows, columns=columns)
+    order = {"estimulada": 0, "livre": 1, "embalagens": 2}
+    frame["_task"] = frame["task"].map(lambda t: order.get(t, 9))
+    frame["_source"] = frame["source"].map(lambda s: 0 if s == "campo" else 1)
+    return frame.sort_values(["_task", "_source"], kind="stable").drop(columns=["_task", "_source"]).reset_index(drop=True)
+
+
+def decision_by_store(decision: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por tarefa × loja para gráficos: o tempo de compra de campo onde existe, senão o da planilha."""
+    if decision is None or decision.empty:
+        return pd.DataFrame(columns=list(getattr(decision, "columns", [])) + ["label"])
+    stores = decision[decision["group_type"] == "loja"]
+    with_field = set(stores.loc[stores["source"] == "campo", "task"])
+    keep = stores[(stores["source"] == "campo") | ~stores["task"].isin(with_field)]
+    return keep.assign(label=keep["task_label"] + " · " + keep["group"])
+
+
+def time_kpi(metrics: Dict):
+    """Número-chave de tempo: mediana do tempo de compra de campo; sem ele, a do Tempo da planilha."""
+    times = metrics.get("times")
+    if times is not None and not times.empty:
+        field = times.loc[times["source"] == "campo", "seconds"].dropna()
+        if len(field):
+            return "Tempo de compra (mediana)", float(field.median())
+        sheet = times["seconds"].dropna()
+        if len(sheet):
+            return "Tempo até a decisão (mediana)", float(sheet.median())
+    summary = metrics.get("recording_summary")
+    values = (summary["tempo_decisao_s"].dropna()
+              if summary is not None and "tempo_decisao_s" in summary else pd.Series(dtype=float))
+    return "Tempo até a decisão (mediana)", float(values.median()) if len(values) else math.nan
+
+
+# ---------------------------------------------------------------------------
+# Escolha (registro de campo)
+# ---------------------------------------------------------------------------
+
+def _with_choice(choices: pd.DataFrame) -> pd.DataFrame:
+    if choices is None or choices.empty:
+        return pd.DataFrame()
+    return choices[choices["chosen_brands"].map(lambda brands: len(brands) > 0)]
+
+
+def choice_table(choices: pd.DataFrame, focus_brand: str = "") -> pd.DataFrame:
+    """Participantes que escolheram cada marca, por tarefa e por loja, canal e perfil.
+
+    Quem escolheu duas marcas conta para as duas; a fração é sobre quem tem
+    escolha registrada no grupo. Marcas escolhidas em qualquer grupo da tarefa
+    aparecem em todos (com zero), para a comparação entre grupos ser direta.
+    """
+    columns = ["task", "task_label", "group_type", "group", "brand", "is_focus", "n", "chose_n", "share"]
+    data = _with_choice(choices)
+    if data.empty:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for task, task_rows in data.groupby("task", sort=False):
+        totals = Counter(brand for brands in task_rows["chosen_brands"] for brand in set(brands))
+        brands = [brand for brand, _ in sorted(totals.items(), key=lambda item: (-item[1], item[0]))]
+        groups = [("total", "todas as lojas", task_rows)]
+        for group_type, column in (("loja", "store_label"), ("canal", "channel"), ("perfil", "profile")):
+            groups += [(group_type, group, subset) for group, subset in task_rows.groupby(column) if group]
+        for group_type, group, subset in groups:
+            n = int(len(subset))
+            counts = Counter(brand for chosen in subset["chosen_brands"] for brand in set(chosen))
+            for brand in brands:
+                rows.append({"task": task, "task_label": TASK_LABELS.get(task, task), "group_type": group_type,
+                             "group": group, "brand": brand,
+                             "is_focus": bool(focus_brand) and fold(brand) == fold(focus_brand),
+                             "n": n, "chose_n": int(counts.get(brand, 0)),
+                             "share": counts.get(brand, 0) / n if n else math.nan})
+    return pd.DataFrame(rows, columns=columns)
+
+
+def variant_table(choices: pd.DataFrame, dimensions: Optional[Dict[str, Sequence[str]]] = None) -> pd.DataFrame:
+    """Entre quem escolheu cada marca, quantos levaram cada valor de atributo (ex.: Noturno)."""
+    columns = ["task", "task_label", "brand", "dimension", "value", "n_brand", "chose_n", "share"]
+    data = _with_choice(choices)
+    if data.empty or not dimensions:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for task, task_rows in data.groupby("task", sort=False):
+        brands = sorted({brand for chosen in task_rows["chosen_brands"] for brand in chosen})
+        for brand in brands:
+            choosers = task_rows[task_rows["chosen_brands"].map(lambda chosen: brand in chosen)]
+            for dimension, values in dimensions.items():
+                for value in values:
+                    hits = int(choosers["chosen_values"].map(lambda found: value in (found or {}).get(dimension, [])).sum())
+                    if not hits:
+                        continue
+                    rows.append({"task": task, "task_label": TASK_LABELS.get(task, task), "brand": brand,
+                                 "dimension": dimension, "value": value, "n_brand": int(len(choosers)),
+                                 "chose_n": hits, "share": hits / len(choosers)})
+    return pd.DataFrame(rows, columns=columns)
+
+
+def attention_to_choice(choices: pd.DataFrame, per_recording: pd.DataFrame,
+                        examined_threshold_s: float = 1.0) -> pd.DataFrame:
+    """Para quem tem olhar na tarefa da escolha: a marca escolhida foi notada, examinada, a 1ª, a mais vista?"""
+    columns = ["participant", "task", "task_label", "store_label", "chosen_brand", "looked", "examined",
+               "first_noticed", "top_share", "share", "share_rank", "n_brands"]
+    data = _with_choice(choices)
+    if data.empty or per_recording is None or per_recording.empty:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for record in data[data["has_gaze"] & (data["chosen_brands"].map(len) == 1)].to_dict("records"):
+        own = per_recording[per_recording["recording_key"] == record["recording_key"]]
+        if own.empty:
+            continue
+        brand = record["chosen_brands"][0]
+        mine = own[own["brand"].map(fold) == fold(brand)]
+        ranked = own.sort_values("share", ascending=False).reset_index(drop=True)
+        position = ranked.index[ranked["brand"].map(fold) == fold(brand)]
+        looked = bool(mine["looked"].any()) if not mine.empty else False
+        dwell = mine["dwell_s"].iloc[0] if not mine.empty else math.nan
+        share = mine["share"].iloc[0] if not mine.empty else math.nan
+        rows.append({
+            "participant": record["participant"], "task": record["task"], "task_label": record["task_label"],
+            "store_label": record["store_label"], "chosen_brand": brand, "looked": looked,
+            "examined": bool(dwell == dwell and dwell >= examined_threshold_s),
+            "first_noticed": bool(not mine.empty and mine["first_credit"].iloc[0] > 0),
+            "top_share": bool(len(position) and position[0] == 0 and share == share and share > 0),
+            "share": share,
+            "share_rank": int(position[0]) + 1 if len(position) else math.nan,
+            "n_brands": int(len(own)),
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
+def consideration_table(choices: pd.DataFrame) -> pd.DataFrame:
+    """Tamanho do conjunto considerado e embalagens citadas, por tarefa e loja."""
+    columns = ["task", "task_label", "store_label", "n", "considered_mean", "single_brand_n", "packs"]
+    data = choices[choices["considered_text"] != ""] if choices is not None and not choices.empty else pd.DataFrame()
+    if data.empty:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    groups = [(task, "todas as lojas", rows_t) for task, rows_t in data.groupby("task", sort=False)]
+    groups += [(task, store, rows_s) for (task, store), rows_s in data.groupby(["task", "store_label"], sort=False)]
+    for task, store, subset in groups:
+        packs = Counter(size for sizes in subset["packs"] for size in sizes)
+        rows.append({
+            "task": task, "task_label": TASK_LABELS.get(task, task), "store_label": store, "n": int(len(subset)),
+            "considered_mean": subset["considered_count"].mean(),
+            "single_brand_n": int((subset["considered_count"] == 1).sum()),
+            "packs": " · ".join("{} un.: {}".format(size, count) for size, count in sorted(packs.items())),
+        })
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -775,11 +956,50 @@ def generate_findings(metrics: Dict, focus_brand: str = "") -> List[Dict]:
 
     decision = metrics.get("decision", pd.DataFrame())
     if not decision.empty:
-        for _, row in decision[decision["group_type"] == "loja"].iterrows():
-            add("decisao", "Tempo até a decisão em {}: mediana de {} s (de {} a {} s, n={}).".format(
-                row["group"], _num(row["median_s"]), _num(row["min_s"]), _num(row["max_s"]),
-                int(row["n"])),
-                row["group"], int(row["n"]), row["median_s"])
+        stores = decision[decision["group_type"] == "loja"]
+        with_field = set(stores.loc[stores["source"] == "campo", "task"])
+        for _, row in stores.iterrows():
+            # O tempo da planilha só vira achado onde não há tempo de compra de campo.
+            if row["source"] == "planilha" and row["task"] in with_field:
+                continue
+            what = "Tempo de compra" if row["source"] == "campo" else "Tempo (planilha)"
+            add("decisao", "{} na {} · {}: mediana de {} s (de {} a {} s, n={}).".format(
+                what, row["task_label"], row["group"], _num(row["median_s"]), _num(row["min_s"]),
+                _num(row["max_s"]), int(row["n"])),
+                "{} · {}".format(row["task_label"], row["group"]), int(row["n"]), row["median_s"])
+
+    choice = metrics.get("choice", pd.DataFrame())
+    if not choice.empty:
+        for (task, store), rows in choice[choice["group_type"] == "loja"].groupby(["task", "group"], sort=False):
+            ranked = rows[rows["chose_n"] > 0].sort_values(["chose_n", "brand"], ascending=[False, True])
+            if ranked.empty:
+                continue
+            top, n = ranked.iloc[0], int(rows["n"].iloc[0])
+            others = ", ".join("{} {}".format(r["brand"], r["chose_n"]) for _, r in ranked.iloc[1:].iterrows())
+            add("escolha", "Na {} · {}, {} de {} {} {}{}.".format(
+                TASK_LABELS.get(task, task), store, int(top["chose_n"]), n,
+                "escolheu" if int(top["chose_n"]) == 1 else "escolheram", top["brand"],
+                " ({})".format(others) if others else ""),
+                "{} · {}".format(TASK_LABELS.get(task, task), store), n, top["share"])
+        if focus_brand:
+            channels = choice[(choice["group_type"] == "canal") & choice["is_focus"]]
+            for task, rows in channels.groupby("task", sort=False):
+                if len(rows) < 2:
+                    continue
+                parts = ["{} de {} no canal {}".format(int(r["chose_n"]), int(r["n"]), r["group"])
+                         for _, r in rows.iterrows()]
+                add("escolha", "Na {}, {} foi escolhida por {} — mesma tarefa, canais diferentes.".format(
+                    TASK_LABELS.get(task, task), rows["brand"].iloc[0], " e ".join(parts)),
+                    TASK_LABELS.get(task, task), int(rows["n"].sum()), math.nan)
+
+    attention = metrics.get("attention_choice", pd.DataFrame())
+    if not attention.empty:
+        n = int(len(attention))
+        add("escolha", "Entre quem tem olhar na tarefa da compra (n={}), a marca escolhida foi a mais vista "
+            "por {}, a primeira notada por {} e não foi olhada por {}.".format(
+                n, int(attention["top_share"].sum()), int(attention["first_noticed"].sum()),
+                int((~attention["looked"]).sum())),
+            "olhar × escolha", n, attention["top_share"].mean())
     return findings
 
 
@@ -812,6 +1032,28 @@ def limitations(model: Dict, metrics: Dict) -> List[str]:
         notes.append(
             "{} e {} andam juntos na amostra ({}): diferenças entre um podem ser do outro; a "
             "comparação não isola o efeito.".format(first, second.lower(), confound["mapping"]))
+    choices = metrics.get("choices", pd.DataFrame())
+    if choices is not None and not choices.empty and (choices["chosen_text"] != "").any():
+        notes.append(
+            "Escolha, marcas consideradas e embalagens vêm do registro de campo em texto livre, "
+            "normalizado automaticamente pelas marcas e atributos do projeto; confira na tabela de escolhas.")
+        channels = choices.loc[choices["chosen_text"] != ""].groupby("task")["channel"].nunique()
+        if (channels > 1).any() and metrics.get("confounds"):
+            notes.append(
+                "Para escolha e tempo de compra, a {} aconteceu em lojas dos dois canais: ali a comparação "
+                "entre canais é feita na mesma tarefa, ao contrário do olhar.".format(
+                    " e a ".join(TASK_LABELS.get(t, t).lower() for t in channels[channels > 1].index)))
+    times = metrics.get("times", pd.DataFrame())
+    if times is not None and not times.empty:
+        pairs = times.pivot_table(index=["participant", "task"], columns="source", values="seconds", aggfunc="first")
+        if {"campo", "planilha"} <= set(pairs.columns):
+            both = pairs.dropna(subset=["campo", "planilha"])
+            differ = both[(both["campo"] - both["planilha"]).abs() > 1]
+            if len(differ):
+                notes.append(
+                    "O Tempo da planilha difere do tempo de compra do registro de campo em {} de {} "
+                    "participante(s) (até {} s); as duas medidas aparecem separadas e rotuladas.".format(
+                        len(differ), len(both), _num((differ["campo"] - differ["planilha"]).abs().max(), 0)))
     brands = metrics.get("brand", pd.DataFrame())
     if not brands.empty and (brands["n"] < MIN_N_TEST).any():
         small = sorted(brands.loc[brands["n"] < MIN_N_TEST, "cell"].unique())
@@ -842,6 +1084,17 @@ def limitations(model: Dict, metrics: Dict) -> List[str]:
 # Tudo junto
 # ---------------------------------------------------------------------------
 
+def _filter_rows(frame: Optional[pd.DataFrame], filters: Dict) -> Optional[pd.DataFrame]:
+    """Escolhas e tempos no mesmo recorte da página (tarefa, loja, perfil, canal)."""
+    if frame is None:
+        return None
+    for key, column in (("tasks", "task"), ("stores", "store"), ("profiles", "profile"), ("channels", "channel")):
+        chosen = filters.get(key)
+        if chosen and column in frame:
+            frame = frame[frame[column].isin(chosen)]
+    return frame
+
+
 def compute_all(model: Dict, filters: Optional[Dict] = None) -> Dict:
     """Todas as tabelas, achados e limitações para um recorte."""
 
@@ -857,7 +1110,9 @@ def compute_all(model: Dict, filters: Optional[Dict] = None) -> Dict:
     brand = brand_table(gaze, recordings, catalog, kinds=kinds, examined_threshold_s=threshold,
                         focus_brand=focus)
     per_brand = per_recording_brand(gaze, recordings, kinds)
-    summary = recording_summary(gaze, recordings, model["participants"], focus)
+    times = _filter_rows(model.get("times"), filters)
+    choices = _filter_rows(model.get("choices"), filters)
+    summary = recording_summary(gaze, recordings, model["participants"], focus, times)
     metrics = {
         "filters": filters,
         "sample": {
@@ -877,7 +1132,13 @@ def compute_all(model: Dict, filters: Optional[Dict] = None) -> Dict:
         "price": price_table(gaze, recordings),
         "attributes": attribute_table(gaze, recordings, list((meta.get("dimensions") or {}).keys()), catalog),
         "recording_summary": summary,
-        "decision": decision_table(summary),
+        "times": times,
+        "decision": decision_table(times) if times is not None else decision_table(pd.DataFrame()),
+        "choices": choices,
+        "choice": choice_table(choices, focus),
+        "variants": variant_table(choices, meta.get("dimensions") or {}),
+        "attention_choice": attention_to_choice(choices, per_brand, threshold),
+        "consideration": consideration_table(choices) if choices is not None else consideration_table(pd.DataFrame()),
         "packaging": packaging_tables(pooled, meta.get("element_labels")),
         "confounds": design_confounds(recordings),
     }

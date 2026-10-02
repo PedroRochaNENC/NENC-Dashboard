@@ -110,6 +110,64 @@ versao na mesma transacao, entao o cache nao precisa ser limpo por operacao. Em
 desenvolvimento, mudar o codigo das metricas sem reiniciar o Streamlit mantem
 os numeros antigos em cache: reinicie o app.
 
+Videos de heatmap ficam no mesmo lugar, com `jc_media.kind = 'heatmap'`; os que
+chegam compactados pelo script guardam em `source_sha256` o hash do original,
+para um reenvio da pasta nao subir o mesmo video de novo.
+
+## Jornada de Compra: importacao da pasta (API)
+
+O script `scripts/jornada_enviar.py` envia a pasta de um projeto para o servico
+`nenc-import-api` (FastAPI, mesma imagem e mesmo banco do dashboard), atras do
+Caddy em `insights.nenc.in/api/jornada/*`. A API so cria importacoes pendentes:
+quem grava nos dados do projeto e a revisao em Uploads, com a conta de quem
+revisou. No `audit_log`, `jornada.import.received`, `jornada.import.resumed` e
+`jornada.import.closed` ficam sem autor (vieram pelo token);
+`jornada.import.apply` e `jornada.import.discard` levam o revisor.
+
+### Token por organizacao
+
+- Cada organizacao que envia tem um token no `.env` do servidor:
+  `NENC_IMPORT_TOKEN_<id da organizacao>=<token>`, com ao menos 32 caracteres
+  (mais curto e ignorado). Gere com
+  `python -c "import secrets; print(secrets.token_urlsafe(36))"`.
+- O token so enxerga os projetos da propria organizacao e so cria pendencias.
+  Entregue-o por canal seguro; no computador de quem envia ele fica num arquivo
+  (`--token-arquivo`) ou em `NENC_IMPORT_TOKEN`, nunca no Git nem na linha de
+  comando.
+- Rotacao (alguem saiu da equipe, suspeita de vazamento): troque o valor no
+  `.env` e recrie so a API, `docker compose up -d nenc-import-api`. O token
+  antigo deixa de valer na hora; um envio em andamento falha com 401 e continua
+  de onde parou quando rodado de novo com o token novo.
+- A documentacao automatica do FastAPI (`/docs`, `/openapi.json`) fica
+  desligada; `GET /api/jornada/health` e a unica rota sem token.
+
+### Inbox, limites e expiracao
+
+- O que chega fica em `NENC_IMPORT_INBOX` ou, sem a variavel, em
+  `jornada_inbox/` ao lado de `NENC_DB_PATH` (em producao, no volume `./data`):
+  `<organizacao>/<projeto>/<lote>/<arquivo>.bin`. O caminho enviado e so
+  metadado e nunca vira caminho no disco.
+- Blocos de ate 8 MB (o Caddy aceita ate 10 MB por requisicao); arquivo de ate
+  25 MB, video de ate 500 MB, texto de documento de ate 5 MB; ate 10 GB por
+  lote. O sha256 de cada arquivo e conferido no fim.
+- Lote parado ha mais de `NENC_IMPORT_TTL_DAYS` dias (30 por padrao) vira
+  `expirada` e perde os arquivos. Gravar ou descartar apaga o inbox do lote, e
+  excluir o projeto apaga o inbox dele.
+- Envio interrompido retoma o mesmo lote (ele fica "ainda recebendo" em
+  Uploads). Lote fechado sem nenhum arquivo novo e descartado sozinho, em vez de
+  virar pendencia vazia.
+- Espaco: o 1060 completo ocupa cerca de 3 GB no inbox ate a revisao (videos ja
+  compactados) e o mesmo em `jornada_media` depois de gravado — os videos sao
+  movidos do inbox, nao copiados.
+
+### SQLite com dois processos
+
+O dashboard e a API escrevem no mesmo arquivo. As conexoes usam `timeout=30`,
+esperando pelo lock em vez de falhar com "database is locked", e o
+recebimento de cada bloco toma o lock de escrita (`BEGIN IMMEDIATE`) enquanto
+anexa ao arquivo do inbox, para dois blocos do mesmo arquivo nunca se
+cruzarem. Com o banco em disco local (o volume `./data`), nao ha outro ajuste.
+
 ## Historico de analises
 
 Cada geracao de analise insere uma linha nova, com o texto inteiro, e nada e
@@ -178,6 +236,10 @@ Os videos da Jornada ficam fora do banco (`NENC_MEDIA_DIR`, ver acima): o backup
 precisa levar a pasta `jornada_media` junto com o SQLite, no mesmo momento, para
 o indice `jc_media` continuar apontando para arquivos que existem.
 
+O inbox das importacoes (`jornada_inbox`) guarda so envios ainda nao revisados.
+Pode ficar fora do backup: depois de restaurar sem ele, os lotes pendentes
+aparecem em Uploads sem os arquivos — descarte-os e peca o reenvio da pasta.
+
 ## Roteiro de aceitacao manual
 
 Execute estes testes em uma base nao produtiva apos cada deploy relevante:
@@ -207,3 +269,10 @@ Execute estes testes em uma base nao produtiva apos cada deploy relevante:
    teste, confira a previa (unidade, tarefa, loja) antes de gravar, baixe PDF,
    PPTX e Excel em Exportar e confirme no `audit_log` as linhas
    `jornada.export.pdf`, `jornada.export.pptx` e `jornada.export.excel`.
+10. Importacao da pasta: com o token da organizacao de teste, rode
+    `jornada_enviar.py --simular` numa pasta pequena e confira que fotos de
+    participantes aparecem em "Fica de fora". Envie de verdade, confirme que o
+    lote aparece em Uploads → Importacoes pendentes e nada muda na analise
+    antes de Gravar; grave e veja `jornada.import.apply` com o revisor no
+    `audit_log`. Rode o envio de novo: o script responde "Nada novo". Um token
+    de outra organizacao nao lista o projeto, e um token errado recebe 401.

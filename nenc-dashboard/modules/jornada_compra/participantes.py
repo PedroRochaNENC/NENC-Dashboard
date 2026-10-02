@@ -156,11 +156,23 @@ if section == "Gravações":
 elif section == "Participantes":
     people = model["participants"].copy()
     people["tempo_decisao"] = people["tempo_decisao_s"].map(fmt_seconds)
+    # Do registro de campo: o que cada um escolheu em cada tarefa e as observações da equipe.
+    picked = {}
+    choices = model.get("choices")
+    if choices is not None and not choices.empty:
+        for participant, rows in choices.groupby("participant"):
+            picked[participant] = " · ".join(
+                "{}: {}".format(row["task_label"], row["chosen_text"] or "—") for _, row in rows.iterrows())
+    people["escolha"] = people["participant"].map(picked).fillna("")
+    if "field_notes" not in people:
+        people["field_notes"] = ""
     editor = st.data_editor(
-        people[["participant", "profile", "tempo_informado", "tempo_decisao", "stores", "channel", "notes"]],
+        people[["participant", "profile", "tempo_informado", "tempo_decisao", "stores", "channel", "escolha",
+                "field_notes", "notes"]],
         hide_index=True,
         width="stretch",
-        disabled=True if not pode_editar else ["participant", "tempo_decisao", "stores", "channel"],
+        disabled=True if not pode_editar else ["participant", "tempo_decisao", "stores", "channel", "escolha",
+                                               "field_notes"],
         column_config={
             "participant": st.column_config.TextColumn("Participante"),
             "profile": st.column_config.TextColumn("Perfil"),
@@ -170,6 +182,9 @@ elif section == "Participantes":
             "tempo_decisao": st.column_config.TextColumn("Em m:ss"),
             "stores": st.column_config.TextColumn("Loja"),
             "channel": st.column_config.TextColumn("Canal"),
+            "escolha": st.column_config.TextColumn("Escolha (campo)",
+                                                   help="Produto escolhido em cada tarefa, como a equipe anotou."),
+            "field_notes": st.column_config.TextColumn("Observações de campo"),
             "notes": st.column_config.TextColumn("Notas"),
         },
         key="jc_people_editor_{}".format(project_id),
@@ -198,7 +213,8 @@ elif section == "Participantes":
             st.rerun()
     st.caption(
         "O perfil define os grupos das comparações e dos agregados; o tempo até a decisão "
-        "entra como KPI por loja, canal e perfil."
+        "entra como KPI por loja, canal e perfil. Escolha e observações de campo vêm do registro "
+        "de campo (Relação Coletas) e se editam lá."
     )
 
 # ==================================================================
@@ -236,33 +252,39 @@ else:
     if not media:
         st.info("Nenhum vídeo no projeto. Envie os vídeos das gravações em **Uploads**.")
         st.stop()
-    labels = {
-        item["id"]: "{} · {} · {}".format(
-            item["participant_code"], TASK_LABELS.get(item["task"], item["task"]),
-            item["store"] or "—",
-        )
-        for item in media
-    }
-    by_recording = {
-        "{}|{}|{}".format(item["participant_code"], item["task"], item["store"]): item["id"]
-        for item in media
-    }
-    default_id = media[0]["id"]
+    # Uma gravação pode ter o vídeo de cena e o de heatmap: escolhe-se a
+    # gravação e, depois, qual dos dois assistir.
+    by_recording = {}
+    for entry in media:
+        key = "{}|{}|{}".format(entry["participant_code"], entry["task"], entry["store"])
+        by_recording.setdefault(key, {})[entry.get("kind") or "cena"] = entry
+    keys = list(by_recording)
+    labels = {}
+    for key in keys:
+        part, task, store = key.split("|")
+        labels[key] = "{} · {} · {}".format(part, TASK_LABELS.get(task, task), store or "—")
     start_at = 0.0
     if focus:
-        default_id = by_recording.get(focus.get("recording_key"), default_id)
+        if focus.get("recording_key") in by_recording:
+            st.session_state["jc_video_choice"] = focus["recording_key"]
         start_at = float(focus.get("seconds") or 0.0)
         st.session_state.pop("jc_media_focus", None)
-        st.session_state["jc_video_choice"] = default_id
         st.session_state["jc_video_start"] = start_at
-    ids = [item["id"] for item in media]
+        st.session_state["jc_video_kind"] = "cena"
     # O valor vive na sessao (o salto vindo da Analise Geral grava ali); passar
     # tambem `index` faria o Streamlit reclamar de dois valores iniciais.
-    if st.session_state.get("jc_video_choice") not in ids:
-        st.session_state["jc_video_choice"] = default_id if default_id in ids else ids[0]
-    chosen = st.selectbox("Gravação", ids, format_func=labels.get, key="jc_video_choice")
-    item = next(entry for entry in media if entry["id"] == chosen)
-    recording = "{}|{}|{}".format(item["participant_code"], item["task"], item["store"])
+    if st.session_state.get("jc_video_choice") not in keys:
+        st.session_state["jc_video_choice"] = keys[0]
+    pick, kind_column = st.columns([3, 1.2])
+    recording = pick.selectbox("Gravação", keys, format_func=labels.get, key="jc_video_choice")
+    kinds = [kind for kind in jornada_db.MEDIA_KINDS if kind in by_recording[recording]]
+    if st.session_state.get("jc_video_kind") not in kinds:
+        st.session_state["jc_video_kind"] = kinds[0]
+    kind = kind_column.segmented_control(
+        "Vídeo", kinds, format_func={"cena": "Cena", "heatmap": "Heatmap"}.get, key="jc_video_kind",
+    ) or kinds[0]
+    item = by_recording[recording][kind]
+    chosen = item["id"]
 
     gaze = model["gaze"]
     firsts = pd.DataFrame()
@@ -281,6 +303,8 @@ else:
                 key="jc_video_jump_{}_{}".format(chosen, position),
             ):
                 st.session_state["jc_video_start"] = float(row["ttff_s"])
+        if kind == "heatmap":
+            st.caption("Os tempos vêm do vídeo de cena; o de heatmap pode ter alguns segundos de diferença.")
     start = float(st.session_state.get("jc_video_start", start_at) or 0.0)
 
     try:

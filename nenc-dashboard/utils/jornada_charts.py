@@ -157,6 +157,36 @@ def store_brand_heatmap(brand_df: pd.DataFrame, value: str = "share_mean") -> go
     return figure
 
 
+def choice_heatmap(choice_df: pd.DataFrame, brands_order: Sequence[str] = ()) -> go.Figure:
+    """Quem escolheu cada marca em cada grupo: cor = fração, texto = contagem ("4/6").
+
+    Com poucos participantes por loja a contagem diz mais que a porcentagem.
+    Quem escolheu duas marcas conta nas duas, por isso não há barra empilhada.
+    """
+
+    if choice_df.empty:
+        return _empty("Sem escolhas registradas nesta seleção.")
+    present = list(dict.fromkeys(choice_df["brand"]))
+    brands = [b for b in brands_order if b in present] + [b for b in present if b not in brands_order]
+    groups = list(dict.fromkeys(choice_df["group"]))
+    shares = choice_df.pivot_table(index="group", columns="brand", values="share", aggfunc="first")
+    counts = choice_df.pivot_table(index="group", columns="brand", values="chose_n", aggfunc="first")
+    shares = shares.reindex(index=groups, columns=brands)
+    counts = counts.reindex(index=groups, columns=brands)
+    sizes = choice_df.groupby("group", sort=False)["n"].first().reindex(groups)
+    text = [["{}/{}".format(int(count), int(size)) if count == count else "" for count in row]
+            for row, size in zip(counts.to_numpy(), sizes)]
+    figure = go.Figure(go.Heatmap(
+        z=shares.to_numpy(), x=brands, y=groups, colorscale=SEQUENTIAL, zmin=0, zmax=1, text=text,
+        texttemplate="%{text}", textfont=dict(size=13), xgap=2, ygap=2,
+        colorbar=dict(tickformat=".0%", title=None, outlinewidth=0),
+        hovertemplate="%{y}<br>%{x}: %{text} (%{z:.0%})<extra></extra>",
+    ))
+    _layout(figure, _bar_height(len(groups), 52, 100), yaxis=dict(autorange="reversed"),
+            margin=dict(l=160, r=24, t=30, b=40))
+    return figure
+
+
 def funnel_bars(brand_df: pd.DataFrame, brands_order: Sequence[str]) -> go.Figure:
     """Notou → examinou → retornou, por marca, numa célula."""
 

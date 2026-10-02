@@ -25,6 +25,7 @@ MODES = ("rapida", "estatistica", "estrategica")
 MAX_USER_PROMPT_CHARS = 40_000
 MAX_BRIEFING_CHARS = 6_000
 MAX_INTERVIEW_CHARS = 3_000
+MAX_FIELD_NOTES_CHARS = 3_000
 _CUT_NOTE = "\n[... cortado para caber no limite do prompt]"
 
 JORNADA_EVIDENCE_RULES = """\
@@ -67,7 +68,14 @@ levar mais atenção: compare com a presença e use o índice (share ÷ presenç
 antes de dizer que um valor atrai mais.
 - **Etiqueta de preço**: alcance e fração do tempo no preço sobre preço + \
 produto, só onde o preço foi mapeado.
-- **Tempo até a decisão**: informado pela equipe para cada participante; descritivo.
+- **Tempo até a decisão**: duas medidas, cada uma na sua tarefa — o **tempo de \
+compra** anotado em campo e o **Tempo da planilha** enriquecida. Não some nem \
+compare uma com a outra; descritivo.
+- **Escolha**: produto escolhido segundo o registro de campo. Na jornada livre é \
+a compra observada; na estimulada, a escolha pedida. O texto livre da equipe é \
+normalizado automaticamente pelas marcas do projeto; quem escolheu duas marcas \
+conta nas duas. **Da atenção à escolha** diz, para quem tem olhar codificado na \
+mesma gravação, se a marca escolhida foi notada, examinada, a primeira e a mais vista.
 - **Embalagens**: dados agregados por perfil — alcance de cada elemento, share \
 do elemento dentro da embalagem e tempo por participante; sem variação entre \
 participantes nem teste.
@@ -106,18 +114,21 @@ métricas fornecidas.
 2. Visibilidade da marca foco frente aos concorrentes: share, funil, 1ª marca \
 notada e índice de presença, célula a célula.
 3. Navegação e decisão: atributos, etiquetas de preço e tempo até a decisão.
-4. Embalagens: o que atrai o olhar em cada embalagem e se a marca/logo é vista, por perfil.
-5. Canal e perfil: diferenças entre lojas, canais e perfis, respeitando as \
+4. Escolha: o que cada um levou (quando há registro de campo) e se a marca \
+escolhida foi a mais vista.
+5. Embalagens: o que atrai o olhar em cada embalagem e se a marca/logo é vista, por perfil.
+6. Canal e perfil: diferenças entre lojas, canais e perfis, respeitando as \
 confusões de desenho listadas nas limitações.
 
 ## Estrutura do Relatório
 1. **Resumo Executivo** — 4 a 6 aprendizados, cada um com número e n.
 2. **Visibilidade na Gôndola**
 3. **Navegação e Decisão**
-4. **Embalagens**
-5. **Canal e Perfil de Shopper**
-6. **Recomendações** — priorizadas pela força da evidência.
-7. **Limitações e Próximos Passos**
+4. **Escolha** — só quando houver registro de campo.
+5. **Embalagens**
+6. **Canal e Perfil de Shopper**
+7. **Recomendações** — priorizadas pela força da evidência.
+8. **Limitações e Próximos Passos**
 
 Responda em **português do Brasil**, de forma clara e executiva.
 """
@@ -125,8 +136,8 @@ Responda em **português do Brasil**, de forma clara e executiva.
 JORNADA_PROJECT_SYSTEM_PROMPT_STATISTICAL = """\
 Você é um analista de dados de eye tracking. Faça a leitura quantitativa e \
 descritiva das tabelas do projeto: ranking de marcas por célula, funil, primeira \
-olhada, índice de presença, atributos, preço, tempo até a decisão, embalagens e \
-comparações entre grupos.
+olhada, índice de presença, atributos, preço, tempo até a decisão, escolha \
+(quando houver registro de campo), embalagens e comparações entre grupos.
 
 Para cada bloco:
 - traga os números principais com n e célula;
@@ -140,7 +151,7 @@ JORNADA_PROJECT_SYSTEM_PROMPT_STRATEGIC = """\
 Você é um consultor sênior de shopper marketing. Com a leitura estatística \
 prévia e as métricas do projeto, construa a interpretação estratégica: responda \
 às perguntas do estudo, explique o que os números sugerem sobre visibilidade, \
-comunicação da embalagem, canal e perfil e decisão, e recomende ações.
+comunicação da embalagem, canal e perfil, decisão e escolha, e recomende ações.
 
 Cada interpretação cita o número que a sustenta (da leitura estatística ou das \
 tabelas). Onde a evidência for descritiva ou confundida pelo desenho, apresente \
@@ -300,11 +311,72 @@ def _navigation_section(metrics: Dict) -> str:
               _pct(row["price_fraction"])] for _, row in price.iterrows()]))
     decision = _frame(metrics.get("decision"))
     if not decision.empty:
-        blocks.append("### Tempo até a decisão (s)\n" + _table(
-            ["Agrupamento", "Grupo", "n", "Mediana", "1º quartil", "3º quartil", "Mín", "Máx"],
-            [[row["group_type"], row["group"], int(row["n"]), _num(row["median_s"]), _num(row["q1_s"]),
-              _num(row["q3_s"]), _num(row["min_s"]), _num(row["max_s"])] for _, row in decision.iterrows()]))
+        blocks.append("### Tempo até a decisão (s), por tarefa e fonte\n" + _table(
+            ["Tarefa", "Fonte", "Agrupamento", "Grupo", "n", "Mediana", "1º quartil", "3º quartil", "Mín", "Máx"],
+            [[row.get("task_label", ""), row.get("source_label", ""), row["group_type"], row["group"],
+              int(row["n"]), _num(row["median_s"]), _num(row["q1_s"]), _num(row["q3_s"]), _num(row["min_s"]),
+              _num(row["max_s"])] for _, row in decision.iterrows()]))
     return _section("Navegação e Decisão", "navegacao_decisao", "\n\n".join(blocks)) if blocks else ""
+
+
+def _choice_section(metrics: Dict) -> str:
+    choices = _frame(metrics.get("choices"))
+    if choices.empty:
+        return ""
+    blocks = ["Fonte: registro de campo. Livre = compra observada; estimulada = escolha pedida. Texto livre "
+              "normalizado pelas marcas do projeto; quem escolheu duas marcas conta nas duas."]
+    choice = _frame(metrics.get("choice"))
+    if not choice.empty:
+        blocks.append("### Escolha por marca\n" + _table(
+            ["Tarefa", "Agrupamento", "Grupo", "Marca", "Escolheram", "n", "Fração"],
+            [[row["task_label"], row["group_type"], row["group"],
+              "{}{}".format(row["brand"], " (foco)" if row.get("is_focus") else ""), int(row["chose_n"]),
+              int(row["n"]), _pct(row["share"])] for _, row in choice.iterrows()]))
+    variants = _frame(metrics.get("variants"))
+    if not variants.empty:
+        blocks.append("### Variante escolhida\n" + _table(
+            ["Tarefa", "Marca", "Atributo", "Valor", "Escolheram", "Escolheram a marca", "Fração"],
+            [[row["task_label"], row["brand"], row["dimension"], row["value"], int(row["chose_n"]),
+              int(row["n_brand"]), _pct(row["share"])] for _, row in variants.iterrows()]))
+    attention = _frame(metrics.get("attention_choice"))
+    if not attention.empty:
+        blocks.append("### Da atenção à escolha (por participante)\n" + _table(
+            ["Participante", "Tarefa", "Loja", "Escolheu", "Notou", "Examinou", "1ª notada", "Mais vista",
+             "Share da escolhida"],
+            [[row["participant"], row["task_label"], row["store_label"], row["chosen_brand"],
+              "sim" if row["looked"] else "não", "sim" if row["examined"] else "não",
+              "sim" if row["first_noticed"] else "não", "sim" if row["top_share"] else "não", _pct(row["share"])]
+             for _, row in attention.iterrows()]))
+    consideration = _frame(metrics.get("consideration"))
+    if not consideration.empty:
+        blocks.append("### Conjunto considerado e embalagens citadas\n" + _table(
+            ["Tarefa", "Loja", "n", "Marcas consideradas (média)", "Só uma marca", "Embalagens citadas"],
+            [[row["task_label"], row["store_label"], int(row["n"]), _num(row["considered_mean"]),
+              int(row["single_brand_n"]), row["packs"] or "—"] for _, row in consideration.iterrows()]))
+    return _section("Escolha (registro de campo)", "escolhas", "\n\n".join(blocks))
+
+
+def _field_notes_section(model: Optional[Dict], metrics: Dict) -> str:
+    """Observações da equipe de campo, por participante e por tarefa, com teto de tamanho."""
+    lines = []
+    people = _frame((model or {}).get("participants"))
+    if not people.empty and "field_notes" in people:
+        for _, row in people.iterrows():
+            note = str(row.get("field_notes") or "").strip()
+            if note:
+                lines.append("- {}: {}".format(row["participant"], note))
+    choices = _frame(metrics.get("choices"))
+    if not choices.empty:
+        for _, row in choices.iterrows():
+            note = str(row.get("task_notes") or "").strip()
+            if note:
+                lines.append("- {} · {}: {}".format(row["participant"], row["task_label"], note))
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    if len(body) > MAX_FIELD_NOTES_CHARS:
+        body = body[:MAX_FIELD_NOTES_CHARS] + "\n...[observações truncadas]"
+    return _section("Observações de Campo", "observacoes_campo", body)
 
 
 def _packaging_section(metrics: Dict) -> str:
@@ -415,10 +487,12 @@ def build_jornada_project_user_prompt(
         _limitations_section(metrics),
         _brand_section(metrics),
         _navigation_section(metrics),
+        _choice_section(metrics),
         _packaging_section(metrics),
         _comparison_section(metrics),
         _sku_section(metrics),
         _issues_section(model),
+        _field_notes_section(model, metrics),
         _interviews_section(interviews),
     ]
     budget = max_chars - len(_TASK_TEXT) - 2  # a tarefa e o separador dela
