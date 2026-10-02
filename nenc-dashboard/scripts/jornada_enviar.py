@@ -481,20 +481,24 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
             batch_id = int(opened["batch_id"])
             if opened.get("resumed"):
                 out("Continuando o envio interrompido (importação {}).".format(batch_id))
-            known = set()
-            for values in opened["known"].values():
-                known.update(values)
+            known = opened["known"]
+            in_project = set(known.get("files", [])) | set(known.get("media", [])) | set(known.get("documents", []))
+            pending = set(known.get("pending", []))
 
-            sent = skipped = compressed = 0
+            sent = skipped = waiting = compressed = 0
             for index, item in enumerate(items, 1):
                 label = "[{}/{}] {}".format(index, len(items), item.entry.rel_path)
                 if item.payload is not None:
                     original_sha = sha256 = hashlib.sha256(item.payload).hexdigest()
                 else:
                     original_sha = sha256 = hashes.sha256(item.path)
-                if original_sha in known:
+                if original_sha in in_project:
                     skipped += 1
                     out("{}  já está no projeto".format(label))
+                    continue
+                if original_sha in pending:
+                    waiting += 1
+                    out("{}  já enviado, esperando revisão".format(label))
                     continue
                 source_sha256 = ""
                 if item.role in VIDEO_ROLES:
@@ -527,6 +531,7 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
                 "por_papel": dict(Counter(item.role for item in items)),
                 "enviados": sent,
                 "ja_no_projeto": skipped,
+                "ja_pendentes": waiting,
                 "videos_compactados": compressed,
                 "retomada": bool(opened.get("resumed")),
             }
@@ -551,7 +556,8 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
     if closed["status"] != "pronta":
         out("Nada novo: tudo o que a pasta tem já está no projeto ou esperando revisão.")
         return 0
-    out("Pronto: {} arquivo(s) enviado(s) agora, {} já estavam no projeto.".format(sent, skipped))
+    out("Pronto: {} arquivo(s) enviado(s) agora, {} já estavam no projeto{}.".format(
+        sent, skipped, " e {} já tinham sido enviados antes".format(waiting) if waiting else ""))
     out("Revise e grave no app: {} > Jornada de Compra > projeto {} > Uploads > Importações pendentes".format(
         base_url, project["name"]))
     return 0

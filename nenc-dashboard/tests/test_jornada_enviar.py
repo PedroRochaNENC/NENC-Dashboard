@@ -177,14 +177,19 @@ class SendTests(_ImportBase):
                          ("pronta", ["4.ARQUIVOS AUXILIARES/Fotos pacotes/Marca B/Verso.jpeg"]))
 
     def test_an_interrupted_send_continues_in_the_same_import(self):
+        # Blocos de 1500 bytes: o registro de campo leva 5, os quatro arquivos pequenos 1 cada e
+        # o 10º bloco começa o vídeo de cena — cai no meio dele.
         with patch.object(jornada_enviar, "CHUNK_BYTES", 1500):
-            first = self._run(client_factory=lambda url, token: _Interrupted(self._client(url, token), after=3))
+            first = self._run(client_factory=lambda url, token: _Interrupted(self._client(url, token), after=10))
             self.assertEqual(first, 130)
             [open_batch] = self._batches()
             self.assertEqual(open_batch["status"], "recebendo")
-            self.assertTrue(any(f["status"] == "recebendo" for f in open_batch["files"].values()))
+            self.assertEqual(open_batch["files"][CENA]["status"], "recebendo")
             self.assertEqual(self._run(), 0, self.lines)
         self.assertTrue(any("Continuando o envio interrompido" in line for line in self.lines))
+        waiting = [line for line in self.lines if "já enviado, esperando revisão" in line]
+        self.assertEqual(len(waiting), 5)
+        self.assertTrue(any("5 já tinham sido enviados antes" in line for line in self.lines))
         [batch] = self._batches()
         self.assertEqual((batch["id"], batch["status"]), (open_batch["id"], "pronta"))
         self.assertEqual(set(batch["files"]), set(SENT))
