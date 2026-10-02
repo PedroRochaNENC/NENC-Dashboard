@@ -464,7 +464,7 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
     hashes = HashCache(cache / "hashes.json")
     base_url = args.url.rstrip("/")
     interactive = out is print and sys.stdout.isatty()
-    compressed_files: List[Path] = []
+    video_shas: List[str] = []  # para limpar o cache de compactados depois de fechar
 
     try:
         with client_factory(base_url, token) as client:
@@ -492,6 +492,8 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
                     original_sha = sha256 = hashlib.sha256(item.payload).hexdigest()
                 else:
                     original_sha = sha256 = hashes.sha256(item.path)
+                if item.role in VIDEO_ROLES:
+                    video_shas.append(original_sha)
                 if original_sha in in_project:
                     skipped += 1
                     out("{}  já está no projeto".format(label))
@@ -511,7 +513,6 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
                     if item.payload_path is not None:
                         sha256, source_sha256 = hashes.sha256(item.payload_path), original_sha
                         item.meta.update(compactado=True, original_size=item.entry.size)
-                        compressed_files.append(item.payload_path)
                         compressed += 1
                     if item.size() > file_limit(item.role):
                         limit = file_limit(item.role) // 1024 ** 2
@@ -550,8 +551,11 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
     finally:
         hashes.save()
 
-    for path in compressed_files:  # já estão no servidor; o cache só servia para retomar
-        path.unlink(missing_ok=True)
+    # Os vídeos já estão no servidor (inclusive os das rodadas interrompidas):
+    # o cache de compactados só servia para retomar.
+    for sha in video_shas:
+        for name in ("{}.mp4".format(sha), "{}.part.mp4".format(sha)):
+            (cache / "videos" / name).unlink(missing_ok=True)
     out("")
     if closed["status"] != "pronta":
         out("Nada novo: tudo o que a pasta tem já está no projeto ou esperando revisão.")

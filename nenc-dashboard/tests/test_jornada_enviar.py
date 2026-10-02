@@ -212,6 +212,23 @@ class SendTests(_ImportBase):
             self.assertTrue(json.loads(video["meta_json"])["compactado"])
         self.assertEqual(list((self.cache / "videos").glob("*.mp4")), [])  # o cache só servia para retomar
 
+    def test_the_compressed_cache_is_cleaned_after_a_resumed_send(self):
+        def fake_ffmpeg(command, **_):
+            Path(command[-1]).write_bytes(b"compactado:" + Path(command[command.index("-i") + 1]).name.encode())
+            return SimpleNamespace(returncode=0, stderr="")
+
+        argv = [str(self.root), "-y", "--cache", str(self.cache)]
+        videos = self.cache / "videos"
+        with patch.object(jornada_enviar, "find_ffmpeg", return_value="ffmpeg"), \
+                patch.object(jornada_enviar.subprocess, "run", side_effect=fake_ffmpeg):
+            # Um bloco por arquivo: o 7º envio é o heatmap, com o vídeo de cena já no servidor.
+            first = run(argv, client_factory=lambda url, token: _Interrupted(self._client(url, token), after=6),
+                        out=self.lines.append)
+            self.assertEqual(first, 130)
+            self.assertEqual(len(list(videos.glob("*.mp4"))), 2)
+            self.assertEqual(run(argv, client_factory=self._client, out=self.lines.append), 0, self.lines)
+        self.assertEqual(list(videos.glob("*.mp4")), [])  # o da rodada interrompida também saiu
+
     def test_token_problems_and_a_no_stop_before_anything_is_sent(self):
         with patch.dict(os.environ, {"NENC_IMPORT_TOKEN": ""}):
             self.assertEqual(self._run(), 2)
