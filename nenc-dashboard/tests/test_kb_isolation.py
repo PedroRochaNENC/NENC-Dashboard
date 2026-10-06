@@ -254,6 +254,30 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(removed, 2)
         self.assertIn("file-avulso", self.client.files.deleted)
 
+    def test_the_sensory_test_cleans_its_own_store(self):
+        with patch.multiple(
+            kb_cleanup,
+            get_openai_client=lambda: self.client,
+            get_prosodia_vector_store_id=lambda: self.fail("base errada"),
+            get_vector_store_id=lambda: self.fail("base errada"),
+            get_sensorial_vector_store_id=lambda: "vs_sensorial",
+        ):
+            removed = kb_cleanup.remove_documents_for_project(3, module_key="teste_sensorial")
+        self.assertEqual(removed, 2)
+
+    def test_an_unknown_module_never_reaches_another_modules_store(self):
+        # Antes, qualquer módulo fora da Jornada caía na base do NencBoost e
+        # apagaria o material de um projeto de lá com o mesmo id.
+        with patch.multiple(
+            kb_cleanup,
+            get_openai_client=lambda: self.client,
+            get_prosodia_vector_store_id=lambda: self.fail("base errada"),
+            get_vector_store_id=lambda: self.fail("base errada"),
+        ):
+            self.assertEqual(kb_cleanup.remove_documents_for_project(3, module_key="outro"), 0)
+            self.assertEqual(kb_cleanup.remove_files(["file-x"], module_key="outro"), 0)
+        self.assertEqual(self.client.files.deleted, [])
+
     def test_prosodia_stays_the_default_module(self):
         with patch.multiple(
             kb_cleanup,

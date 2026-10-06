@@ -337,6 +337,18 @@ def save_prosodia_vector_store_id(vs_id: str) -> None:
     save_organization_vector_store_id("prosodia", vs_id)
 
 
+def get_sensorial_vector_store_id() -> str | None:
+    """Return the Teste Sensorial vector store owned by the active organization."""
+
+    return get_organization_vector_store_id("teste_sensorial")
+
+
+def save_sensorial_vector_store_id(vs_id: str) -> None:
+    """Persist the Teste Sensorial vector store for the active organization."""
+
+    save_organization_vector_store_id("teste_sensorial", vs_id)
+
+
 # A OpenAI aceita ate 16 atributos por documento, com valor de texto de ate
 # 512 caracteres. Sao eles que permitem filtrar a busca depois.
 _MAX_DOCUMENT_ATTRIBUTES = 16

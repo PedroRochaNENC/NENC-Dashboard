@@ -23,7 +23,8 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 HISTORICOS = (
     ("analyses", "audio_id", "audio"),
     ("project_analyses", "project_id", "projeto (NencBoost)"),
-    ("ts_analyses", "project_id", "projeto (Teste Sensorial)"),
+    ("ts_analyses", "project_id", "projeto (Teste Sensorial, versão antiga)"),
+    ("sens_analyses", "project_id", "projeto (Teste Sensorial)"),
     ("jc_analyses", "project_id", "projeto (Jornada de Compra)"),
 )
 

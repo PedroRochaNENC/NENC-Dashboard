@@ -51,7 +51,7 @@ def _tabelas(database: sqlite3.Connection) -> set:
 # Cada modulo guarda os proprios projetos. Conferir o store da Jornada contra
 # `projects` (NencBoost) apagava o material de projetos vivos da Jornada — ou
 # poupava o de projetos mortos cujo id coincidia com um projeto do NencBoost.
-TABELA_DE_PROJETOS = {"prosodia": "projects", "jornada_compra": "jc_projects"}
+TABELA_DE_PROJETOS = {"prosodia": "projects", "jornada_compra": "jc_projects", "teste_sensorial": "sens_projects"}
 
 
 def _projetos_vivos(

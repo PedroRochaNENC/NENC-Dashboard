@@ -21,10 +21,20 @@ from openai import NotFoundError
 from utils.ai_provider import (
     get_openai_client,
     get_prosodia_vector_store_id,
+    get_sensorial_vector_store_id,
     get_vector_store_id,
     list_vector_store_documents,
 )
 from utils.kb_attributes import belongs_to_project
+
+# A base de cada módulo, pelo nome da função que a lê (procurada na hora da
+# chamada). Módulo fora da lista não limpa base nenhuma: antes, qualquer outro
+# caía na base do NencBoost e apagaria material de um projeto de mesmo id.
+_STORE_GETTERS = {
+    "prosodia": "get_prosodia_vector_store_id",
+    "jornada_compra": "get_vector_store_id",
+    "teste_sensorial": "get_sensorial_vector_store_id",
+}
 
 
 def _store(module_key: str = "prosodia"):
@@ -41,11 +51,11 @@ def _store(module_key: str = "prosodia"):
     client = get_openai_client()
     if client is None:
         return None, None
+    getter = _STORE_GETTERS.get(module_key)
+    if getter is None:
+        return None, None
     try:
-        if module_key == "jornada_compra":
-            vector_store_id = get_vector_store_id()
-        else:
-            vector_store_id = get_prosodia_vector_store_id()
+        vector_store_id = globals()[getter]()
     except Exception:
         return None, None
     if not vector_store_id:

@@ -13,7 +13,7 @@ import pandas as pd
 from utils import auth
 
 
-_VECTOR_STORE_MODULES = frozenset(("jornada_compra", "prosodia"))
+_VECTOR_STORE_MODULES = frozenset(("jornada_compra", "prosodia", "teste_sensorial"))
 _EXTERNAL_RESOURCE_TYPES = frozenset(
     (
         "whatsapp_contact",
