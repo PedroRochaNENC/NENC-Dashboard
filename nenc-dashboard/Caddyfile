@@ -2,9 +2,10 @@
 # Configuração do Caddy - Reverse Proxy com SSL Automático
 # ============================================================
 
-# Dashboard NENC (e a API de importacao da Jornada em /api/jornada)
+# Dashboard NENC (e a API de importacao em /api/importacao e no caminho antigo /api/jornada)
 insights.nenc.in {
-    handle /api/jornada/* {
+    @importacao path /api/jornada/* /api/importacao/*
+    handle @importacao {
         # O script envia blocos de ate 8 MB.
         request_body {
             max_size 10MB
