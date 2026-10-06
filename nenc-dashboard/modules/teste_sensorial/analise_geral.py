@@ -12,7 +12,10 @@ A leitura consolidada do estudo, no molde da Análise Geral da Jornada:
   índice emocional e conforto;
 - Associação: Score, faixas e quadrantes de cada claim;
 - Amostra e qualidade: quantos participantes em cada condição e camada, e o
-  que ficou de fora e por quê.
+  que ficou de fora e por quê;
+- IA: o relatório gerado a partir dessas métricas (rápido ou aprofundado),
+  com a base de conhecimento do Teste Sensorial da organização, o histórico e
+  um chat sobre cada análise.
 
 O recorte por perfil vale para todas as seções. Cada gráfico tem a tabela
 equivalente logo abaixo.
@@ -24,17 +27,20 @@ from utils import auth, ui
 from utils.icons import page_title
 
 user = auth.require_module("teste_sensorial")
+pode_editar = auth.can_write(user)
 
 from utils import sensorial_charts as charts
 from utils import sensorial_db, sensorial_design
+from utils.ai_provider import get_openai_client, get_sensorial_vector_store_id
 from utils.project_ui import active_project
+from utils.sensorial_ai import AI_MODELS, MODE_LABELS, chat_answer, filters_text, generate_analysis, send_analysis_to_kb
 from utils.sensorial_cache import get_image, get_project_metrics, get_project_model
 from utils.sensorial_model import LAYER_LABELS
 
 sensorial_db.init_db()
 project = active_project(sensorial_db, "ts_project_id", "modules/teste_sensorial/projetos.py")
 
-SECTIONS = ["Resumo", "EEG", "Periféricos", "Associação", "Amostra e qualidade"]
+SECTIONS = ["Resumo", "EEG", "Periféricos", "Associação", "Amostra e qualidade", "IA"]
 CONCLUSIONS = {"validado": "✓ validado", "parcial": "◐ parcial", "não validado": "✗ não validado"}
 COMPARISON_LABELS = {"vs_basal": "× basal", "vs_controle": "× controle", "entre_amostras": "× amostra"}
 
@@ -260,7 +266,7 @@ elif section == "Associação":
 # ------------------------------------------------------------------
 # Amostra e qualidade
 # ------------------------------------------------------------------
-else:
+elif section == "Amostra e qualidade":
     counts = metrics["n_por_condicao"]
     st.subheader("Participantes por condição")
     st.dataframe(counts.assign(condicao=counts["condicao"].map(lambda c: labels.get(c, c)))
@@ -289,3 +295,141 @@ else:
         (st.warning if issue["level"] == "warn" else st.info)(issue["message"])
     st.page_link("modules/teste_sensorial/participantes.py", label="Ver as sessões e decidir em Participantes",
                  icon=":material/group:")
+
+# ------------------------------------------------------------------
+# IA
+# ------------------------------------------------------------------
+else:
+    project_id = project["id"]
+    analyses = sensorial_db.list_analyses(project_id)
+    # Em "Todas as organizações" a base resolvida seria a de quem está logado,
+    # não a do projeto: a busca fica desligada.
+    kb_store = get_sensorial_vector_store_id() if auth.active_organization_id(user) else None
+    recorte = filters_text(filters)
+    st.subheader("Análise por IA")
+    st.caption("A IA recebe o contexto do projeto e as métricas do recorte — médias, comparações com o p de Holm, o "
+               "teste de associação e a síntese —, nunca os dados brutos nem o nome de ninguém. As contas são do "
+               "app; a leitura é da IA.")
+    use_kb = False
+    if pode_editar:
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1.4, 1.2, 1.6], vertical_alignment="bottom")
+            mode_label = c1.segmented_control(
+                "Modo", ["Rápida", "Aprofundada"], default="Rápida", key="ts_ai_mode",
+                help="Rápida: uma chamada. Aprofundada: leitura estatística das tabelas e, depois, interpretação "
+                     "estratégica (duas chamadas, mais demorada).") or "Rápida"
+            ai_model = c2.selectbox("Modelo", AI_MODELS, key="ts_ai_model")
+            use_kb = c3.toggle("Usar a base de conhecimento", value=bool(kb_store), disabled=not kb_store,
+                               key="ts_ai_kb", help="Busca na literatura da organização e no material deste "
+                                                    "projeto.") and bool(kb_store)
+            if not auth.active_organization_id(user):
+                st.caption("Em “Todas as organizações” a base fica desligada: a busca iria à base da sua "
+                           "organização, não à do projeto.")
+            elif not kb_store:
+                st.caption("A base de conhecimento do Teste Sensorial não está configurada nesta organização.")
+            st.caption("Recorte enviado: {}".format(recorte))
+            if st.button("Gerar análise", type="primary", key="ts_ai_generate"):
+                if get_openai_client() is None:
+                    st.error("A OpenAI não está configurada: defina OPENAI_API_KEY no .env e reinicie o app.")
+                else:
+                    mode = "rapida" if mode_label == "Rápida" else "aprofundada"
+                    try:
+                        with st.spinner("Gerando a análise {}…".format(mode_label.lower())):
+                            result = generate_analysis(project, model, metrics, mode=mode, ai_model=ai_model,
+                                                       recorte=recorte, vector_store_id=kb_store if use_kb else None)
+                        if not result["text"].strip():
+                            st.error("A IA não devolveu texto. Tente de novo.")
+                        else:
+                            new_id = sensorial_db.save_analysis(
+                                project_id, model=ai_model, mode=mode, analysis_text=result["text"],
+                                citations=result["citations"], search=result["search"], filters=filters,
+                                data_version=project.get("data_version"))
+                            st.session_state["ts_ai_pick"] = new_id
+                            st.rerun()
+                    except Exception as error:
+                        st.error("Não foi possível gerar a análise: {}".format(error))
+
+    if not analyses:
+        st.info("Nenhuma análise gerada ainda." + (" Escolha o modo e clique em **Gerar análise**." if pode_editar
+                                                   else ""))
+    else:
+        analyses_by_id = {a["id"]: a for a in analyses}
+        if st.session_state.get("ts_ai_pick") not in analyses_by_id:
+            st.session_state["ts_ai_pick"] = analyses[0]["id"]
+        chosen_id = st.selectbox(
+            "Análise", list(analyses_by_id), key="ts_ai_pick",
+            format_func=lambda aid: "{} · {} · {}{}".format(
+                str(analyses_by_id[aid].get("created_at") or "")[:16],
+                MODE_LABELS.get(analyses_by_id[aid].get("mode"), analyses_by_id[aid].get("mode") or ""),
+                analyses_by_id[aid].get("model") or "", " · na base" if analyses_by_id[aid].get("kb_file_id") else ""))
+        analysis = analyses_by_id[chosen_id]
+        analysis_recorte = filters_text(analysis.get("filters"))
+        if analysis.get("data_version") is not None and analysis["data_version"] != project.get("data_version"):
+            st.warning("Os dados do projeto mudaram depois desta análise (arquivos, decisões sobre sessões ou "
+                       "configuração): os números dela podem não bater com as seções atuais. {}".format(
+                           "Gere uma nova para atualizar." if pode_editar
+                           else "Peça uma análise nova a quem edita o projeto."))
+        st.caption("Recorte da análise: {}".format(analysis_recorte))
+        with st.container(border=True):
+            st.markdown(analysis.get("analysis_text") or "")
+        with st.expander("Referências da base de conhecimento"):
+            ui.knowledge_base_references({"citations": analysis.get("citations"), "search": analysis.get("search")})
+
+        if pode_editar:
+            a1, a2, _ = st.columns([1.4, 1.1, 2.5])
+            if analysis.get("kb_file_id"):
+                a1.caption("Esta análise está na base de conhecimento.")
+            elif a1.button("Enviar para a base", key="ts_ai_to_kb", disabled=not kb_store, width="stretch",
+                           help="Guarda esta análise na base da organização, marcada como análise deste projeto."):
+                try:
+                    file_id = send_analysis_to_kb(project, analysis, analysis_recorte, kb_store)
+                    sensorial_db.set_analysis_kb_file(project_id, chosen_id, file_id)
+                    st.toast("Análise enviada para a base de conhecimento.")
+                    st.rerun()
+                except Exception as error:
+                    st.error("Não foi possível enviar para a base: {}".format(error))
+            if a2.button("Excluir", key="ts_ai_delete", width="stretch"):
+                st.session_state["ts_ai_confirm"] = chosen_id
+                st.rerun()
+            if st.session_state.get("ts_ai_confirm") == chosen_id:
+                st.warning("Excluir a análise de {}? {}Não dá para desfazer.".format(
+                    str(analysis.get("created_at") or "")[:16],
+                    "A cópia na base de conhecimento também sai. " if analysis.get("kb_file_id") else ""))
+                y, n, _ = st.columns([1.4, 1.1, 2.5])
+                if y.button("Confirmar exclusão", type="primary", key="ts_ai_delete_yes", width="stretch"):
+                    sensorial_db.delete_analyses(project_id, [chosen_id])
+                    for state_key in ("ts_ai_confirm", "ts_ai_pick", "ts_ai_chat_{}".format(chosen_id)):
+                        st.session_state.pop(state_key, None)
+                    st.rerun()
+                if n.button("Cancelar", key="ts_ai_delete_no", width="stretch"):
+                    st.session_state.pop("ts_ai_confirm", None)
+                    st.rerun()
+
+            st.divider()
+            st.markdown("**Perguntas sobre esta análise**")
+            st.caption("A conversa usa o relatório e os achados do recorte da análise e fica só nesta sessão.")
+            chat_key = "ts_ai_chat_{}".format(chosen_id)
+            history = st.session_state.setdefault(chat_key, [])
+            for message in history:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+            if history and st.button("Limpar conversa", key="ts_ai_chat_clear"):
+                st.session_state[chat_key] = []
+                st.rerun()
+            question = st.chat_input("Pergunte sobre esta análise…", key="ts_ai_chat_input")
+            if question:
+                if get_openai_client() is None:
+                    st.error("A OpenAI não está configurada: defina OPENAI_API_KEY no .env e reinicie o app.")
+                else:
+                    history.append({"role": "user", "content": question})
+                    try:
+                        with st.spinner("Pensando…"):
+                            answer = chat_answer(analysis.get("analysis_text") or "",
+                                                 get_project_metrics(project, analysis.get("filters") or {}),
+                                                 history, ai_model=analysis.get("model") or AI_MODELS[0],
+                                                 project_id=project_id, vector_store_id=kb_store if use_kb else None)
+                        history.append({"role": "assistant", "content": answer})
+                        st.rerun()
+                    except Exception as error:
+                        history.pop()
+                        st.error("Não foi possível responder: {}".format(error))

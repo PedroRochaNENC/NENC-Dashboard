@@ -250,6 +250,10 @@ def _sensorial_pages(user: auth.User) -> dict[str, list]:
         module_pages.append(
             _page("modules/teste_sensorial/preparacao.py", "Novo projeto", "plus")
         )
+    module_pages.append(
+        _page("modules/teste_sensorial/base_conhecimento.py",
+              "Base de Conhecimento", "books")
+    )
     sections["Teste Sensorial"] = module_pages
     return sections
 
