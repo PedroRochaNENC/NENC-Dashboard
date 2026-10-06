@@ -342,7 +342,7 @@ def _apply_role(role: str, child: str, name: str, folded_name: str, extension: s
     return "ignorado", {}, "papel desconhecido"
 
 
-def _keep_latest_reports(entries: List[Entry]) -> None:
+def keep_latest_reports(entries: List[Entry]) -> None:
     """Do relatório final só vai a versão mais alta (V0, V1, ... no fim do nome)."""
     groups: Dict[str, List[Tuple[int, Entry]]] = {}
     for entry in entries:
@@ -377,7 +377,7 @@ def scan_project(root: Path, config: Optional[FolderConfig] = None) -> List[Entr
             continue
         role, meta, reason = _classify(rel, config)
         entries.append(Entry(rel.as_posix(), path.stat().st_size, role, meta, reason))
-    _keep_latest_reports(entries)
+    keep_latest_reports(entries)
     return entries
 
 

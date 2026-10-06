@@ -90,6 +90,35 @@ def _cell_value(cell, strings: Sequence[str]):
         return value.text
 
 
+def _sheet_path(archive: zipfile.ZipFile, sheet: str) -> str:
+    paths = _sheet_paths(archive)
+    path = paths.get(sheet) or next((p for name, p in paths.items() if _fold(name) == _fold(sheet)), None)
+    if path is None:
+        raise ValueError("Aba {!r} não encontrada. Abas: {}.".format(sheet, ", ".join(paths)))
+    return path
+
+
+def header_row(source: Source, sheet: str, marker: str, *, header_scan: int = 10) -> List[str]:
+    """Os nomes do cabeçalho da aba: a primeira linha que tem a coluna `marker`.
+
+    Lê só as primeiras linhas, para decidir o que a planilha é sem abrir os dados.
+    """
+    with zipfile.ZipFile(source) as archive:
+        path = _sheet_path(archive, sheet)
+        strings = _shared_strings(archive)
+        with archive.open(path) as handle:
+            for scanned, (_event, element) in enumerate(
+                    (pair for pair in ElementTree.iterparse(handle, events=("end",))
+                     if pair[1].tag == _MAIN + "row"), 1):
+                values = [_cell_value(cell, strings) for cell in element.iter(_MAIN + "c")]
+                names = [str(value).strip() for value in values if value is not None and str(value).strip()]
+                if any(_fold(name) == _fold(marker) for name in names):
+                    return names
+                if scanned >= header_scan:
+                    break
+    return []
+
+
 def read_columns(source: Source, sheet: str, columns: Sequence[str], *, header_scan: int = 10) -> pd.DataFrame:
     """As `columns` da aba `sheet`, na ordem pedida.
 
@@ -99,10 +128,7 @@ def read_columns(source: Source, sheet: str, columns: Sequence[str], *, header_s
     """
     wanted = [str(column) for column in columns]
     with zipfile.ZipFile(source) as archive:
-        paths = _sheet_paths(archive)
-        path = paths.get(sheet) or next((p for name, p in paths.items() if _fold(name) == _fold(sheet)), None)
-        if path is None:
-            raise ValueError("Aba {!r} não encontrada. Abas: {}.".format(sheet, ", ".join(paths)))
+        path = _sheet_path(archive, sheet)
         strings = _shared_strings(archive)
         positions: Optional[Dict[int, str]] = None
         data: Dict[str, list] = {column: [] for column in wanted}

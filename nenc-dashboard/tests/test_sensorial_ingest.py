@@ -248,32 +248,48 @@ class FieldLogTests(CanaryMixin, unittest.TestCase):
         self.assertEqual(table["qualidade_sinal"].tolist(), [None, "boa"])
 
 
+BASE_LIMPA_ROWS = [
+    ("filename", "participante", "sessao_id", "Etapa", "Bloco", "Tempo", "FAI"),
+    ("EEG_07-Canario Sentinela_x", CANARY, "a1", "Basal", 1, 0.25, 0.1),
+    ("EEG_07-Canario Sentinela_x", CANARY, "a1", "Olfacao", 1, 0.5, 0.2),
+    ("EEG_07-Canario Sentinela_x", CANARY, "a1", "Olfacao", 1, 0.5, 0.2),
+]
+
+
 class BaseLimpaTests(CanaryMixin, unittest.TestCase):
-    _ROWS = [
-        ("filename", "participante", "sessao_id", "Etapa", "Bloco", "Tempo", "FAI"),
-        ("EEG_07-Canario Sentinela_x", CANARY, "a1", "Basal", 1, 0.25, 0.1),
-        ("EEG_07-Canario Sentinela_x", CANARY, "a1", "Olfacao", 1, 0.5, 0.2),
-        ("EEG_07-Canario Sentinela_x", CANARY, "a1", "Olfacao", 1, 0.5, 0.2),
-    ]
+    _ROWS = BASE_LIMPA_ROWS
 
     def test_only_the_keys_come_out_of_csv_and_xlsx(self):
         csv = "\n".join(";".join(str(v) for v in row) for row in self._ROWS).replace("0.", "0,").encode("utf-8")
-        from_csv = sensorial_ingest.parse_file("base_limpa_chaves.csv", csv)
-        self.assertEqual(from_csv.role, "base_limpa_chaves")
+        from_csv = sensorial_ingest.parse_file("Estudo BASE.base_limpa_eeg.csv", csv)
+        self.assertEqual(from_csv.role, "base_limpa_eeg")
         self.assertTrue(from_csv.ok, from_csv.issues)
         workbook = _workbook({"BASE ORIGINAL": [("x",)], "BASE LIMPA": [("titulo",)] + self._ROWS})
-        from_xlsx = sensorial_ingest.parse_file("estudo BASE.xlsx", workbook, role="base_limpa_chaves")
+        from_xlsx = sensorial_ingest.parse_file("estudo BASE.xlsx", workbook, role="base_limpa_eeg")
         self.assertTrue(from_xlsx.ok, from_xlsx.issues)
         for parsed in (from_csv, from_xlsx):
-            self.assertEqual(list(parsed.table.columns), list(sensorial_ingest.BASE_LIMPA_KEYS))
+            self.assertEqual(list(parsed.table.columns), ["sessao_id", "Etapa", "Bloco", "Tempo"])
             self.assertEqual(parsed.table["Tempo"].tolist(), [0.25, 0.5])  # repetida sai
             self.assertNoCanary(parsed.table, parsed.meta)
 
+    def test_the_association_layer_keeps_trials(self):
+        rows = [("participante", "sessao_id", "Trial Number", "Word"), (CANARY, "s1", 1, "Fresco"),
+                (CANARY, "s1", 3, "Leve")]
+        workbook = _workbook({"BASE LIMPA": rows})
+        parsed = sensorial_ingest.parse_file("IAT.xlsx", workbook, role="base_limpa_associacao")
+        self.assertTrue(parsed.ok, parsed.issues)
+        self.assertEqual(list(parsed.table.columns), ["sessao_id", "tentativa"])
+        self.assertEqual(parsed.table["tentativa"].tolist(), [1, 3])
+        from_app = sensorial_ingest.parse_file("x.base_limpa_associacao.csv", b"sessao_id,tentativa\ns1,2\n")
+        self.assertEqual((from_app.role, from_app.table["tentativa"].tolist()), ("base_limpa_associacao", [2]))
+        self.assertNoCanary(parsed.table, parsed.meta)
+
     def test_the_streaming_reader_names_what_is_missing(self):
-        workbook = io.BytesIO(_workbook({"BASE LIMPA": [("sessao_id", "Etapa"), ("a1", "Basal")]}))
+        workbook = io.BytesIO(_workbook({"BASE LIMPA": [("titulo",), ("sessao_id", "Etapa"), ("a1", "Basal")]}))
         self.assertEqual(xlsx_keys.sheet_names(workbook), ["BASE LIMPA"])
+        self.assertEqual(xlsx_keys.header_row(workbook, "BASE LIMPA", "SESSAO_ID"), ["sessao_id", "Etapa"])
         with self.assertRaisesRegex(ValueError, "Bloco, Tempo"):
-            xlsx_keys.read_columns(workbook, "base limpa", sensorial_ingest.BASE_LIMPA_KEYS)
+            xlsx_keys.read_columns(workbook, "base limpa", sensorial_ingest.BASE_LIMPA_KEYS["base_limpa_eeg"])
         with self.assertRaisesRegex(ValueError, "Aba"):
             xlsx_keys.read_columns(workbook, "OUTRA", ["sessao_id"])
         frame = xlsx_keys.read_columns(workbook, "BASE LIMPA", ["Etapa", "sessao_id"])

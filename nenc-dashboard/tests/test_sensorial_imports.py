@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from api import main
 from tests.test_sensorial_db import _Base
 from tests.test_sensorial_ingest import CANARY_WORDS, _indicadores_csv, _texts
-from utils import auth, jornada_db, jornada_imports, sensorial_db, sensorial_imports
+from utils import auth, jornada_db, jornada_imports, sensorial_db, sensorial_folder, sensorial_imports
 from utils.import_inbox import ImportRefused
 
 TOKEN = "s" * 40
@@ -137,9 +137,9 @@ class FlowTests(_ImportBase):
         batch_id = sensorial_imports.create_batch(self.org, self.project_id)
         with self.assertRaises(ImportRefused):
             self._send(batch_id, "x.csv", b"abc", "quadros")  # papel da Jornada
-        with patch.dict(sensorial_imports.FILE_LIMITS, {"eeg_psd": 2}), self.assertRaises(ImportRefused):
+        with patch.dict(sensorial_folder.FILE_LIMITS, {"eeg_psd": 2}), self.assertRaises(ImportRefused):
             self._send(batch_id, "psd_results.csv", b"abc", "eeg_psd")
-        self.assertEqual(sensorial_imports.file_limit("eeg_topomapa"), sensorial_imports.IMAGE_FILE_LIMIT)
+        self.assertEqual(sensorial_imports.file_limit("eeg_topomapa"), sensorial_folder.IMAGE_FILE_LIMIT)
 
     def test_deleting_the_project_removes_its_inbox(self):
         batch_id = sensorial_imports.create_batch(self.org, self.project_id)

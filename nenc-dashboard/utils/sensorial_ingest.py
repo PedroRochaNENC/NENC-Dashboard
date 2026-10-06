@@ -57,8 +57,12 @@ ROLES: Dict[str, Dict[str, object]] = {
     "manifesto": {"label": "Manifesto da rodada do pipeline", "layer": "geral", "kind": "json", "single": False},
     "campo_qualidade": {"label": "Registro de campo: qualidade do sinal por canal", "layer": "eeg",
                         "kind": "table", "single": True},
-    "base_limpa_chaves": {"label": "BASE LIMPA: janelas mantidas", "layer": "eeg", "kind": "table",
-                          "single": True},
+    "base_limpa_eeg": {"label": "BASE LIMPA do EEG: janelas mantidas", "layer": "eeg", "kind": "table",
+                       "single": True},
+    "base_limpa_perifericos": {"label": "BASE LIMPA dos periféricos: janelas mantidas", "layer": "perifericos",
+                               "kind": "table", "single": True},
+    "base_limpa_associacao": {"label": "BASE LIMPA do teste de associação: tentativas mantidas",
+                              "layer": "associacao", "kind": "table", "single": True},
     "perfil": {"label": "Perfil dos participantes", "layer": "geral", "kind": "table", "single": True},
     "estimulo": {"label": "Estímulo", "layer": "geral", "kind": "file", "single": False},
     "documento": {"label": "Documento do projeto", "layer": "geral", "kind": "file", "single": False},
@@ -85,8 +89,16 @@ _ROLE_EXTENSIONS = {
     "campo_qualidade": (".xlsx", ".xls", ".csv"),
 }
 
+# Cada camada tem a sua BASE LIMPA no consolidado do SPSS; dela só vêm as chaves
+# do que ficou (janelas do EEG e dos periféricos, tentativas do teste).
 BASE_LIMPA_SHEET = "BASE LIMPA"
-BASE_LIMPA_KEYS = ("sessao_id", "Etapa", "Bloco", "Tempo")
+_WINDOW_KEYS = ("sessao_id", "Etapa", "Bloco", "Tempo")
+BASE_LIMPA_KEYS = {
+    "base_limpa_eeg": _WINDOW_KEYS,
+    "base_limpa_perifericos": _WINDOW_KEYS,
+    "base_limpa_associacao": ("sessao_id", "Trial Number"),
+}
+BASE_LIMPA_ROLES = tuple(BASE_LIMPA_KEYS)
 
 _NA_VALUES = ["#NULO!", "#NULL!", "#N/D", "#DIV/0!", "#VALOR!", "#VALUE!"]
 _RUN = re.compile(r"^run_\d{8}-\d{6}$")
@@ -139,7 +151,9 @@ _DETECT = (
     (re.compile(r"^iat_consolidado\.(csv|xlsx)$"), "associacao_tentativas"),
     (re.compile(r"^inventario_.*\.xlsx$"), "inventario"),
     (re.compile(r"^manifest\.json$"), "manifesto"),
-    (re.compile(r"base[ _-]?limpa.*\.csv$"), "base_limpa_chaves"),
+    (re.compile(r"base_limpa_eeg\.csv$"), "base_limpa_eeg"),
+    (re.compile(r"base_limpa_perifericos\.csv$"), "base_limpa_perifericos"),
+    (re.compile(r"base_limpa_associacao\.csv$"), "base_limpa_associacao"),
 )
 
 Source = Union[bytes, bytearray, memoryview, str, Path]
@@ -586,32 +600,39 @@ def _parse_field_log(parsed: ParsedFile, source: Source) -> None:
 
 
 def _parse_base_limpa(parsed: ParsedFile, source: Source) -> None:
+    keys = BASE_LIMPA_KEYS[parsed.role]
     if _is_excel(parsed.filename):
         data = source if isinstance(source, (str, Path)) else io.BytesIO(bytes(source))
         try:
-            table = xlsx_keys.read_columns(data, BASE_LIMPA_SHEET, BASE_LIMPA_KEYS)
+            table = xlsx_keys.read_columns(data, BASE_LIMPA_SHEET, keys)
         except (ValueError, KeyError) as error:
             parsed.error(str(error))
             return
     else:
+        # A tentativa pode chegar com o nome do pipeline ou com o do app.
+        aliases = {"tentativa": "Trial Number"}
         options = _sniff(source)
         with _binary(source) as handle:
             table = pd.read_csv(handle, sep=options["sep"], decimal=options["decimal"], encoding=options["encoding"],
                                 encoding_errors="replace", dtype={"sessao_id": str, "Etapa": str},
-                                usecols=lambda column: str(column).strip() in BASE_LIMPA_KEYS)
-        table.columns = [str(column).strip() for column in table.columns]
-        missing = [column for column in BASE_LIMPA_KEYS if column not in table]
+                                usecols=lambda column: aliases.get(str(column).strip(), str(column).strip()) in keys)
+        table.columns = [aliases.get(str(column).strip(), str(column).strip()) for column in table.columns]
+        missing = [column for column in keys if column not in table]
         if missing:
             parsed.error("Faltam as colunas-chave da BASE LIMPA: {}.".format(", ".join(missing)))
             return
-    table = table[list(BASE_LIMPA_KEYS)].copy()
-    table["sessao_id"] = table["sessao_id"].map(lambda v: None if _missing(v) else str(v).strip())
-    table["Etapa"] = table["Etapa"].map(lambda v: None if _missing(v) else str(v).strip())
-    table["Bloco"] = pd.to_numeric(table["Bloco"], errors="coerce").round().astype("Int64")
-    table["Tempo"] = pd.to_numeric(table["Tempo"], errors="coerce").astype("float64")
+    table = table[list(keys)].rename(columns=_ASSOCIATION_COLUMNS).copy()
+    for column in ("sessao_id", "Etapa"):
+        if column in table:
+            table[column] = table[column].map(lambda v: None if _missing(v) else str(v).strip())
+    for column in ("Bloco", "tentativa"):
+        if column in table:
+            table[column] = pd.to_numeric(table[column], errors="coerce").round().astype("Int64")
+    if "Tempo" in table:
+        table["Tempo"] = pd.to_numeric(table["Tempo"], errors="coerce").astype("float64")
     table = table.dropna(subset=["sessao_id"]).drop_duplicates().reset_index(drop=True)
     if table.empty:
-        parsed.error("Nenhuma janela nas chaves da BASE LIMPA.")
+        parsed.error("Nenhuma linha nas chaves da BASE LIMPA.")
         return
     parsed.table = table
 
@@ -702,7 +723,7 @@ def parse_file(filename: str, source: Source, *, role: Optional[str] = None,
             _parse_manifest(parsed, source)
         elif role == "campo_qualidade":
             _parse_field_log(parsed, source)
-        elif role == "base_limpa_chaves":
+        elif role in BASE_LIMPA_ROLES:
             _parse_base_limpa(parsed, source)
         elif role == "perfil":
             _parse_profile(parsed, source)

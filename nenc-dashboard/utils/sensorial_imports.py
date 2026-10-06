@@ -20,28 +20,10 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from utils import auth, briefing, import_inbox, sensorial_db, sensorial_ingest
 from utils.import_inbox import OPEN_STATUSES
+from utils.sensorial_folder import file_limit
 
 UPLOAD_ROLES = tuple(sensorial_ingest.ROLES)
-CHUNK_MAX_BYTES = 8 * 1024 * 1024
-_MB = 1024 * 1024
-# O PSD por janela de um estudo passa de 150 MB em CSV (o script comprime).
-FILE_LIMITS = {
-    "eeg_psd": 1024 * _MB,
-    "eeg_indicadores": 512 * _MB,
-    "perifericos_metricas": 512 * _MB,
-    "base_limpa_chaves": 256 * _MB,
-    "documento": 100 * _MB,
-    "literatura": 100 * _MB,
-}
-DEFAULT_FILE_LIMIT = 100 * _MB
-IMAGE_FILE_LIMIT = 25 * _MB
-
-
-def file_limit(role: str) -> int:
-    """Maior arquivo que a importação aceita para o papel, em bytes."""
-    if sensorial_ingest.ROLES.get(role, {}).get("kind") == "image":
-        return IMAGE_FILE_LIMIT
-    return FILE_LIMITS.get(role, DEFAULT_FILE_LIMIT)
+CHUNK_MAX_BYTES = 8 * 1024 * 1024  # limites por arquivo: sensorial_folder.file_limit
 
 
 def _known(conn, project_id: int) -> Dict[str, List[str]]:
