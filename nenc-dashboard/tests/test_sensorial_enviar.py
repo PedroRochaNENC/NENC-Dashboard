@@ -234,6 +234,13 @@ class SendTests(_ImportBase):
         self.assertFalse(any("Canario" in path or "Recrutamento" in path for path in files))
         self.assertTrue(any("Teste Sensorial > projeto Estudo > Uploads" in line for line in self.lines))
         self.assertEqual(list((self.cache / "gzip").glob("*.gz")), [])  # o cache só servia para retomar
+        with closing(sqlite3.connect(self.database_path)) as database:
+            ignored = json.loads(database.execute("SELECT ignored_json FROM sens_import_batches").fetchone()[0])
+        # O que fica de fora chega só como pasta e motivo: nome de arquivo pode ter nome de pessoa.
+        self.assertNotIn("canario", json.dumps(ignored, ensure_ascii=False).lower())
+        self.assertIn({"rel_path": "2.DADOS/2.1 Dados para trabalho (Cópia)",
+                       "reason": "cópia de trabalho dos dados brutos, com o nome dos participantes", "arquivos": 1},
+                      ignored)
 
         self.assertEqual(self._run(), 0)
         self.assertIn("Nada novo", "\n".join(self.lines))

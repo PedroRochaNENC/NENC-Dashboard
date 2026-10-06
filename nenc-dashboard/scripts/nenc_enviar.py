@@ -373,6 +373,20 @@ def print_plan(items: Sequence[Item], ignored: Sequence[Entry], out=print, modul
     out("")
 
 
+def ignored_payload(ignored: Sequence[Entry], module: Module) -> List[Dict[str, object]]:
+    """O que fica de fora, como vai para o servidor.
+
+    No Teste Sensorial vai só a pasta (dois níveis) e o motivo, com a contagem:
+    as cópias dos dados brutos (2.0 e 2.1) têm o nome do participante no nome
+    de cada arquivo, e o servidor nunca recebe nome.
+    """
+    if module is JORNADA:
+        return [{"rel_path": e.rel_path, "reason": e.reason} for e in ignored]
+    groups = Counter(("/".join(PurePosixPath(e.rel_path).parent.parts[:2]), e.reason) for e in ignored)
+    return [{"rel_path": folder or "(raiz)", "reason": reason, "arquivos": count}
+            for (folder, reason), count in sorted(groups.items())]
+
+
 def find_ffmpeg(configured: Optional[str] = None) -> Optional[str]:
     if configured:
         return configured if Path(configured).exists() else shutil.which(configured)
@@ -679,7 +693,7 @@ def run(argv: Optional[Sequence[str]] = None, *, client_factory: Callable = _htt
             }
             closed = _check(client.post("{}/imports/{}/close".format(module.api_prefix, batch_id), json={
                 "summary": summary,
-                "ignored": [{"rel_path": e.rel_path, "reason": e.reason} for e in ignored],
+                "ignored": ignored_payload(ignored, module),
             }), "Fechar a importação")
     except SendError as error:
         out("Erro: {}".format(error))
