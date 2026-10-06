@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION, XL_MARKER_STYLE
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.xmlchemy import OxmlElement
@@ -409,6 +409,7 @@ def clustered_chart(slide, box, categories, series: Sequence[Tuple[str, Sequence
     labels.font.size = Pt(10)
     labels.font.color.rgb = SECONDARY
     for chart_series, color in zip(plot.series, colors):
+        chart_series.invert_if_negative = False  # barra negativa na cor da série, não em branco
         chart_series.format.fill.solid()
         chart_series.format.fill.fore_color.rgb = color
     bar_axes(chart, maximum)
@@ -458,8 +459,11 @@ def stacked_chart(slide, box, categories, series: Sequence[Tuple[str, Sequence]]
 
 def line_chart(slide, box, categories, series: Sequence[Tuple[str, Sequence]], colors, *,
                number_format: str = "0.00", title: str = "", minimum: Optional[float] = None,
-               maximum: Optional[float] = None):
-    """Linhas nativas (uma por série), para curvas no tempo; ausente vira lacuna, nunca zero."""
+               maximum: Optional[float] = None, label_every: Optional[int] = None):
+    """Linhas nativas (uma por série), para curvas no tempo; ausente vira lacuna, nunca zero.
+
+    `label_every`: rótulo do eixo de categorias só a cada N pontos (curvas longas).
+    """
     x, y, width, height = box
     data = CategoryChartData(number_format=number_format)
     data.categories = [clean_text(c) for c in categories]
@@ -469,7 +473,7 @@ def line_chart(slide, box, categories, series: Sequence[Tuple[str, Sequence]], c
     chart_base(chart, title, legend=len(series) > 1)
     for chart_series, color in zip(chart.plots[0].series, colors):
         chart_series.smooth = False
-        chart_series.marker.style = None
+        chart_series.marker.style = XL_MARKER_STYLE.NONE  # sem o marcador automático
         line = chart_series.format.line
         line.color.rgb = color
         line.width = Pt(2)
@@ -477,6 +481,11 @@ def line_chart(slide, box, categories, series: Sequence[Tuple[str, Sequence]], c
     categories_axis.has_major_gridlines = False
     categories_axis.tick_labels.font.size = Pt(10)
     categories_axis.format.line.color.rgb = RULE
+    if label_every and label_every > 1:
+        for tag in ("c:tickLblSkip", "c:tickMarkSkip"):
+            skip = OxmlElement(tag)
+            skip.set("val", str(int(label_every)))
+            categories_axis._element.insert_element_before(skip, "c:noMultiLvlLbl", "c:extLst")
     values_axis = chart.value_axis
     values_axis.has_major_gridlines = True
     values_axis.major_gridlines.format.line.color.rgb = RULE

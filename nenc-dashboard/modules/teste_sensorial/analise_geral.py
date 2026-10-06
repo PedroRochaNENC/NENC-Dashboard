@@ -15,11 +15,15 @@ A leitura consolidada do estudo, no molde da Análise Geral da Jornada:
   que ficou de fora e por quê;
 - IA: o relatório gerado a partir dessas métricas (rápido ou aprofundado),
   com a base de conhecimento do Teste Sensorial da organização, o histórico e
-  um chat sobre cada análise.
+  um chat sobre cada análise;
+- Exportar: PDF, PPTX com gráficos editáveis e Excel / Power BI no recorte,
+  cada download registrado na auditoria.
 
 O recorte por perfil vale para todas as seções. Cada gráfico tem a tabela
 equivalente logo abaixo.
 """
+
+import json
 
 import pandas as pd
 import streamlit as st
@@ -30,17 +34,20 @@ user = auth.require_module("teste_sensorial")
 pode_editar = auth.can_write(user)
 
 from utils import sensorial_charts as charts
-from utils import sensorial_db, sensorial_design
+from utils import sensorial_db, sensorial_design, sensorial_quality
 from utils.ai_provider import get_openai_client, get_sensorial_vector_store_id
 from utils.project_ui import active_project
 from utils.sensorial_ai import AI_MODELS, MODE_LABELS, chat_answer, filters_text, generate_analysis, send_analysis_to_kb
 from utils.sensorial_cache import get_image, get_project_metrics, get_project_model
+from utils.sensorial_export import build_excel, report_topomaps
 from utils.sensorial_model import LAYER_LABELS
+from utils.sensorial_pdf import build_pdf
+from utils.sensorial_pptx import build_pptx
 
 sensorial_db.init_db()
 project = active_project(sensorial_db, "ts_project_id", "modules/teste_sensorial/projetos.py")
 
-SECTIONS = ["Resumo", "EEG", "Periféricos", "Associação", "Amostra e qualidade", "IA"]
+SECTIONS = ["Resumo", "EEG", "Periféricos", "Associação", "Amostra e qualidade", "IA", "Exportar"]
 CONCLUSIONS = {"validado": "✓ validado", "parcial": "◐ parcial", "não validado": "✗ não validado"}
 COMPARISON_LABELS = {"vs_basal": "× basal", "vs_controle": "× controle", "entre_amostras": "× amostra"}
 
@@ -299,7 +306,7 @@ elif section == "Amostra e qualidade":
 # ------------------------------------------------------------------
 # IA
 # ------------------------------------------------------------------
-else:
+elif section == "IA":
     project_id = project["id"]
     analyses = sensorial_db.list_analyses(project_id)
     # Em "Todas as organizações" a base resolvida seria a de quem está logado,
@@ -433,3 +440,60 @@ else:
                     except Exception as error:
                         history.pop()
                         st.error("Não foi possível responder: {}".format(error))
+
+# ------------------------------------------------------------------
+# Exportar
+# ------------------------------------------------------------------
+else:
+    project_id = project["id"]
+    recorte = filters_text(filters)
+    st.subheader("Exportar")
+    st.markdown("**Recorte:** {}".format(recorte))
+    st.caption("O PDF é o relatório para leitura; o PPTX traz os mesmos números em gráficos editáveis; o Excel leva "
+               "também as sessões, as janelas de EEG com os índices e as curvas, com as chaves para relacionar no "
+               "Power BI e um dicionário das colunas. Só o código de cada participante entra, nunca o nome.")
+    analyses = sensorial_db.list_analyses(project_id)
+    chosen_analysis = None
+    if analyses:
+        analyses_by_id = {a["id"]: a for a in analyses}
+        chosen_id = st.selectbox(
+            "Análise de IA no relatório", [None] + list(analyses_by_id), index=1, key="ts_export_analysis",
+            format_func=lambda aid: "Nenhuma" if aid is None else "{} · {} · {}".format(
+                str(analyses_by_id[aid].get("created_at") or "")[:16],
+                MODE_LABELS.get(analyses_by_id[aid].get("mode"), analyses_by_id[aid].get("mode") or ""),
+                analyses_by_id[aid].get("model") or ""),
+            help="Entra no fim do PDF e da apresentação. O Excel leva todas as análises salvas.")
+        chosen_analysis = analyses_by_id.get(chosen_id)
+    # Arquivos valem para um recorte, uma versão dos dados e as análises da vez.
+    signature = (project_id, project.get("data_version"), json.dumps(filters, sort_keys=True, ensure_ascii=False),
+                 tuple(a["id"] for a in analyses), chosen_analysis["id"] if chosen_analysis else None)
+    prepared = st.session_state.get("ts_exports")
+    if not prepared or prepared.get("signature") != signature:
+        if st.button("Preparar arquivos", type="primary", key="ts_export_prepare"):
+            with st.spinner("Montando os arquivos…"):
+                quality = sensorial_quality.session_quality(model, sensorial_quality.thresholds_for_project(project))
+                # Topomapas das etapas analisadas, já reduzidos para não inchar os arquivos.
+                pictures = [dict(item, content=get_image(project, item["file_id"], 1200))
+                            for item in report_topomaps(model)]
+                pictures = [item for item in pictures if item["content"]]
+                pdf, pdf_name = build_pdf(project, model, metrics, recorte=recorte, analysis=chosen_analysis,
+                                          images=[(item["content"], item["title"]) for item in pictures])
+                pptx, pptx_name = build_pptx(project, model, metrics, recorte=recorte, analysis=chosen_analysis,
+                                             images=pictures)
+                excel, excel_name = build_excel(project, model, metrics, quality=quality, analyses=analyses,
+                                                recorte=recorte)
+            st.session_state["ts_exports"] = {"signature": signature, "files": [
+                {"kind": "pdf", "label": "Relatório PDF", "data": pdf, "name": pdf_name, "mime": "application/pdf"},
+                {"kind": "pptx", "label": "Apresentação PPTX", "data": pptx, "name": pptx_name,
+                 "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+                {"kind": "excel", "label": "Excel / Power BI", "data": excel, "name": excel_name,
+                 "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+            ]}
+            st.rerun()
+    else:
+        columns = st.columns(3)
+        for column, item in zip(columns, prepared["files"]):
+            column.download_button(item["label"], data=item["data"], file_name=item["name"], mime=item["mime"],
+                                   width="stretch", key="ts_export_{}".format(item["kind"]),
+                                   on_click=sensorial_db.audit_export, args=(project_id, item["kind"]))
+        st.caption("Prontos para este recorte e estes dados; mudar qualquer um deles pede nova preparação.")

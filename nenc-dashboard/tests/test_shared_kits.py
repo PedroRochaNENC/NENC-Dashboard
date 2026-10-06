@@ -6,6 +6,8 @@ import unittest
 
 import pandas as pd
 from pptx import Presentation
+from pptx.enum.chart import XL_MARKER_STYLE
+from pptx.oxml.ns import qn
 
 from utils import excel_export, pptx_kit
 from utils.chart_kit import BRAND_SEQUENCE, OTHER_COLOR, color_map
@@ -62,8 +64,11 @@ class DeckTests(unittest.TestCase):
         line = pptx_kit.line_chart(
             slide, (pptx_kit.LEFT, pptx_kit.BODY_TOP, pptx_kit.Inches(6), pptx_kit.Inches(3)),
             ["0,0", "0,5", "1,0"], [("A", [1.0, None, 2.0]), ("B", [0.5, 0.7, 0.9])],
-            [pptx_kit.ACCENT, pptx_kit.BASE_BAR])
+            [pptx_kit.ACCENT, pptx_kit.BASE_BAR], label_every=2)
         self.assertEqual(list(line.plots[0].series[0].values), [1.0, None, 2.0])  # lacuna, não zero
+        self.assertEqual(line.plots[0].series[0].marker.style, XL_MARKER_STYLE.NONE)
+        axis = line.category_axis._element
+        self.assertEqual([axis.find(qn(tag)).get("val") for tag in ("c:tickLblSkip", "c:tickMarkSkip")], ["2", "2"])
         pptx_kit.picture_slides(deck, [{"content": buffer.getvalue(), "title": "Imagem"}], "Imagens")
         opened = Presentation(io.BytesIO(deck.save()))
         self.assertEqual(len(opened.slides), 2)
