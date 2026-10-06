@@ -144,14 +144,8 @@ def _windows(sessions, stages=("Basal", "Olfacao", "PosOlfacao", "Audio>Gravacao
     return pd.DataFrame(rows)
 
 
-class ModelTests(unittest.TestCase):
-    SESSIONS = [
-        ("s1", "P07", "2001A", "A"),
-        ("s2", "P07", "2001Basal", None),
-        ("s3", None, "2001A", "A"),
-        ("s4", "P08", "2001A", "A"),
-        ("s5", "P08", "2001A", "A"),
-    ]
+class BundleBase(unittest.TestCase):
+    """Tabelas sintéticas em Parquet e o modelo montado sobre elas, sem banco."""
 
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
@@ -167,6 +161,16 @@ class ModelTests(unittest.TestCase):
     def _model(self, settings=None, decisions=(), participants=()):
         return build_model({"project": {"id": 1, "data_version": 3}, "settings": settings or {},
                             "files": self.files, "participants": list(participants), "sessions": list(decisions)})
+
+
+class ModelTests(BundleBase):
+    SESSIONS = [
+        ("s1", "P07", "2001A", "A"),
+        ("s2", "P07", "2001Basal", None),
+        ("s3", None, "2001A", "A"),
+        ("s4", "P08", "2001A", "A"),
+        ("s5", "P08", "2001A", "A"),
+    ]
 
     def test_rules_apply_in_order_and_say_why(self):
         psd = _windows(self.SESSIONS)

@@ -5,7 +5,7 @@ import unittest
 
 import pandas as pd
 
-from tests.test_sensorial_model import ModelTests, _windows
+from tests.test_sensorial_model import BundleBase, _windows
 from utils import sensorial_design, sensorial_metrics, sensorial_stats
 
 
@@ -46,7 +46,7 @@ class AssociationTests(unittest.TestCase):
         self.assertEqual(pooled["tentativas"].tolist(), [4])
 
 
-class ComputeAllTests(ModelTests):
+class ComputeAllTests(BundleBase):
     def test_compute_all_pairs_participants_and_filters_by_profile(self):
         sessions = [("s{}".format(i), "P{:02d}".format(i), "2001A", "A") for i in range(1, 7)] + \
                    [("b{}".format(i), "P{:02d}".format(i), "2001Basal", None) for i in range(1, 7)]

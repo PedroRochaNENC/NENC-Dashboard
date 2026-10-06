@@ -88,7 +88,9 @@ def peripheral_means(model: Dict[str, Any], allowed: Optional[set] = None) -> pd
         mask = pd.Series(True, index=peri.index)
         for layer in layers:
             mask &= peri["incluida_" + layer]
-        parts.append(_means(_restrict(peri[mask], allowed), [measure]))
+        part = _means(_restrict(peri[mask], allowed), [measure])
+        if not part.empty:
+            parts.append(part)
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=_MEANS_COLUMNS)
 
 

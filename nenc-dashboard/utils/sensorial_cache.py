@@ -12,7 +12,8 @@ A autorização acontece antes: quem chama já obteve o projeto por
 dele. A organização que entra na chave é a DO PROJETO.
 """
 
-from typing import Any, Dict
+import json
+from typing import Any, Dict, Optional
 
 import streamlit as st
 
@@ -27,6 +28,25 @@ def _model(project_id: int, organization_id: int, data_version: int) -> Dict[str
     return build_model(sensorial_db.load_project_bundle(project_id, organization_id))
 
 
+@st.cache_data(max_entries=32, ttl=_TTL_SECONDS, show_spinner=False)
+def _metrics(project_id: int, organization_id: int, data_version: int, filters_json: str) -> Dict[str, Any]:
+    from utils.sensorial_metrics import compute_all
+
+    return compute_all(_model(project_id, organization_id, data_version), json.loads(filters_json))
+
+
+@st.cache_data(max_entries=64, ttl=_TTL_SECONDS, show_spinner=False)
+def _curves(project_id: int, organization_id: int, data_version: int, measure: str, alignment: str,
+            filters_json: str) -> Dict[str, Any]:
+    from utils.sensorial_metrics import curves
+
+    return curves(_model(project_id, organization_id, data_version), measure, alignment, json.loads(filters_json))
+
+
+def _filters_json(filters: Optional[Dict[str, Any]]) -> str:
+    return json.dumps(filters or {}, sort_keys=True, ensure_ascii=False, default=str)
+
+
 def _key(project: Dict[str, Any]):
     return int(project["id"]), int(project["organization_id"]), int(project.get("data_version") or 0)
 
@@ -34,6 +54,17 @@ def _key(project: Dict[str, Any]):
 def get_project_model(project: Dict[str, Any]) -> Dict[str, Any]:
     """Modelo do projeto: sessões, janelas com os índices, periféricos, tentativas e avisos."""
     return _model(*_key(project))
+
+
+def get_project_metrics(project: Dict[str, Any], filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Métricas do projeto para um recorte (dict serializável)."""
+    return _metrics(*_key(project), _filters_json(filters))
+
+
+def get_curves(project: Dict[str, Any], measure: str, alignment: str = "etapa",
+               filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Curva média de uma medida por condição (ver `sensorial_metrics.curves`)."""
+    return _curves(*_key(project), str(measure), str(alignment), _filters_json(filters))
 
 
 @st.cache_data(max_entries=128, ttl=_TTL_SECONDS, show_spinner=False)
