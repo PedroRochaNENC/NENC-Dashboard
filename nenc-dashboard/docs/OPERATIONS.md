@@ -87,6 +87,12 @@ podem coincidir. Briefings e analises da Jornada entram na base com os prefixos
 `briefing_jc_` e `analise_geral_jc_`; a analise so vai para a base quando alguem
 clica em "Enviar para a base", e sai de la quando e excluida.
 
+O Teste Sensorial segue a mesma regra, com a base propria do modulo (uma por
+organizacao, configurada na pagina Base de Conhecimento do Teste Sensorial):
+material de projeto leva `modulo = teste_sensorial`, e briefings e analises
+entram com os prefixos `briefing_ts_` e `analise_geral_ts_`. Excluir um projeto
+apaga da base os documentos dele.
+
 ## Jornada de Compra: videos, espaco e cache
 
 Os videos das gravacoes (`-out.mp4`) nao entram no SQLite. Ficam em
@@ -114,15 +120,47 @@ Videos de heatmap ficam no mesmo lugar, com `jc_media.kind = 'heatmap'`; os que
 chegam compactados pelo script guardam em `source_sha256` o hash do original,
 para um reenvio da pasta nao subir o mesmo video de novo.
 
-## Jornada de Compra: importacao da pasta (API)
+## Teste Sensorial: arquivos, espaco e cache
 
-O script `scripts/jornada_enviar.py` envia a pasta de um projeto para o servico
-`nenc-import-api` (FastAPI, mesma imagem e mesmo banco do dashboard), atras do
-Caddy em `insights.nenc.in/api/jornada/*`. A API so cria importacoes pendentes:
-quem grava nos dados do projeto e a revisao em Uploads, com a conta de quem
-revisou. No `audit_log`, `jornada.import.received`, `jornada.import.resumed` e
-`jornada.import.closed` ficam sem autor (vieram pelo token);
-`jornada.import.apply` e `jornada.import.discard` levam o revisor.
+As tabelas do pipeline nao entram no SQLite. Ficam em `NENC_SENSORIAL_DIR`; sem
+a variavel, em `sensorial_data/` ao lado do arquivo de `NENC_DB_PATH` — em
+producao, dentro do volume `./data`:
+
+- `<organizacao>/<projeto>/orig/<sha256><extensao>`: o arquivo como chegou
+  (tabelas grandes comprimidas pelo script);
+- `<organizacao>/<projeto>/tab/<sha256>.v<versao>.parquet`: a tabela lida, sem
+  as colunas de nome, com as bandas do PSD em float32. A `<versao>` e a do
+  leitor que gerou a tabela (`sensorial_ingest.PARSER_VERSION`).
+
+A tabela `sens_files` guarda os caminhos relativos e o hash. Um estudo completo
+(cerca de 35 participantes, 5 condicoes) ocupa ~125 MB: ~80 MB de originais (o
+PSD por janela comprimido e a maior parte) e ~45 MB de Parquet. Excluir um
+arquivo ou um projeto apaga o que ele tinha no disco.
+
+O modelo e as metricas ficam em `st.cache_data` com a chave (projeto,
+organizacao, `data_version`), como na Jornada; a primeira montagem de um estudo
+completo leva cerca de 2 s. A estatistica usa `scipy` (Wilcoxon pareado) e a
+leitura usa `pyarrow`, os dois no `requirements.txt` e na imagem.
+
+As tabelas antigas `ts_*` e o estado por organizacao da versao anterior do
+modulo ficam intocados no banco e nao sao lidos: os estudos antigos voltam
+reenviando a pasta pelo script.
+
+## Importacao da pasta (API): Jornada e Teste Sensorial
+
+O script `scripts/nenc_enviar.py --modulo {jornada_compra,teste_sensorial}`
+(o `jornada_enviar.py` e um atalho para a Jornada) envia a pasta de um projeto
+para o servico `nenc-import-api` (FastAPI, mesma imagem e mesmo banco do
+dashboard), atras do Caddy. Rotas: `/api/importacao/jornada_compra/*` e
+`/api/importacao/teste_sensorial/*`, mais o caminho antigo `/api/jornada/*`
+(Jornada), mantido para scripts de versoes anteriores. Os dois modulos usam
+tabelas de importacao proprias (`jc_import_*` e `sens_import_*`), entao
+projetos com o mesmo id nos dois modulos nunca se cruzam.
+
+A API so cria importacoes pendentes: quem grava nos dados do projeto e a
+revisao em Uploads, com a conta de quem revisou. No `audit_log`,
+`<modulo>.import.received`, `.resumed` e `.closed` ficam sem autor (vieram pelo
+token); `.apply` e `.discard` levam o revisor (`jornada.*` e `sensorial.*`).
 
 ### Token por organizacao
 
@@ -138,18 +176,24 @@ revisou. No `audit_log`, `jornada.import.received`, `jornada.import.resumed` e
   `.env` e recrie so a API, `docker compose up -d nenc-import-api`. O token
   antigo deixa de valer na hora; um envio em andamento falha com 401 e continua
   de onde parou quando rodado de novo com o token novo.
+- O mesmo token vale para os dois modulos da organizacao.
 - A documentacao automatica do FastAPI (`/docs`, `/openapi.json`) fica
-  desligada; `GET /api/jornada/health` e a unica rota sem token.
+  desligada; o `GET .../health` de cada prefixo e a unica rota sem token.
 
 ### Inbox, limites e expiracao
 
 - O que chega fica em `NENC_IMPORT_INBOX` ou, sem a variavel, em
   `jornada_inbox/` ao lado de `NENC_DB_PATH` (em producao, no volume `./data`):
-  `<organizacao>/<projeto>/<lote>/<arquivo>.bin`. O caminho enviado e so
-  metadado e nunca vira caminho no disco.
-- Blocos de ate 8 MB (o Caddy aceita ate 10 MB por requisicao); arquivo de ate
-  25 MB, video de ate 500 MB, texto de documento de ate 5 MB; ate 10 GB por
-  lote. O sha256 de cada arquivo e conferido no fim.
+  `<organizacao>/<projeto>/<lote>/<arquivo>.bin` para a Jornada e a mesma
+  estrutura dentro de `teste_sensorial/` para o Teste Sensorial. O caminho
+  enviado e so metadado e nunca vira caminho no disco.
+- Blocos de ate 8 MB (o Caddy aceita ate 10 MB por requisicao); ate 10 GB por
+  lote. Jornada: arquivo de ate 25 MB, video de ate 500 MB, texto de documento
+  de ate 5 MB. Teste Sensorial: PSD por janela ate 1 GB, indicadores e
+  metricas dos perifericos ate 512 MB, chaves da BASE LIMPA ate 256 MB,
+  documentos e literatura ate 100 MB, imagens ate 25 MB (o script comprime as
+  tabelas acima de 5 MB; o PSD de um estudo completo chega com ~65 MB). O
+  sha256 de cada arquivo e conferido no fim.
 - Lote parado ha mais de `NENC_IMPORT_TTL_DAYS` dias (30 por padrao) vira
   `expirada` e perde os arquivos. Gravar ou descartar apaga o inbox do lote, e
   excluir o projeto apaga o inbox dele.
@@ -158,7 +202,10 @@ revisou. No `audit_log`, `jornada.import.received`, `jornada.import.resumed` e
   virar pendencia vazia.
 - Espaco: o 1060 completo ocupa cerca de 3 GB no inbox ate a revisao (videos ja
   compactados) e o mesmo em `jornada_media` depois de gravado — os videos sao
-  movidos do inbox, nao copiados.
+  movidos do inbox, nao copiados. Um Teste Sensorial completo ocupa ~80 MB no
+  inbox ate a revisao.
+- A gravacao de um Teste Sensorial completo le o PSD inteiro e leva cerca de
+  40 s; a revisao em Uploads espera ate o fim.
 
 ### SQLite com dois processos
 
@@ -236,9 +283,26 @@ Os videos da Jornada ficam fora do banco (`NENC_MEDIA_DIR`, ver acima): o backup
 precisa levar a pasta `jornada_media` junto com o SQLite, no mesmo momento, para
 o indice `jc_media` continuar apontando para arquivos que existem.
 
+As tabelas e os originais do Teste Sensorial tambem ficam fora do banco
+(`NENC_SENSORIAL_DIR`): o backup leva a pasta `sensorial_data` junto com o
+SQLite, no mesmo momento, pelo mesmo motivo. Sem ela, os projetos abrem sem
+dados e precisam ser reenviados.
+
 O inbox das importacoes (`jornada_inbox`) guarda so envios ainda nao revisados.
 Pode ficar fora do backup: depois de restaurar sem ele, os lotes pendentes
 aparecem em Uploads sem os arquivos — descarte-os e peca o reenvio da pasta.
+
+## Teste Sensorial: implantacao
+
+1. Deploy de `nenc-dashboard` e `nenc-import-api` (a imagem nova traz `scipy` e
+   `pyarrow`).
+2. Recrie o Caddy, que le o `Caddyfile` montado como arquivo unico:
+   `docker compose up -d --force-recreate --no-deps caddy`. Sem isso,
+   `/api/importacao/*` cai no dashboard.
+3. Confira `GET https://insights.nenc.in/api/importacao/teste_sensorial/health`
+   e `GET https://insights.nenc.in/api/jornada/health`, e abra um projeto da
+   Jornada para ver que nada mudou.
+4. Envie primeiro uma pasta pequena de teste; so depois um estudo completo.
 
 ## Roteiro de aceitacao manual
 
@@ -276,3 +340,12 @@ Execute estes testes em uma base nao produtiva apos cada deploy relevante:
     antes de Gravar; grave e veja `jornada.import.apply` com o revisor no
     `audit_log`. Rode o envio de novo: o script responde "Nada novo". Um token
     de outra organizacao nao lista o projeto, e um token errado recebe 401.
+11. Teste Sensorial, com administrador: crie o projeto, rode
+    `nenc_enviar.py --modulo teste_sensorial --simular` e confira que
+    recrutamento, fotos e as copias 2.0/2.1 aparecem em "Fica de fora" sem nome
+    de arquivo. Envie, grave em Uploads e confira em Participantes que so
+    aparecem codigos (P01, P02...). Baixe PDF, PPTX e Excel em Exportar e veja
+    `sensorial.export.pdf`, `.pptx` e `.excel` no `audit_log`.
+12. Teste Sensorial, com conta so de leitura: Uploads e Novo projeto nao
+    aparecem, Participantes nao deixa decidir sobre sessoes, a secao IA so mostra
+    as analises salvas e as exportacoes continuam disponiveis.

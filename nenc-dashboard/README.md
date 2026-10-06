@@ -4,10 +4,12 @@ Dashboard Streamlit para visualização de dados de Neuromarketing do pipeline N
 
 ## Funcionalidades
 
-- **Teste Sensorial**: Gráficos de EEG (engagement, atenção, WTP, memória, assimetria) e periféricos (BPM, GSR) alinhados no tempo, por participante ou em média geral, com as médias por etapa no mesmo lugar
+- **Teste Sensorial**: testes de fragrância e produto organizados em projetos — EEG, periféricos e teste de
+  associação de claims calculados a partir das saídas do pipeline, com estatística pareada, síntese por
+  amostra e claim, análise por IA e exportação em PDF, PPTX e Excel/Power BI (ver
+  [Teste Sensorial](#teste-sensorial))
 - **Jornada de Compra**: eye tracking no ponto de venda, organizado em projetos — atenção por marca, produto, preço e embalagem, com análise por IA e exportação em PDF, PPTX e Excel/Power BI (ver [Jornada de Compra](#jornada-de-compra))
 - **NencBoost**: prosódia e transcrições de entrevistas, com análise por IA
-- **Dados Brutos**: Explorador interativo dos dados tabulares com filtros e download
 
 ## Instalação
 
@@ -20,21 +22,6 @@ pip install -r requirements.txt
 ```bash
 streamlit run app.py
 ```
-
-### Formato dos dados
-
-O dashboard espera os arquivos de saída do pipeline NENC:
-
-| Arquivo | Descrição | Obrigatório |
-|---------|-----------|-------------|
-| `indicadores.xlsx` / `.csv` | Indicadores neurofisiológicos (EEG) | Sim |
-| `perifericos_metrics.csv` / `.xlsx` | Métricas de periféricos (BPM, GSR) | Sim |
-| `psd_results.xlsx` / `.csv` | PSD bruto por janela temporal | Opcional |
-
-### Modos de carregamento
-
-1. **Upload**: Envie os arquivos diretamente pelo sidebar
-2. **Pasta**: Aponte para o diretório `2.2.Dados Processados/` do pipeline
 
 ## Jornada de Compra
 
@@ -87,7 +74,9 @@ escolhas como a análise vai lê-las) e grava ou descarta.
    coloque na linha de comando nem no Git.
 3. Instale o [ffmpeg](https://ffmpeg.org/download.html) e deixe-o no `PATH`
    (ou passe `--ffmpeg C:\caminho\ffmpeg.exe`): os vídeos vão compactados.
-4. Dentro de `nenc-dashboard`, com a `.venv` do repositório, simule e envie:
+4. Dentro de `nenc-dashboard`, com a `.venv` do repositório, simule e envie
+   (`scripts/nenc_enviar.py --modulo jornada_compra` faz o mesmo; o
+   `jornada_enviar.py` continua como atalho):
 
 ```powershell
 ..\.venv\Scripts\python scripts\jornada_enviar.py "X:\ALS\1234-Estudo" --simular
@@ -226,6 +215,134 @@ Analises_IA[id] ── Citacoes[analysis_id]
   entre canais não isola nenhum dos dois.
 - Conferir a taxa do rastreador antes de cada sessão (houve gravação a ~13 Hz).
 
+## Teste Sensorial
+
+Cada estudo é um projeto: **Projetos → Dados do Projeto → Uploads →
+Participantes → Análise Geral e Sinais**. Quem só consulta vê projetos,
+participantes, análises salvas e exportações; criar projeto, enviar arquivos,
+decidir sobre sessões e gerar análise de IA exigem escrita.
+
+A fonte são as saídas do pipeline (`2.2 Dados Processados`): o app calcula os
+índices do relatório a partir da potência por janela (as fórmulas da sintaxe
+SPSS), as médias, as comparações e o teste de associação. Do `2.3` só entram as
+chaves da aba **BASE LIMPA** de cada camada (EEG, periféricos, teste de
+associação), que decidem quais sessões, janelas e tentativas ficam. O resto do
+2.3 é resultado do SPSS, que o app recalcula.
+
+**Nome de participante nunca aparece.** O app mostra, exporta e manda à IA só
+o código (`P07`, tirado do número no início de `participante`); as colunas com
+nome são descartadas na leitura e o texto livre passa por um filtro.
+Recrutamento, fotos e vídeos das coletas nem saem do computador de quem envia.
+
+### Enviar a pasta do projeto
+
+```powershell
+..\.venv\Scripts\python scripts\nenc_enviar.py "X:\Cliente\1234 - Estudo" --modulo teste_sensorial --simular
+..\.venv\Scripts\python scripts\nenc_enviar.py "X:\Cliente\1234 - Estudo" --modulo teste_sensorial --token-arquivo C:\nenc\token.txt
+```
+
+O projeto precisa existir no app (o script procura pelo nome da pasta ou por
+`--projeto`), e o token é o mesmo da Jornada, guardado num arquivo fora do
+repositório. Como na Jornada, nada entra direto: o envio vira uma importação
+pendente em **Uploads**, onde a prévia mostra só resumos (papel, rodada,
+sessões, códigos, etapas, condições, cobertura da BASE LIMPA e avisos) antes de
+gravar.
+
+- Vai só a rodada mais nova (`run_<data>`) de cada modalidade que não falhou.
+- Tabelas acima de 5 MB vão em gzip (o PSD por janela cai de ~170 MB para
+  ~65 MB); a chave continua sendo o hash do original, então reenviar a pasta
+  manda só o que é novo. Cache em `%LOCALAPPDATA%\nenc\sensorial_cache`.
+- A planilha do 2.3 (de ~170 MB) não sai inteira: o script lê em streaming só
+  as colunas-chave da BASE LIMPA, sem tocar nas colunas de nome.
+- **Nunca saem do computador**: recrutamento, fotos de participantes, registros
+  e vídeos das coletas, as cópias dos dados brutos (2.0 e 2.1), áudio,
+  transcrição e prosódia. A lista "Fica de fora" agrupa por pasta e motivo, sem
+  nome de arquivo.
+
+| Caminho | Vai como |
+| --- | --- |
+| `2.DADOS/2.2*/<modalidade>/run_*/` | indicadores, PSD por janela e médio, qualidade, topomapas, métricas e qualidade dos periféricos, tentativas do teste de associação, manifesto |
+| `2.DADOS/2.2*/_inventarios/` | inventário mais recente das sessões |
+| `2.DADOS/2.3*/**` com a aba BASE LIMPA | chaves da BASE LIMPA (uma por camada) |
+| `1.GESTAO_PROJETOS/1.4*/` | registro de campo da qualidade do sinal |
+| `1.GESTAO_PROJETOS/1.1*/` e o relatório final mais recente | documentos |
+| `1.2 Estímulos`, `6.ESTIMULOS` / `Artigos` | estímulos / literatura |
+
+Pasta fora do padrão? Um `sensorial_import.toml` opcional na raiz:
+
+```toml
+ignorar = ["**/rascunho*"]
+aba_base_limpa = "BASE LIMPA"
+
+[pastas]         # pastas extras por papel, relativas à raiz
+perfil = ["1.GESTAO_PROJETOS/1.4.Campo/Perfil"]
+literatura = ["Referencias"]
+```
+
+Papéis aceitos em `[pastas]`: `perfil`, `campo_qualidade`, `documento`,
+`literatura` e `estimulo`. Arquivos pequenos (até 25 MB) também podem ir pela
+tela de Uploads.
+
+### O que entra na análise
+
+- **Desenho** (Dados do Projeto): o app deduz as condições (basal, controle,
+  amostras) e as etapas pelo experimento e pela amostra das sessões; o
+  mapeamento, os nomes de negócio dos índices e os pesos do PPI ficam
+  editáveis por projeto. O PPI usa os componentes padronizados (z) por padrão;
+  "como o SPSS" fica disponível.
+- **Sessões**: sem código de participante ou fora do desenho ficam excluídas;
+  depois vale a BASE LIMPA de cada camada; por último a decisão de quem edita,
+  em Participantes, sempre com motivo. Repetições aparecem marcadas por camada.
+- **Limpeza**: a regra de outliers da sintaxe (ln → z, |z| > 3,29 e Mahalanobis
+  p < 0,001) fica desligada por padrão; ligada, o Excel lista as janelas que
+  saem.
+- **Estatística**: média por participante, condição e etapa; Wilcoxon pareado
+  com r de postos e diferença mediana, contra o basal, contra o controle e entre
+  amostras. "Diferença" só quando passa na correção de Holm (família = medida ×
+  etapa); p bruto abaixo de alfa sem passar no Holm é "tendência"; abaixo de 5
+  pares, só descritivo.
+- **Teste de associação**: CR = (média da sessão − RT) / DP; Score = % de Sim ×
+  CR médio das respostas Sim; faixas ≥ 0,2 Muito alta, > 0 Alta, > −0,1 Baixa,
+  abaixo Muito baixa; quadrantes por adesão (50% de Sim) × convicção (CR 0),
+  ajustáveis por projeto.
+- **Periféricos**: frequência cardíaca, RMSSD, condutância, Emotional_Index e
+  Comfort_Score, só nas janelas com sinal bom (ou as da BASE LIMPA).
+
+### Páginas
+
+- **Análise Geral**: Resumo (síntese por amostra e claim, achados,
+  limitações), EEG, Periféricos, Associação, Amostra e qualidade, IA e
+  Exportar. O recorte e a comparação por perfil valem para todas as seções.
+- **Sinais**: curva média por condição, alinhada ao início da etapa ou à
+  primeira cheirada, com o basal de referência; e a linha do tempo de uma
+  sessão.
+- **Participantes**: matriz participante × condição com completude e
+  qualidade por camada, janelas que saíram, incluir/excluir com motivo e o
+  perfil editável.
+- **IA**: igual à Jornada (rápida ou aprofundada, histórico, chat, envio à base
+  só por clique), com a base de conhecimento do Teste Sensorial da organização
+  filtrada pelo projeto.
+- **Exportar**: PDF, PPTX com gráficos nativos e Excel para Power BI, no
+  recorte da página; cada download vai para o `audit_log`
+  (`sensorial.export.pdf`, `sensorial.export.pptx`, `sensorial.export.excel`).
+
+### Excel para Power BI do Teste Sensorial
+
+Uma aba por tabela. `Janelas_EEG` vai completa (todas as janelas incluídas, com
+os índices); as abas de métricas seguem o recorte, descrito na aba `Projeto`. A
+aba `Dicionario` explica cada coluna.
+
+```text
+Sessoes[sessao_id]
+  ├── Janelas_EEG[sessao_id]
+  └── Janelas_Fora[sessao_id]
+Participantes[participant_code]
+  ├── Sessoes[participant_code]
+  └── Medias_Participante[participant_code]
+Condicoes[codigo] ── Resumo[condicao], Comparacoes[condicao_a], Associacao[condicao]
+Analises_IA[id] ── Citacoes_IA[analysis_id]
+```
+
 ## Deploy
 
 Produção roda em Docker Compose atrás do Caddy, que termina o TLS e publica
@@ -243,12 +360,13 @@ docker compose logs -f --tail=50 nenc-dashboard
 Nomear os serviços é proposital: sem isso o compose reconstrói também
 `nenc-whatsapp-api`, que vem de outro repositório (`../../whatsapp-api`).
 
-`nenc-import-api` é a API que recebe a pasta enviada pelo script da Jornada
-(FastAPI, mesma imagem, mesmo banco). O Caddy manda
-`insights.nenc.in/api/jornada/*` para ela e o resto para o dashboard; depois de
-mudar o `Caddyfile`, recarregue o proxy sem derrubá-lo
-(`docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`). Tokens,
-inbox e expiração estão em [docs/OPERATIONS.md](docs/OPERATIONS.md).
+`nenc-import-api` é a API que recebe a pasta enviada pelo `nenc_enviar.py`
+(FastAPI, mesma imagem, mesmo banco), para os dois módulos. O Caddy manda
+`insights.nenc.in/api/importacao/*` (e o caminho antigo `/api/jornada/*`) para
+ela e o resto para o dashboard. O `Caddyfile` é montado como arquivo único:
+depois de um `git pull` que o muda, recrie o proxy para ele ler a versão nova
+(`docker compose up -d --force-recreate --no-deps caddy`). Tokens, inbox e
+expiração estão em [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 O healthcheck consulta `/_stcore/health` a cada 30s; `docker compose ps`
 mostra `healthy` quando a aplicação sobe.
@@ -274,9 +392,11 @@ segredos no ambiente de implantação ou em um `.env` ignorado pelo Git.
 
 ### Banco de dados
 
-Por padrão, autenticação e dados de Prosódia e da Jornada de Compra usam
-`prosodia.db` dentro de `nenc-dashboard`. Em produção, configure um caminho persistente e acessível ao
-processo com:
+Por padrão, autenticação e dados de Prosódia, da Jornada de Compra e do Teste
+Sensorial usam `prosodia.db` dentro de `nenc-dashboard`. As tabelas grandes do
+Teste Sensorial (Parquet) e os originais enviados ficam fora do banco, em
+`NENC_SENSORIAL_DIR` (padrão: `sensorial_data/` ao lado do banco). Em produção,
+configure um caminho persistente e acessível ao processo com:
 
 ```text
 NENC_DB_PATH=/caminho/persistente/nenc-insights.db
