@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 from io import StringIO
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
@@ -158,35 +158,6 @@ def save_module_state(module_key: str, state: Dict[str, Any]) -> None:
             (organization_id, module_key, serialized_state, _timestamp()),
         )
     auth.audit_business_access("module_state.write", "module_state", None, organization_id)
-
-
-def hydrate_session_state(module_key: str, session_keys: Iterable[str]) -> Dict[str, Any]:
-    """Replace selected Streamlit keys with the active organization's persisted state."""
-
-    import streamlit as st
-
-    state = load_module_state(module_key)
-    for session_key in session_keys:
-        if session_key in state:
-            st.session_state[session_key] = state[session_key]
-        else:
-            st.session_state.pop(session_key, None)
-    return state
-
-
-def save_session_state(module_key: str, session_keys: Iterable[str]) -> None:
-    """Persist selected Streamlit keys for the active organization."""
-
-    import streamlit as st
-
-    save_module_state(
-        module_key,
-        {
-            session_key: st.session_state[session_key]
-            for session_key in session_keys
-            if session_key in st.session_state
-        },
-    )
 
 
 def _legacy_organization_id() -> Optional[int]:

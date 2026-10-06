@@ -15,7 +15,8 @@ o menu sempre no topo da barra lateral e nada pode ficar acima dele. Com um
 
 A Jornada de Compra segue o mesmo desenho: lista de projetos e base de
 conhecimento sem projeto aberto; Análise Geral, Participantes, Uploads,
-Dados do Projeto e Entrevistas na seção do projeto.
+Dados do Projeto e Entrevistas na seção do projeto. O Teste Sensorial também:
+lista de projetos sem projeto aberto, e as páginas do estudo na seção dele.
 """
 
 import importlib
@@ -38,7 +39,7 @@ ui.inject_theme()
 # Rótulo e página de entrada de cada módulo, na ordem em que aparecem.
 MODULES = (
     ("teste_sensorial", "Teste Sensorial", "waveform",
-     "modules/teste_sensorial/preparacao.py"),
+     "modules/teste_sensorial/projetos.py"),
     ("jornada_compra", "Jornada de Compra", "eye",
      "modules/jornada_compra/projetos.py"),
     ("prosodia", "NencBoost", "microphone-stage",
@@ -89,15 +90,7 @@ def _page(path: str, title: str, icon_name: str, **kwargs) -> st.Page:
 def _module_pages(module_key: str, user: auth.User) -> dict[str, list]:
     """Páginas internas do módulo aberto, agrupadas por seção."""
     if module_key == "teste_sensorial":
-        return {
-            "Teste Sensorial": [
-                _page("modules/teste_sensorial/preparacao.py",
-                      "Preparação de Dados", "folder-open"),
-                # Timeline e Média Geral unificadas em "Sinais".
-                _page("modules/teste_sensorial/sinais.py",
-                      "Sinais", "chart-line"),
-            ],
-        }
+        return _sensorial_pages(user)
 
     if module_key == "jornada_compra":
         return _jornada_pages(user)
@@ -128,6 +121,16 @@ _PROJECT_CONTEXTS = {
         "state_key": "jc_project_id",
         "child_keys": ("jc_media_focus",),
         "data_module": "utils.jornada_db",
+        "list_function": "list_projects",
+        "meta": lambda record: (
+            ("users-three", str(record.get("n_participants", 0))),
+            ("database", "{} arq.".format(record.get("n_files", 0))),
+        ),
+    },
+    "teste_sensorial": {
+        "state_key": "ts_project_id",
+        "child_keys": ("ts_session_focus",),
+        "data_module": "utils.sensorial_db",
         "list_function": "list_projects",
         "meta": lambda record: (
             ("users-three", str(record.get("n_participants", 0))),
@@ -202,6 +205,39 @@ def _jornada_pages(user: auth.User) -> dict[str, list]:
               "Base de Conhecimento", "books")
     )
     sections["Jornada de Compra"] = module_pages
+    return sections
+
+
+def _sensorial_pages(user: auth.User) -> dict[str, list]:
+    """Menu do Teste Sensorial, no desenho de três níveis da Jornada.
+
+    Novo projeto só entra para quem escreve: a conta de leitura não ganha uma
+    página que o servidor recusaria.
+    """
+    sections: dict[str, list] = {}
+    project = _active_project("teste_sensorial")
+    pode_editar = auth.can_write(user)
+
+    if project:
+        project_pages = [
+            _page("modules/teste_sensorial/preparacao.py",
+                  "Dados do Projeto", "note-pencil"),
+        ]
+        section_name = str(project["name"])
+        if section_name == "Teste Sensorial":
+            # Mesmo nome da seção do módulo: o dict juntaria as duas.
+            section_name += " (projeto)"
+        sections[section_name] = project_pages
+
+    module_pages = [
+        _page("modules/teste_sensorial/projetos.py",
+              "Todos os projetos" if project else "Projetos", "folders"),
+    ]
+    if not project and pode_editar:
+        module_pages.append(
+            _page("modules/teste_sensorial/preparacao.py", "Novo projeto", "plus")
+        )
+    sections["Teste Sensorial"] = module_pages
     return sections
 
 
@@ -395,11 +431,12 @@ def _clear_organization_ui_state_if_needed(user: auth.User) -> None:
             "_ctx_pros_audio_id_shadow",
         ):
             st.session_state.pop(session_key, None)
-        # A Jornada guarda por projeto filtros, exportações e confirmações sob
-        # o prefixo `jc_`: nada disso pode atravessar para a outra organização.
+        # A Jornada e o Teste Sensorial guardam por projeto filtros, exportações
+        # e confirmações sob `jc_` e `ts_`: nada disso pode atravessar para a
+        # outra organização.
         for session_key in [
             key for key in st.session_state.keys()
-            if str(key).startswith(("jc_", "_ctx_jc_"))
+            if str(key).startswith(("jc_", "_ctx_jc_", "ts_", "_ctx_ts_"))
         ]:
             st.session_state.pop(session_key, None)
     st.session_state[state_key] = active_organization_id

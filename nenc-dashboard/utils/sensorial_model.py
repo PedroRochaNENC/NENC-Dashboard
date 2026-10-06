@@ -36,6 +36,15 @@ _SESSION_SOURCES = ("eeg_qualidade", "perifericos_qualidade", "eeg_psd", "eeg_in
                     "associacao_tentativas", "eeg_psd_medio")
 _WINDOW_COLUMNS = ("sessao_id", "Etapa", "Etapa_variante", "Etapa_original", "Bloco", "Tempo", "primeira_olfacao_s")
 _EPSILON = 1e-6
+# Colunas do pipeline que acompanham os indicadores sem serem medida (contagens e marcas).
+_NOT_INDICATORS = frozenset(("AWI_baseline_janelas", "AWI_sem_baseline", "Codigo"))
+
+
+def _indicator_columns(table: pd.DataFrame) -> List[str]:
+    """Medidas numéricas de uma tabela do pipeline: sem chaves, sessão, marcas e contagens."""
+    return [c for c in table.columns
+            if c not in _WINDOW_COLUMNS and c not in _SESSION_COLUMNS and c not in _NOT_INDICATORS
+            and pd.api.types.is_numeric_dtype(table[c]) and not pd.api.types.is_bool_dtype(table[c])]
 
 
 def _issue(issues: List[Dict], level: str, code: str, message: str) -> None:
@@ -167,8 +176,7 @@ def _eeg_windows(tables: Dict[str, pd.DataFrame], sessions: pd.DataFrame, stages
         _issue(issues, "warn", "sem_psd",
                "Sem o PSD por janela: os índices do relatório não são calculados, só os indicadores do pipeline.")
     if indicators is not None and psd is not None:
-        values = [c for c in indicators.columns if c not in _WINDOW_COLUMNS and c not in _SESSION_COLUMNS
-                  and pd.api.types.is_numeric_dtype(indicators[c])]
+        values = _indicator_columns(indicators)
         keyed = indicators[values].copy()
         keyed.index = sensorial_cleaning.window_key(indicators)
         keyed = keyed[~keyed.index.duplicated()]
@@ -176,9 +184,7 @@ def _eeg_windows(tables: Dict[str, pd.DataFrame], sessions: pd.DataFrame, stages
         joined.index = eeg.index
         eeg = pd.concat([eeg, joined], axis=1)
     elif indicators is not None:
-        values = [c for c in indicators.columns if c not in _WINDOW_COLUMNS and c not in _SESSION_COLUMNS
-                  and pd.api.types.is_numeric_dtype(indicators[c])]
-        eeg = pd.concat([eeg, indicators[values]], axis=1)
+        eeg = pd.concat([eeg, indicators[_indicator_columns(indicators)]], axis=1)
 
     by_session = sessions.set_index("sessao_id")
     eeg["participant_code"] = eeg["sessao_id"].map(by_session["participant_code"])

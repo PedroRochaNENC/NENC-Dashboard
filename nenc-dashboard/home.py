@@ -12,7 +12,6 @@ import streamlit as st
 
 from utils import auth, ui
 from utils.icons import icon
-from utils.organization_data import load_module_state
 
 user = auth.require_login()
 ui.inject_theme()
@@ -40,13 +39,13 @@ MODULE_CARDS = (
         "teste_sensorial",
         "Teste Sensorial",
         "waveform",
-        "EEG e sinais periféricos (BPM, GSR, RMSSD).",
+        "EEG, sinais periféricos e teste de associação de claims, por projeto.",
         (
-            ("folder-open", "Preparação de Dados"),
-            ("chart-line", "Sinais no tempo"),
-            ("users-three", "Média por etapa"),
+            ("folders", "Projetos"),
+            ("users-three", "Participantes e sessões"),
+            ("chart-bar", "Análise Geral e sinais"),
         ),
-        "modules/teste_sensorial/preparacao.py",
+        "modules/teste_sensorial/projetos.py",
     ),
     (
         "jornada_compra",
@@ -78,11 +77,17 @@ MODULE_CARDS = (
 def _module_status(module_key: str) -> tuple[str, bool]:
     """Devolve (texto do selo, tem_dados) para o card do módulo."""
     if module_key == "teste_sensorial":
-        data = load_module_state("teste_sensorial")
-        loaded = bool(
-            data and {"indicadores", "perifericos", "psd_results"}.intersection(data)
+        from utils.sensorial_db import summary_counts as sensorial_counts
+
+        counts = sensorial_counts()
+        if not counts["projects"]:
+            return ("Nenhum projeto criado", False)
+        return (
+            "{} projetos · {} participantes".format(
+                counts["projects"], counts["participants"]
+            ),
+            True,
         )
-        return ("Dados carregados" if loaded else "Sem dados", loaded)
 
     if module_key == "jornada_compra":
         # So o banco: a contagem de documentos da base chamava a OpenAI a cada

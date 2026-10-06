@@ -1,8 +1,9 @@
 """
 Teste Sensorial — Lista de Projetos.
 
-Ponto de entrada do módulo de Teste Sensorial.
-Exibe todos os projetos criados e permite criar, abrir, editar ou excluir.
+Ponto de entrada do módulo. Cada projeto reúne as saídas do pipeline de um
+estudo (EEG, periféricos, teste de associação), os participantes, as decisões
+sobre as sessões e as análises — o mesmo desenho da Jornada de Compra.
 """
 
 import streamlit as st
@@ -10,111 +11,106 @@ from utils import auth, ui
 from utils.icons import page_title
 
 user = auth.require_module("teste_sensorial")
+pode_editar = auth.can_write(user)
 
-from utils import teste_sensorial_db
+from utils import sensorial_db
 
-teste_sensorial_db.init_db()
+sensorial_db.init_db()
+
+# O que depende do projeto aberto e cai junto quando ele muda.
+_CHILD_KEYS = ("ts_session_focus",)
+
+
+def _open_project(project_id: int, destination: str) -> None:
+    st.session_state["ts_project_id"] = project_id
+    for key in _CHILD_KEYS:
+        st.session_state.pop(key, None)
+    # As páginas do projeto só entram no menu no rerun seguinte; o salto passa
+    # por `_navigate_to`, que o app.py resolve antes de rodar a página.
+    st.session_state["_navigate_to"] = destination
+    st.rerun()
+
 
 ui.inject_theme()
 ui.breadcrumb("Teste Sensorial", "Projetos")
 page_title(
     "folders",
     "Projetos",
-    "Cada projeto agrupa as etapas e os participantes do teste.",
-)
-st.markdown(
-    "Organize suas pesquisas de neuromarketing e testes sensoriais em **projetos**. "
-    "Cada projeto agrupa métricas de EEG (atenção, valência, assimetria), dados periféricos "
-    "(GSR, frequência cardíaca), PSD e base de conhecimento do produto."
+    "Cada projeto reúne EEG, sinais periféricos, teste de associação e análises de um estudo.",
 )
 
-# ------------------------------------------------------------------
-# Botão Novo Projeto
-# ------------------------------------------------------------------
-col_title, col_btn = st.columns([4, 1])
+_, col_btn = st.columns([4, 1])
 with col_btn:
-    if st.button("Novo Projeto", type="primary", use_container_width=True):
+    if pode_editar and st.button("Novo Projeto", type="primary", width="stretch"):
         st.session_state.pop("ts_project_id", None)
         st.switch_page("modules/teste_sensorial/preparacao.py")
 
-# ------------------------------------------------------------------
-# Migração de Dados Legados
-# ------------------------------------------------------------------
-legacy_data = st.session_state.get("ts_data")
-if legacy_data and not st.session_state.get("ts_project_id"):
-    with st.expander("Dados de EEG/Periféricos não salvos no Session State", expanded=True):
-        st.warning(
-            "Encontramos dados sensoriais carregados na sessão atual. "
-            "Você pode salvá-los como um novo Projeto no banco de dados."
-        )
-        mig_name = st.text_input("Nome do Projeto Sensorial", value="Projeto Sensorial (Importado)", key="ts_mig_name")
-        if st.button("Salvar como Novo Projeto"):
-            pid = teste_sensorial_db.create_project(name=mig_name)
-            teste_sensorial_db.save_dataset(
-                pid,
-                indicadores=legacy_data.get("indicadores"),
-                perifericos=legacy_data.get("perifericos"),
-                psd_results=legacy_data.get("psd_results"),
-            )
-            st.session_state["ts_project_id"] = pid
-            st.success(f"Projeto '{mig_name}' criado com sucesso!")
-            st.rerun()
+if not pode_editar:
+    st.info("Sua conta tem acesso somente de leitura ao Teste Sensorial.")
 
-st.divider()
-
-# ------------------------------------------------------------------
-# Lista de Projetos
-# ------------------------------------------------------------------
-projects = teste_sensorial_db.get_projects()
+projects = sensorial_db.list_projects()
 
 if not projects:
-    st.info("Nenhum projeto de Teste Sensorial cadastrado ainda. Clique em **Novo Projeto** para começar.")
+    st.info("Nenhum projeto criado ainda. Clique em **Novo Projeto** para começar.")
 else:
-    active_project_id = st.session_state.get("ts_project_id")
-
+    active_id = st.session_state.get("ts_project_id")
     for proj in projects:
-        p_id = proj["id"]
-        is_active = (active_project_id == p_id)
-        
         with st.container(border=True):
-            c_header, c_actions = st.columns([3, 1])
-            
-            with c_header:
-                active_badge = "**[ATIVO]** " if is_active else ""
-                st.markdown(f"### {active_badge}{proj['name']}")
-                meta_parts = []
-                if proj.get("produto_estimulo"):
-                    meta_parts.append(f"**Produto/Estímulo:** {proj['produto_estimulo']}")
-                meta_parts.append(f"**Datasets:** {proj['total_datasets']}")
-                meta_parts.append(f"**Análises IA:** {proj['total_analyses']}")
-                meta_parts.append(f"**Atualizado em:** {proj['updated_at']}")
-                st.caption(" | ".join(meta_parts))
+            c1, c2, c3 = st.columns([6, 1, 1])
+            pode_alterar = sensorial_db.user_can_modify_project(proj, user)
 
-            with c_actions:
-                if not is_active:
-                    if st.button("Abrir Projeto", key=f"open_ts_{p_id}", use_container_width=True, type="primary"):
-                        st.session_state["ts_project_id"] = p_id
-                        st.session_state.pop("ts_data", None)
-                        st.switch_page("modules/teste_sensorial/preparacao.py")
-                else:
-                    st.success("Projeto Selecionado")
-                    if st.button("Ir para Dados", key=f"goto_ts_{p_id}", use_container_width=True):
-                        st.switch_page("modules/teste_sensorial/preparacao.py")
+            with c1:
+                badges = []
+                if proj["id"] == active_id:
+                    badges.append(ui.status_chip("check", "aberto", tone="accent"))
+                if proj.get("organization_name") and user.is_platform_admin:
+                    badges.append(ui.status_chip("buildings", proj["organization_name"]))
+                if proj.get("categoria"):
+                    badges.append(ui.status_chip("folder-open", proj["categoria"]))
+                st.markdown(
+                    '<span style="display:inline-flex;align-items:center;gap:.45rem;'
+                    'flex-wrap:wrap"><strong>{}</strong>{}</span>'.format(proj["name"], "".join(badges)),
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "{} participante(s) · {} arquivo(s) · {} análise(s) · atualizado em {}".format(
+                        proj.get("n_participants", 0),
+                        proj.get("n_files", 0),
+                        proj.get("n_analyses", 0),
+                        str(proj.get("updated_at") or "")[:16],
+                    )
+                )
 
-                with st.popover("Opções", use_container_width=True):
-                    if st.button("Editar Briefing", key=f"edit_ts_{p_id}", use_container_width=True):
-                        st.session_state["ts_project_id"] = p_id
-                        st.switch_page("modules/teste_sensorial/preparacao.py")
-                    
-                    if st.button("Excluir Projeto", key=f"del_ts_{p_id}", use_container_width=True):
-                        st.session_state[f"confirm_del_ts_{p_id}"] = True
+            with c2:
+                st.write("")
+                if st.button("Abrir", key="ts_open_{}".format(proj["id"]), width="stretch"):
+                    _open_project(proj["id"], "modules/teste_sensorial/preparacao.py")
 
-                    if st.session_state.get(f"confirm_del_ts_{p_id}"):
-                        st.error("Tem certeza que deseja excluir?")
-                        if st.button("Confirmar Exclusão", key=f"conf_del_ts_{p_id}", type="primary"):
-                            teste_sensorial_db.delete_project(p_id)
-                            if st.session_state.get("ts_project_id") == p_id:
+            with c3:
+                st.write("")
+                if pode_alterar and st.button("Excluir", key="ts_del_{}".format(proj["id"]), width="stretch"):
+                    st.session_state["ts_confirm_del_{}".format(proj["id"])] = True
+
+            if st.session_state.get("ts_confirm_del_{}".format(proj["id"])):
+                st.warning(
+                    "Excluir **{}**? Arquivos, tabelas, participantes, decisões, análises e o "
+                    "material do projeto na base de conhecimento serão removidos "
+                    "permanentemente.".format(proj["name"])
+                )
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    if st.button("Confirmar exclusão", key="ts_del_yes_{}".format(proj["id"]), width="stretch"):
+                        try:
+                            sensorial_db.delete_project(proj["id"])
+                        except auth.AuthorizationError as error:
+                            st.error(str(error))
+                        else:
+                            st.session_state.pop("ts_confirm_del_{}".format(proj["id"]), None)
+                            if st.session_state.get("ts_project_id") == proj["id"]:
                                 st.session_state.pop("ts_project_id", None)
-                                st.session_state.pop("ts_data", None)
-                            st.success("Projeto excluído.")
+                                st.session_state["_navigate_to"] = "modules/teste_sensorial/projetos.py"
                             st.rerun()
+                with cc2:
+                    if st.button("Cancelar", key="ts_del_no_{}".format(proj["id"]), width="stretch"):
+                        st.session_state.pop("ts_confirm_del_{}".format(proj["id"]), None)
+                        st.rerun()
