@@ -31,6 +31,8 @@ _PERIPHERAL_LAYERS = {"BPM": ("fc",), "RMSSD": ("fc",), "Comfort_Score": ("fc",)
                       "Emotional_Index": ("fc", "gsr")}
 _COMPARISON_TYPES = {"vs_basal": "× basal", "vs_controle": "× controle", "entre_amostras": "× amostra"}
 _MEANS_COLUMNS = ["participant_code", "condicao", "etapa", "medida", "valor"]
+# Ponto da curva com menos participantes que isto é ruído de poucos (ex.: antes da cheirada).
+MIN_CURVE_PARTICIPANTS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +164,7 @@ def comparisons(means: pd.DataFrame, design: Dict[str, Any], settings: Dict[str,
 # ---------------------------------------------------------------------------
 
 def curves(model: Dict[str, Any], measure: str, alignment: str = "etapa", filters: Optional[Dict] = None,
-           bin_s: float = 0.25) -> Dict[str, Any]:
+           bin_s: float = 0.25, min_participants: int = MIN_CURVE_PARTICIPANTS) -> Dict[str, Any]:
     """Curva média ± erro padrão por condição.
 
     `alignment="etapa"`: cada etapa no tempo dela. `"olfacao"`: a exposição e a
@@ -199,6 +201,8 @@ def curves(model: Dict[str, Any], measure: str, alignment: str = "etapa", filter
     rows = []
     for (condition, stage, t), group in per_participant.groupby(["condicao", "etapa", "t"]):
         described = sensorial_stats.describe(group[measure])
+        if described["n"] < min_participants:
+            continue
         rows.append({"condicao": condition, "etapa": stage, "t": t, "media": described["media"],
                      "ep": described["ep"], "n": described["n"]})
     reference = design.get("referencia") or {}

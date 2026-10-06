@@ -84,7 +84,7 @@ else:
             with c2:
                 st.write("")
                 if st.button("Abrir", key="ts_open_{}".format(proj["id"]), width="stretch"):
-                    _open_project(proj["id"], "modules/teste_sensorial/preparacao.py")
+                    _open_project(proj["id"], "modules/teste_sensorial/analise_geral.py")
 
             with c3:
                 st.write("")

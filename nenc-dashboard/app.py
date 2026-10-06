@@ -220,6 +220,10 @@ def _sensorial_pages(user: auth.User) -> dict[str, list]:
 
     if project:
         project_pages = [
+            _page("modules/teste_sensorial/analise_geral.py",
+                  "Análise Geral", "chart-bar"),
+            _page("modules/teste_sensorial/sinais.py",
+                  "Sinais", "chart-line"),
             _page("modules/teste_sensorial/participantes.py",
                   "Participantes", "users-three"),
         ]
