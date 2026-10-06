@@ -219,7 +219,10 @@ def _sensorial_pages(user: auth.User) -> dict[str, list]:
     pode_editar = auth.can_write(user)
 
     if project:
-        project_pages = []
+        project_pages = [
+            _page("modules/teste_sensorial/participantes.py",
+                  "Participantes", "users-three"),
+        ]
         if pode_editar:
             project_pages.append(
                 _page("modules/teste_sensorial/uploads.py",
