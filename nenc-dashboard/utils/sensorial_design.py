@@ -44,11 +44,15 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     },
     "associacao": {
         "agrupar": {},  # rótulo -> condições somadas, ex.: {"B": ["B1", "B2"]}
+        # Score = % de "Sim" × CR médio das respostas "Sim".
         "faixas": {"muito_alta": 0.2, "alta": 0.0, "baixa": -0.1},
+        # Quadrantes: adesão explícita (% de "Sim") × convicção (CR médio do "Sim").
+        "quadrantes": {"pct_sim": 0.5, "cr": 0.0},
     },
-    # Claim -> indicadores que o confirmam: [{"palavra", "indicadores", "corpo"}].
+    # Claim -> indicadores que o confirmam: [{"palavra", "indicadores", "corpo"}]. Um "-" na
+    # frente do código (ex.: "-AROUSAL_FRONT") diz que o esperado é o índice cair.
     "claims": [],
-    "estatistica": {"min_pares": 5},
+    "estatistica": {"min_pares": 5, "alfa": 0.05},
 }
 
 # Índices do relatório, calculados do PSD por janela (utils/sensorial_indices.py).
