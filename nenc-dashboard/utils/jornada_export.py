@@ -19,24 +19,22 @@ Projeto. A aba Dicionario explica cada coluna.
 """
 
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
-import numpy as np
 import pandas as pd
 
 from utils.excel_export import (
-    EXCEL_CELL_MAX_CHARS,
     EXCEL_SAFE_MAX_DATA_ROWS,
-    json_text,
+    analysis_rows,
+    cap_text,
+    clean_frame,
+    dictionary_frame,
     safe_slug,
     write_workbook,
 )
 from utils.jornada_ingest import METRIC_COLUMNS, TASK_LABELS
 from utils.jornada_model import CHOICE_COLUMNS, TIME_COLUMNS
 
-# Folga para o aviso de corte caber na celula.
-_TEXT_LIMIT = EXCEL_CELL_MAX_CHARS - 200
-_CUT_NOTE = " […texto cortado no limite de uma célula do Excel]"
 
 RECORDING_COLUMNS = [
     "recording_key", "participant", "task", "task_label", "store", "store_label", "channel",
@@ -365,62 +363,10 @@ def filters_text(filters: Optional[Dict], model: Optional[Dict] = None) -> str:
 # Excel / Power BI
 # ---------------------------------------------------------------------------
 
-def _cap_text(value):
-    if isinstance(value, str) and len(value) > _TEXT_LIMIT:
-        return value[:_TEXT_LIMIT] + _CUT_NOTE
-    return value
-
-
-def _clean(frame: Optional[pd.DataFrame], columns: Sequence[str] = ()) -> pd.DataFrame:
-    """Tabela pronta para a planilha: cabeçalho estável, sem ±inf e texto que cabe na célula."""
-
-    if frame is None or (frame.empty and len(frame.columns) == 0):
-        return pd.DataFrame(columns=list(columns))
-    out = frame.reset_index(drop=True).copy()
-    numeric = out.select_dtypes(include="number").columns
-    if len(numeric):
-        out[numeric] = out[numeric].replace([np.inf, -np.inf], np.nan)
-    for column in out.columns:
-        if out[column].dtype == object:
-            out[column] = out[column].map(_cap_text)
-    return out
-
-
-def _first(item: Dict, *keys: str):
-    for key in keys:
-        if item.get(key) not in (None, ""):
-            return item[key]
-    return None
-
-
-def _analysis_rows(analyses: Iterable[Dict], data_version) -> Tuple[List[Dict], List[Dict]]:
-    analysis_rows, citation_rows = [], []
-    for analysis in analyses or ():
-        analysis_rows.append({
-            "id": analysis.get("id"),
-            "created_at": analysis.get("created_at"),
-            "model": analysis.get("model"),
-            "mode": analysis.get("mode"),
-            "data_version": analysis.get("data_version"),
-            "is_current": (analysis.get("data_version") is not None
-                           and analysis.get("data_version") == data_version),
-            "analysis_text": analysis.get("analysis_text"),
-            "kb_file_id": analysis.get("kb_file_id"),
-            "filters": json_text(analysis.get("filters") or {}),
-            "search": json_text(analysis.get("search") or {}),
-        })
-        for index, citation in enumerate(analysis.get("citations") or [], start=1):
-            data = citation if isinstance(citation, dict) else {"quote": str(citation)}
-            citation_rows.append({
-                "analysis_id": analysis.get("id"),
-                "citation_index": index,
-                "file_id": _first(data, "file_id"),
-                "filename": _first(data, "filename", "file_name", "source"),
-                "quote": _first(data, "quote", "text", "content"),
-                "score": _first(data, "score"),
-                "citation_json": json_text(data),
-            })
-    return analysis_rows, citation_rows
+# Peças genéricas em utils/excel_export; os nomes antigos continuam valendo aqui.
+_cap_text = cap_text
+_clean = clean_frame
+_analysis_rows = analysis_rows
 
 
 def _recordings_sheet(model: Dict, quality: Optional[Dict], media: Sequence[Dict]) -> pd.DataFrame:
@@ -455,23 +401,16 @@ def _choices_sheet(choices: Optional[pd.DataFrame]) -> pd.DataFrame:
     return _clean(out, columns)
 
 
+def _describe_column(column: str) -> str:
+    if column.startswith("attr_"):
+        return "Valor do atributo {} no nome da AOI.".format(column[5:])
+    if column in METRIC_COLUMNS:
+        return _RAW_COLUMN_NOTE
+    return ""
+
+
 def _dictionary(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    rows = []
-    for sheet, frame in tables.items():
-        for column in frame.columns:
-            if column in COLUMN_DESCRIPTIONS:
-                description = COLUMN_DESCRIPTIONS[column]
-            elif str(column).startswith("attr_"):
-                description = "Valor do atributo {} no nome da AOI.".format(str(column)[5:])
-            elif column in METRIC_COLUMNS:
-                description = _RAW_COLUMN_NOTE
-            else:
-                description = ""
-            rows.append({"aba": sheet, "descricao_aba": SHEET_DESCRIPTIONS.get(sheet, ""),
-                         "coluna": column, "descricao": description})
-    rows.append({"aba": "Dicionario", "descricao_aba": SHEET_DESCRIPTIONS["Dicionario"],
-                 "coluna": "aba / coluna / descricao", "descricao": "Aba, coluna e o que ela contém."})
-    return pd.DataFrame(rows, columns=["aba", "descricao_aba", "coluna", "descricao"])
+    return dictionary_frame(tables, SHEET_DESCRIPTIONS, COLUMN_DESCRIPTIONS, _describe_column)
 
 
 def excel_tables(

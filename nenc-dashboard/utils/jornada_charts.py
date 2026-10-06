@@ -24,84 +24,36 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-# Importado pelo efeito de registrar o template "nenc".
-from utils.charts import NENC_HEATMAP  # noqa: F401
+from utils.chart_kit import (  # noqa: F401 - reexportados para as páginas e testes
+    ABOVE_COLOR,
+    BAR_PX,
+    BELOW_COLOR,
+    BRAND_SEQUENCE,
+    DEEMPHASIS,
+    FOCUS_COLOR,
+    INK,
+    MUTED,
+    OTHER_COLOR,
+    SEQUENTIAL,
+    SURFACE,
+    bar_height,
+    color_map,
+    empty_figure,
+    label_color,
+    layout,
+    pct,
+)
 from utils.jornada_taxonomy import fold
 
-SURFACE = "#1c1e2c"
-INK = "#e9e9ed"
-MUTED = "#9397ab"
-DEEMPHASIS = "#595d6c"
-
-# Ordem validada (dark, superficie #1c1e2c): violeta, laranja, agua, azul,
-# amarelo, magenta, verde, vermelho.
-BRAND_SEQUENCE = [
-    "#9085e9", "#d95926", "#199e70", "#3987e5", "#c98500", "#d55181", "#008300", "#e66767",
-]
-FOCUS_COLOR = BRAND_SEQUENCE[0]
-OTHER_COLOR = "#75798c"
+# Paleta e base em utils/chart_kit (compartilhadas com o Teste Sensorial);
+# os nomes antigos continuam valendo aqui.
 FUNNEL_COLORS = {"notou": "#d2cefd", "examinou": "#9085e9", "retornou": "#5d5294"}
-SEQUENTIAL = [[0, "#1c1e2c"], [0.5, "#5d5294"], [1, "#d2cefd"]]
-ABOVE_COLOR = "#3987e5"
-BELOW_COLOR = "#e66767"
-BAR_PX = 24
-
-
-def brand_color_map(brands: Sequence[str], focus_brand: str = "") -> Dict[str, str]:
-    """Cor fixa por marca: a foco no slot 1, as demais na ordem do projeto.
-
-    Passando do oitavo slot, as marcas restantes vão para o cinza de "outras":
-    gerar um nono tom colidiria com um dos oito sob daltonismo.
-    """
-
-    ordered = list(dict.fromkeys(b for b in brands if b))
-    focus = next((b for b in ordered if fold(b) == fold(focus_brand)), None) if focus_brand else None
-    if focus:
-        ordered.remove(focus)
-        ordered.insert(0, focus)
-    colors = {}
-    for index, brand in enumerate(ordered):
-        colors[brand] = BRAND_SEQUENCE[index] if index < len(BRAND_SEQUENCE) else OTHER_COLOR
-    return colors
-
-
-def _empty(message: str) -> go.Figure:
-    figure = go.Figure()
-    figure.add_annotation(text=message, showarrow=False, xref="paper", yref="paper",
-                          x=0.5, y=0.5, font=dict(color=MUTED))
-    figure.update_layout(template="nenc", height=160, xaxis=dict(visible=False),
-                         yaxis=dict(visible=False))
-    return figure
-
-
-def _layout(figure: go.Figure, height: int, **kwargs) -> go.Figure:
-    figure.update_layout(
-        template="nenc",
-        height=height,
-        barcornerradius=4,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color=INK)),
-        hoverlabel=dict(bgcolor="#252838", font=dict(color=INK)),
-        **kwargs,
-    )
-    return figure
-
-
-def _pct(value: float) -> str:
-    return "" if value != value else "{:.0f}%".format(100 * value)
-
-
-def _label_color(hex_color: str) -> str:
-    """Texto sobre um preenchimento: branco ou tinta escura, pelo contraste."""
-
-    raw = hex_color.lstrip("#")
-    r, g, b = (int(raw[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in (r, g, b)]
-    luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
-    return "#0b0b0b" if luminance > 0.35 else "#ffffff"
-
-
-def _bar_height(rows: int, per_row: int = 44, extra: int = 110) -> int:
-    return max(180, rows * per_row + extra)
+brand_color_map = color_map
+_empty = empty_figure
+_layout = layout
+_pct = pct
+_label_color = label_color
+_bar_height = bar_height
 
 
 # ---------------------------------------------------------------------------
