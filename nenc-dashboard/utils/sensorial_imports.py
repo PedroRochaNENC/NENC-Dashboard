@@ -142,6 +142,39 @@ def file_item(entry: Dict, path: Path, parsed: sensorial_ingest.ParsedFile) -> D
     return item
 
 
+# Tabelas cujos códigos viram participantes do projeto (o registro de campo pode
+# citar quem não chegou a ter sessão, e não entra aqui).
+_CODE_ROLES = frozenset(sensorial_ingest.PIPELINE_ROLES | {"inventario"})
+
+
+def participant_codes(parsed: sensorial_ingest.ParsedFile) -> set:
+    """Códigos de participante de uma tabela do pipeline ou do inventário."""
+    if parsed.role not in _CODE_ROLES or parsed.table is None or "participant_code" not in parsed.table:
+        return set()
+    return {str(code) for code in parsed.table["participant_code"].dropna().unique()}
+
+
+def register_participants(project_id: int, codes) -> int:
+    """Participantes encontrados nos dados entram no projeto, sem perfil e sem tocar no que existe."""
+    rows = [{"code": code} for code in sorted(codes)]
+    return sensorial_db.upsert_participants(project_id, rows, only_missing=True, source="dados") if rows else 0
+
+
+def record_upload(project_id: int, name: str, content: bytes, parsed: sensorial_ingest.ParsedFile) -> Dict:
+    """Grava um arquivo enviado pela tela (já lido): o mesmo caminho da importação."""
+    item = {"filename": name, "rel_path": name, "role": parsed.role, "run_id": parsed.meta.get("run_id"),
+            "meta": parsed.meta, "content": content, "extension": _extension(name),
+            "supersede": bool(sensorial_ingest.ROLES[parsed.role]["single"])}
+    if parsed.table is not None:
+        item.update(table=parsed.table, table_version=sensorial_ingest.PARSER_VERSION)
+    result = sensorial_db.add_files(project_id, [item])
+    participants = register_participants(project_id, participant_codes(parsed))
+    if parsed.role == "perfil" and parsed.table is not None:
+        participants += sensorial_db.upsert_participants(project_id, _profile_rows(parsed.table), only_missing=True,
+                                                         source="planilha")
+    return dict(result, participants=participants)
+
+
 def _profile_rows(table) -> List[Dict]:
     attributes = [column for column in table.columns if column != "participant_code"]
     rows = []
@@ -183,6 +216,7 @@ def _apply(project_id: int, batch: Dict, fixes: Dict[int, Dict], selected, send_
     skipped: List[str] = []
     warnings: List[str] = []
     recorded: List[int] = []
+    codes: set = set()
     report = {"files": 0, "duplicates": 0, "participants": 0, "documents": 0, "skipped": skipped,
               "warnings": warnings}
     for entry in files:
@@ -197,6 +231,7 @@ def _apply(project_id: int, batch: Dict, fixes: Dict[int, Dict], selected, send_
             skipped.append("{}: {}".format(name, reasons))
             continue
         result = sensorial_db.add_files(project_id, [file_item(entry, path, parsed)])
+        codes |= participant_codes(parsed)
         report["files"] += len(result["added"])
         report["duplicates"] += len(result["duplicates"])
         recorded.append(entry["id"])
@@ -223,6 +258,7 @@ def _apply(project_id: int, batch: Dict, fixes: Dict[int, Dict], selected, send_
                     report["documents"] += 1
                 except Exception as error:  # a base fora do ar não impede o resto
                     warnings.append("{}: não foi para a base ({}).".format(name, error))
+    report["participants"] += register_participants(project_id, codes)
     return report, recorded
 
 

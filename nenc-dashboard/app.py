@@ -219,10 +219,16 @@ def _sensorial_pages(user: auth.User) -> dict[str, list]:
     pode_editar = auth.can_write(user)
 
     if project:
-        project_pages = [
+        project_pages = []
+        if pode_editar:
+            project_pages.append(
+                _page("modules/teste_sensorial/uploads.py",
+                      "Uploads", "upload-simple")
+            )
+        project_pages.append(
             _page("modules/teste_sensorial/preparacao.py",
-                  "Dados do Projeto", "note-pencil"),
-        ]
+                  "Dados do Projeto", "note-pencil")
+        )
         section_name = str(project["name"])
         if section_name == "Teste Sensorial":
             # Mesmo nome da seção do módulo: o dict juntaria as duas.
