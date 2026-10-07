@@ -17,13 +17,18 @@ docs
 tests
 plan-prosodiaEyeTracking.prompt.prompt.md
 
-# O banco vive no volume ./data, nao na imagem. Sem isto o COPY do
-# Dockerfile assa o prosodia.db de desenvolvimento — dados reais de
-# entrevista, e megabytes — em uma camada.
-*.db
-*.sqlite3
+# Tudo em ./data e volume montado em /app/data: banco, videos, inbox e
+# backups de producao. Sem isto o COPY . . leva o diretorio inteiro para
+# o contexto e para uma camada da imagem — em 07/10/2026 eram 3.7 GB de
+# video da Jornada, copiados uma vez por servico, e o disco encheu.
+data
+
+# Padrao sem barra so casa na raiz do contexto: "*.db" nao pegava
+# data/prosodia.db. O **/ cobre qualquer profundidade.
+**/*.db
+**/*.sqlite3
 
 # Videos da Jornada vivem no volume ./data (ou NENC_MEDIA_DIR), nunca na imagem.
-jornada_media
-jornada_inbox
+**/jornada_media
+**/jornada_inbox
 static/video_*
