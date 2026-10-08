@@ -40,12 +40,16 @@ from utils.prosodia_signals import (
     divergencias_texto,
     emotion_distribution_text,
     formatar_tempo,
+    indice_combinado_por_grupo,
+    indice_combinado_texto,
+    referencia_valencia,
     selecionar_momentos_ativacao,
     tem_sentimento_texto,
     texto_sentimento_resumo,
 )
 # from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
 from utils.prosodia_charts import (
+    create_combined_sentiment_chart,
     create_speaker_stats,
     create_project_acoustic_comparison,
     create_project_emotion_distribution,
@@ -849,6 +853,8 @@ if not all_tr.empty:
 # ------------------------------------------------------------------
 fonte_sentimento = all_tr if tem_sentimento_texto(all_tr) else all_sinc
 project_divergences = detectar_divergencias(all_sinc)
+referencia_voz = referencia_valencia(all_sinc)
+indice_por_audio = indice_combinado_por_grupo(all_sinc, referencia_voz, "session_id")
 if tem_sentimento_texto(fonte_sentimento):
     st.divider()
     st.subheader("Sentimento do Texto × Voz")
@@ -875,6 +881,40 @@ if tem_sentimento_texto(fonte_sentimento):
                 metrics=["dim_valence"],
             ),
             use_container_width=True,
+        )
+
+    if not indice_por_audio.empty:
+        st.write("")
+        st.subheader("Índice Combinado de Sentimento")
+        st.markdown(
+            "Uma nota de -1 a +1 por trecho: metade vem do sentimento do texto, metade da "
+            "valência da voz medida em relação a todos os áudios do projeto (dois desvios-padrão "
+            "acima ou abaixo valem +1 ou -1). Serve para comparar áudios dentro do projeto, não "
+            "como medida absoluta; as barras de Texto e Voz mostram de qual leitura vem a polaridade."
+        )
+        st.plotly_chart(
+            create_combined_sentiment_chart(
+                indice_por_audio, title="Índice Combinado por Áudio (Texto + Voz)"
+            ),
+            use_container_width=True,
+        )
+        st.dataframe(
+            pd.DataFrame({
+                "Áudio": indice_por_audio["grupo"],
+                "Trechos": indice_por_audio["trechos"],
+                "Texto": indice_por_audio["texto"].map(lambda v: f"{v:+.2f}"),
+                "Voz": indice_por_audio["voz"].map(lambda v: f"{v:+.2f}"),
+                "Índice": indice_por_audio["indice"].map(lambda v: f"{v:+.2f}"),
+                "Positivo": indice_por_audio["positivo"].map(lambda v: f"{v:.0%}"),
+                "Neutro": indice_por_audio["neutro"].map(lambda v: f"{v:.0%}"),
+                "Negativo": indice_por_audio["negativo"].map(lambda v: f"{v:.0%}"),
+            }),
+            width="stretch",
+            hide_index=True,
+        )
+        st.caption(
+            "Fatias em proporção do tempo de fala com as duas leituras; neutro é |índice| < 0,2. "
+            "Trechos sem nota do texto ou sem valência ficam de fora."
         )
 
     st.write("")
@@ -1380,6 +1420,9 @@ if st.button(btn_label, type="primary"):
             individual_analyses_text = _load_individual_analyses(audios)
 
             sentimento_texto = texto_sentimento_resumo(fonte_sentimento, "session_id", "Áudio")
+            indice_texto = indice_combinado_texto(all_sinc, referencia_voz, "session_id", "Áudio")
+            if sentimento_texto and indice_texto:
+                sentimento_texto += "\n\n" + indice_texto
             divergencias = (
                 divergencias_texto(project_divergences, incluir_audio=True)
                 if tem_sentimento_texto(all_sinc)

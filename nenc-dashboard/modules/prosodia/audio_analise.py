@@ -33,6 +33,7 @@ from utils.prosodia_db import (
     save_quality_check,
     save_high_activations,
     get_latest_high_activations,
+    get_sincronizados_for_project,
 )
 from utils.prosodia_loader import (
     extract_topic_from_text,
@@ -42,10 +43,13 @@ from utils.prosodia_loader import (
 from utils.prosodia_signals import (
     detectar_divergencias,
     formatar_tempo,
+    indice_combinado_por_grupo,
     momentos_alta_ativacao,
     montar_evidencias_audio,
+    referencia_valencia,
     tem_sentimento_texto,
 )
+from utils.prosodia_charts import create_combined_sentiment_chart
 from utils.prosodia_quality import (
     run_quality_checks,
     check_question_coverage_keywords,
@@ -395,6 +399,22 @@ def _rebuild_data(a_id: int, _audio: dict) -> dict:
         sincronizado_files=[_BF(_audio["sincronizado_csv"], f"Sincronizado-{session_id}.csv")] if _audio.get("sincronizado_csv") else [],
     )
 
+@st.cache_data(show_spinner=False, ttl=600)
+def _referencia_voz_projeto(p_id: int):
+    """Régua da voz do índice combinado: a valência de todos os áudios do projeto.
+
+    O TTL cobre áudios importados ou reprocessados depois: a régua muda pouco
+    com um áudio a mais e reler o projeto a cada render pesaria.
+    """
+    partes = []
+    for session_id, blob in get_sincronizados_for_project(p_id).items():
+        try:
+            partes.append(normalizar_sincronizado(pd.read_csv(io.BytesIO(blob)), session_id))
+        except Exception:
+            _LOGGER.exception("Sincronizado ilegivel no audio %s; fora da regua do projeto.", session_id)
+    return referencia_valencia(pd.concat(partes, ignore_index=True) if partes else pd.DataFrame())
+
+
 data = _rebuild_data(audio_id, audio)
 vad_df: pd.DataFrame = data.get("vad", pd.DataFrame())
 tr_df: pd.DataFrame = data.get("transcricao", pd.DataFrame())
@@ -461,7 +481,10 @@ proj_ctx = {
     "briefing": project.get("briefing_text", ""),
 }
 
-evidencias = montar_evidencias_audio(vad_df, tr_df, sinc_df, high_activations_list)
+referencia_voz = _referencia_voz_projeto(project["id"])
+evidencias = montar_evidencias_audio(
+    vad_df, tr_df, sinc_df, high_activations_list, referencia_voz=referencia_voz
+)
 tables_text = evidencias.tabelas
 divergencias_df = detectar_divergencias(sinc_df)
 
@@ -603,7 +626,8 @@ if is_wa and h2 is not None:
                         # 8. Atualizar Análise de IA
                         status_container.info("Atualizando análise de IA...")
                         new_evidencias = montar_evidencias_audio(
-                            new_vad_df, new_tr_df, new_sinc_df, new_high_activations
+                            new_vad_df, new_tr_df, new_sinc_df, new_high_activations,
+                            referencia_voz=referencia_voz,
                         )
                         user_prompt = build_prosodia_user_prompt(
                             new_evidencias.tabelas,
@@ -1078,6 +1102,48 @@ with quality_section:
                 st.info("Nenhum momento de alta ativação calculado. Clique em 'Reverificar Qualidade' para gerar.")
     else:
         st.info("Verificação de qualidade ainda não realizada para este áudio.")
+
+    # Índice combinado texto + voz, com a voz medida contra o projeto inteiro.
+    indice_audio = indice_combinado_por_grupo(sinc_df, referencia_voz, None)
+    if not indice_audio.empty:
+        audio_cortado = (
+            "audio_cortado" in sinc_df.columns
+            and sinc_df["audio_cortado"].astype(str).str.strip().str.lower().isin({"true", "1"}).any()
+        )
+        st.write("")
+        st.subheader("Índice Combinado de Sentimento")
+        st.markdown(
+            "Uma nota de -1 a +1 por trecho: metade vem do sentimento do texto, metade da "
+            "valência da voz medida em relação a todos os áudios do projeto. Compare com os "
+            "outros áudios do projeto; as colunas Texto e Voz mostram de qual leitura vem a polaridade."
+        )
+        linha = indice_audio.iloc[0]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Índice combinado", f"{linha['indice']:+.2f}")
+        m2.metric("Texto", f"{linha['texto']:+.2f}")
+        m3.metric("Voz", f"{linha['voz']:+.2f}")
+        m4.metric("Trechos", int(linha["trechos"]))
+
+        if audio_cortado:
+            st.caption(
+                "Áudio longo analisado em trechos: os rótulos de locutor recomeçam a cada "
+                "trecho, então o índice vai pelo áudio inteiro, não por locutor."
+            )
+        else:
+            indice_locutores = indice_combinado_por_grupo(sinc_df, referencia_voz, "SpeakerName")
+            if len(indice_locutores) > 1:
+                st.plotly_chart(
+                    create_combined_sentiment_chart(
+                        indice_locutores, title="Índice Combinado por Locutor", eixo_x="Locutor"
+                    ),
+                    use_container_width=True,
+                    key=f"an_indice_locutores_{audio_id}",
+                )
+        st.caption(
+            "Positivo {:.0%}, neutro {:.0%} e negativo {:.0%} do tempo de fala com as duas "
+            "leituras (neutro é |índice| < 0,2). Trechos sem nota do texto ou sem valência "
+            "ficam de fora.".format(linha["positivo"], linha["neutro"], linha["negativo"])
+        )
 
     # Divergências voz × texto: saem do sincronizado com o sentimento do texto,
     # sem depender da verificação de qualidade.

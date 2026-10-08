@@ -25,11 +25,16 @@ from utils.prosodia_signals import (
     DIMENSOES,
     EMOCOES,
     MIN_LINHAS_POR_LOCUTOR,
+    ReferenciaVoz,
     detectar_divergencias,
     divergencias_texto,
     emotion_distribution_text,
+    indice_combinado_por_grupo,
+    indice_combinado_por_trecho,
+    indice_combinado_texto,
     momentos_alta_ativacao,
     montar_evidencias_audio,
+    referencia_valencia,
     signals_block,
     speaker_acoustics_text,
     texto_sentimento_resumo,
@@ -315,6 +320,76 @@ class DetectarDivergenciasTests(unittest.TestCase):
         self.assertIn("j9", texto)
         self.assertIn("não prova", texto)
         self.assertIn("Nenhuma divergência", divergencias_texto(pd.DataFrame()))
+
+
+class IndiceCombinadoTests(unittest.TestCase):
+
+    def test_regua_do_projeto(self):
+        ref = referencia_valencia(sincronizado(BASE + [-0.6], [0.0] * 10))
+
+        self.assertAlmostEqual(ref.media, sum(BASE + [-0.6]) / 10)
+        self.assertGreater(ref.desvio, 0)
+        self.assertEqual((ref.linhas, ref.audios), (10, 1))
+
+    def test_sem_regua_quando_faltam_linhas_ou_variacao(self):
+        self.assertIsNone(referencia_valencia(sincronizado(BASE[:3], [0.0] * 3)))
+        self.assertIsNone(referencia_valencia(sincronizado([0.1] * 10, [0.0] * 10)))
+        self.assertIsNone(referencia_valencia(pd.DataFrame()))
+
+    def test_metade_texto_metade_voz_com_voz_limitada(self):
+        ref = ReferenciaVoz(media=0.0, desvio=0.1, linhas=100, audios=3)
+        # z = +1 -> voz +0,5; z = -5 -> voz limitada a -1.
+        trechos = indice_combinado_por_trecho(sincronizado([0.1, -0.5], [0.8, 0.0]), ref)
+
+        self.assertAlmostEqual(trechos.loc[0, "voz"], 0.5)
+        self.assertAlmostEqual(trechos.loc[0, "indice"], 0.65)
+        self.assertAlmostEqual(trechos.loc[1, "voz"], -1.0)
+        self.assertAlmostEqual(trechos.loc[1, "indice"], -0.5)
+
+    def test_regua_do_projeto_separa_audios_que_o_z_por_locutor_igualaria(self):
+        s1 = sincronizado([0.5 + d for d in BASE], [0.0] * 9)
+        s2 = sincronizado([-0.5 + d for d in BASE], [0.0] * 9, session="s2")
+        projeto = pd.concat([s1, s2], ignore_index=True)
+
+        tabela = indice_combinado_por_grupo(projeto, referencia_valencia(projeto), "session_id")
+
+        por_audio = tabela.set_index("grupo")["indice"]
+        self.assertGreater(por_audio["s1"], 0.2)
+        self.assertLess(por_audio["s2"], -0.2)
+        self.assertAlmostEqual(tabela["texto"].abs().max(), 0.0)
+
+    def test_varias_linhas_do_vad_no_mesmo_segmento_viram_um_trecho(self):
+        ref = ReferenciaVoz(media=0.0, desvio=0.1, linhas=100, audios=1)
+        df = sincronizado([0.1, 0.3], [0.4, 0.4])
+        df["segmento_idx"] = [7, 7]
+
+        trechos = indice_combinado_por_trecho(df, ref)
+
+        # Cada linha é limitada antes da média: +0,5 e +1,5 -> 1,0 dão +0,75.
+        self.assertEqual(len(trechos), 1)
+        self.assertAlmostEqual(trechos.loc[0, "voz"], 0.75)
+
+    def test_trecho_sem_texto_ou_sem_regua_fica_de_fora(self):
+        ref = ReferenciaVoz(media=0.0, desvio=0.1, linhas=100, audios=1)
+
+        self.assertEqual(len(indice_combinado_por_trecho(sincronizado([0.1, 0.2], [0.5, float("nan")]), ref)), 1)
+        self.assertTrue(indice_combinado_por_trecho(sincronizado([0.1], [0.5]), None).empty)
+        self.assertTrue(indice_combinado_por_grupo(frame(), ref).empty)
+        self.assertEqual(indice_combinado_texto(frame(), ref), "")
+
+    def test_evidencias_levam_o_indice_so_com_a_regua(self):
+        sinc = sincronizado(BASE + [-0.6], [0.0] * 9 + [0.8])
+
+        sem = montar_evidencias_audio(pd.DataFrame(), sinc, sinc)
+        com = montar_evidencias_audio(pd.DataFrame(), sinc, sinc, referencia_voz=referencia_valencia(sinc))
+
+        self.assertNotIn("Índice Combinado", sem.sentimento_texto)
+        self.assertIn("Índice Combinado", com.sentimento_texto)
+        self.assertIn("| A |", com.sentimento_texto.split("Índice Combinado")[1])
+        self.assertIn("não como medida absoluta", com.sentimento_texto)
+
+    def test_prompt_explica_o_indice(self):
+        self.assertIn("Índice Combinado de Sentimento", prosodia_prompts.PROSODIA_SENTIMENTO_TEXTO)
 
 
 class MomentosEEvidenciasTests(unittest.TestCase):

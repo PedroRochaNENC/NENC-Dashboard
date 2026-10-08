@@ -482,6 +482,188 @@ def divergencias_texto(div_df: pd.DataFrame, incluir_audio: bool = False, limite
 
 
 # ---------------------------------------------------------------------------
+# Índice combinado de sentimento (texto + voz)
+#
+# Uma nota de -1 a +1 por trecho, metade do texto e metade da voz. A valência
+# da DevAIce não serve crua (comprimida e puxada para o negativo), e o z por
+# locutor da divergência zera a média de cada locutor por construção — somada,
+# a voz sumiria do índice de qualquer áudio. A régua aqui é o projeto: a voz é
+# o z da valência em relação a todas as linhas do VAD dos áudios do projeto,
+# dividido por 2 e limitado a ±1 (dois desvios equivalem ao extremo do texto).
+# ---------------------------------------------------------------------------
+
+PESO_TEXTO_INDICE = 0.5
+PESO_VOZ_INDICE = 0.5
+# z da valência que equivale a ±1 na escala do texto.
+Z_EXTREMO_VOZ = 2.0
+
+AVISO_INDICE = (
+    "_O índice combinado soma duas inferências automáticas — o modelo de "
+    "linguagem sobre o que foi dito e o classificador sobre a voz — e só faz "
+    "sentido comparado dentro do projeto, não como medida absoluta._"
+)
+
+
+@dataclass(frozen=True)
+class ReferenciaVoz:
+    """Média e desvio da valência vocal que servem de régua ao índice."""
+
+    media: float
+    desvio: float
+    linhas: int
+    audios: int
+
+
+def referencia_valencia(sinc_df: Optional[pd.DataFrame]) -> Optional[ReferenciaVoz]:
+    """Régua da voz a partir do Sincronizado de todos os áudios do projeto.
+
+    None quando não há linhas suficientes ou a valência não varia: sem régua
+    não há como dizer se a voz está acima ou abaixo do habitual.
+    """
+    if sinc_df is None or sinc_df.empty or "dim_valence" not in sinc_df.columns:
+        return None
+    valencia = pd.to_numeric(sinc_df["dim_valence"], errors="coerce")
+    validas = valencia.notna()
+    if validas.sum() < MIN_LINHAS_POR_LOCUTOR:
+        return None
+    desvio = float(valencia[validas].std())
+    if not desvio > 0:
+        return None
+    audios = sinc_df.loc[validas, "session_id"].nunique() if "session_id" in sinc_df.columns else 1
+    return ReferenciaVoz(float(valencia[validas].mean()), desvio, int(validas.sum()), int(audios))
+
+
+_COLUNAS_INDICE_TRECHO = [
+    "session_id", "segmento_idx", "SpeakerName", "start_s", "Timestamp", "Text",
+    "texto", "voz", "indice", "_peso",
+]
+
+
+def indice_combinado_por_trecho(sinc_df: Optional[pd.DataFrame], referencia: Optional[ReferenciaVoz]) -> pd.DataFrame:
+    """Índice de cada segmento do Whisper que tem nota do texto e valência.
+
+    A voz do segmento é a média, ponderada pela duração, das linhas do VAD que
+    caem nele. Trecho sem uma das duas leituras fica de fora: o índice não
+    completa a metade que falta com a outra.
+    """
+    obrigatorias = {"dim_valence", "sentimento_texto", "segmento_idx"}
+    if (
+        referencia is None
+        or sinc_df is None
+        or sinc_df.empty
+        or not obrigatorias.issubset(sinc_df.columns)
+    ):
+        return pd.DataFrame(columns=_COLUNAS_INDICE_TRECHO)
+
+    work = sinc_df.copy()
+    if "session_id" not in work.columns:
+        work["session_id"] = "audio"
+    if "SpeakerName" not in work.columns:
+        work["SpeakerName"] = None
+    work["dim_valence"] = pd.to_numeric(work["dim_valence"], errors="coerce")
+    work["sentimento_texto"] = pd.to_numeric(work["sentimento_texto"], errors="coerce")
+    work["segmento_idx"] = pd.to_numeric(work["segmento_idx"], errors="coerce")
+    work["_peso"] = _peso_duracao(work)
+    work["_voz"] = ((work["dim_valence"] - referencia.media) / referencia.desvio / Z_EXTREMO_VOZ).clip(-1.0, 1.0)
+
+    trechos = work[work["segmento_idx"].notna() & work["sentimento_texto"].notna() & work["_voz"].notna()]
+    if trechos.empty:
+        return pd.DataFrame(columns=_COLUNAS_INDICE_TRECHO)
+
+    linhas = []
+    for (sessao, indice), bloco in trechos.groupby(["session_id", "segmento_idx"], sort=False):
+        peso = bloco["_peso"]
+        texto = float(bloco["sentimento_texto"].iloc[0])
+        voz = float((bloco["_voz"] * peso).sum() / peso.sum())
+        primeira = bloco.sort_values("start_s").iloc[0] if "start_s" in bloco.columns else bloco.iloc[0]
+        linhas.append({
+            "session_id": sessao,
+            "segmento_idx": int(indice),
+            "SpeakerName": _texto(primeira.get("SpeakerName")),
+            "start_s": _numero_ou_none(primeira.get("start_s")),
+            "Timestamp": _texto(primeira.get("Timestamp")),
+            "Text": _texto(primeira.get("Text")),
+            "texto": texto,
+            "voz": voz,
+            "indice": PESO_TEXTO_INDICE * texto + PESO_VOZ_INDICE * voz,
+            "_peso": float(peso.sum()),
+        })
+    return pd.DataFrame(linhas, columns=_COLUNAS_INDICE_TRECHO)
+
+
+_COLUNAS_INDICE_GRUPO = ["grupo", "trechos", "texto", "voz", "indice", "positivo", "neutro", "negativo"]
+
+
+def indice_combinado_por_grupo(
+    sinc_df: Optional[pd.DataFrame],
+    referencia: Optional[ReferenciaVoz],
+    group_col: Optional[str] = "SpeakerName",
+) -> pd.DataFrame:
+    """Índice combinado por grupo, ponderado pela duração dos trechos.
+
+    Colunas: grupo, trechos, texto e voz (as duas metades, já na escala -1..+1),
+    indice, e as fatias do tempo com índice positivo, neutro e negativo (mesmo
+    corte de ±0,2 do sentimento do texto). `group_col=None` agrega tudo.
+    """
+    trechos = indice_combinado_por_trecho(sinc_df, referencia)
+    if trechos.empty:
+        return pd.DataFrame(columns=_COLUNAS_INDICE_GRUPO)
+    if group_col is None or group_col not in trechos.columns:
+        trechos["_grupo"] = "Todos"
+    else:
+        trechos["_grupo"] = trechos[group_col].map(_texto).replace("", "Desconhecido")
+
+    linhas = []
+    for grupo, bloco in trechos.groupby("_grupo", sort=True):
+        peso = bloco["_peso"]
+        total = peso.sum()
+        linhas.append({
+            "grupo": grupo,
+            "trechos": len(bloco),
+            "texto": float((bloco["texto"] * peso).sum() / total),
+            "voz": float((bloco["voz"] * peso).sum() / total),
+            "indice": float((bloco["indice"] * peso).sum() / total),
+            "positivo": float(peso[bloco["indice"] >= 0.2].sum() / total),
+            "neutro": float(peso[bloco["indice"].abs() < 0.2].sum() / total),
+            "negativo": float(peso[bloco["indice"] <= -0.2].sum() / total),
+        })
+    return pd.DataFrame(linhas, columns=_COLUNAS_INDICE_GRUPO)
+
+
+def indice_combinado_texto(
+    sinc_df: Optional[pd.DataFrame],
+    referencia: Optional[ReferenciaVoz],
+    group_col: Optional[str] = "SpeakerName",
+    rotulo_grupo: str = "Locutor",
+) -> str:
+    """Tabela do índice combinado para o prompt; "" quando não há como calcular."""
+    tabela = indice_combinado_por_grupo(sinc_df, referencia, group_col)
+    if tabela.empty:
+        return ""
+    linhas = [
+        "### Índice Combinado de Sentimento (texto + voz)",
+        "",
+        "| {} | Trechos | Texto | Voz | Índice | Positivo | Neutro | Negativo |".format(rotulo_grupo),
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for _, linha in tabela.iterrows():
+        linhas.append("| {} | {} | {:+.2f} | {:+.2f} | {:+.2f} | {:.0f}% | {:.0f}% | {:.0f}% |".format(
+            linha["grupo"], linha["trechos"], linha["texto"], linha["voz"], linha["indice"],
+            linha["positivo"] * 100, linha["neutro"] * 100, linha["negativo"] * 100,
+        ))
+    linhas.extend([
+        "",
+        "_Índice = metade da nota do texto + metade da voz, de -1 a +1, ponderado pela "
+        "duração. Voz = desvios-padrão da valência vocal em relação a {} áudio(s) do "
+        "projeto, divididos por {:.0f} e limitados a ±1. Fatias: |índice| < 0,2 é neutro._".format(
+            referencia.audios, Z_EXTREMO_VOZ
+        ),
+        AVISO_INDICE,
+    ])
+    return "\n".join(linhas)
+
+
+# ---------------------------------------------------------------------------
 # Momentos de maior ativação prosódica
 # ---------------------------------------------------------------------------
 
@@ -632,12 +814,17 @@ def montar_evidencias_audio(
     tr_df: pd.DataFrame,
     sinc_df: Optional[pd.DataFrame],
     momentos: Optional[List[dict]] = None,
+    referencia_voz: Optional[ReferenciaVoz] = None,
 ) -> EvidenciasAudio:
     """Único construtor das evidências da análise individual.
 
     `sinc_df` é o Sincronizado normalizado (normalizar_sincronizado). Todos os
     caminhos — análise na página, sincronização, importação, upload e
     reprocessamento — passam por aqui para mandar à IA os mesmos sinais.
+
+    `referencia_voz` é a régua do projeto (referencia_valencia); com ela o
+    índice combinado entra junto do sentimento do texto. Sem ela o índice fica
+    de fora: medido só contra o próprio áudio, a média dele sairia zero.
     """
     sinc_df = sinc_df if sinc_df is not None else pd.DataFrame()
     linhas = []
@@ -671,12 +858,20 @@ def montar_evidencias_audio(
     sentimento = ""
     divergencias = ""
     if tem_sentimento_texto(fonte_sentimento):
-        if _audio_cortado(sinc_df):
+        cortado = _audio_cortado(sinc_df)
+        if cortado:
             sentimento = texto_sentimento_resumo(fonte_sentimento, None, "Áudio")
             sentimento += "\n\n" + _AVISO_LOCUTOR_CORTADO
         else:
             sentimento = texto_sentimento_resumo(fonte_sentimento)
         if tem_sentimento_texto(sinc_df):
             divergencias = divergencias_texto(detectar_divergencias(sinc_df))
+            indice = (
+                indice_combinado_texto(sinc_df, referencia_voz, None, "Áudio")
+                if cortado
+                else indice_combinado_texto(sinc_df, referencia_voz)
+            )
+            if indice:
+                sentimento += "\n\n" + indice
 
     return EvidenciasAudio("\n\n".join(linhas), sentimento, divergencias)

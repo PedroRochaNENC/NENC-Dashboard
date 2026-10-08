@@ -78,6 +78,11 @@ positivo) sobre o que foi dito, com uma justificativa curta. Notas entre -0,2 e 
   habitual daquele locutor, ou texto negativo com valência bem acima. Divergência \
   é candidata a leitura qualitativa (ironia, cortesia protocolar, insatisfação \
   normalizada, alívio), não prova: examine o trecho antes de concluir.
+- <sentimento_texto> pode trazer o **Índice Combinado de Sentimento**, de -1 a \
+  +1: metade a nota do texto, metade a valência vocal medida em relação a \
+  todos os áudios do projeto. Use-o para comparar áudios e locutores entre si, \
+  não como medida absoluta, e olhe as colunas Texto e Voz para dizer de qual \
+  das duas leituras vem a polaridade.
 - Se <sentimento_texto> ou <divergencias> não vierem nos dados, não as invente \
   nem as estime a partir da transcrição; registre que não estavam disponíveis.
 """

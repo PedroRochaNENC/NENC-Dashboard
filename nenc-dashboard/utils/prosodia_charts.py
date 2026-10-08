@@ -722,6 +722,52 @@ def create_project_text_sentiment_distribution(
     return fig
 
 
+def create_combined_sentiment_chart(
+    tabela: pd.DataFrame,
+    title: str = "",
+    eixo_x: str = "Áudio / Sessão",
+) -> go.Figure:
+    """
+    Índice combinado de sentimento por grupo, ao lado das duas metades que o
+    compõem (texto e voz). `tabela` é a saída de indice_combinado_por_grupo.
+    """
+    if tabela is None or tabela.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Sem índice combinado nos dados", showarrow=False)
+        fig.update_layout(template="nenc")
+        return fig
+
+    fig = go.Figure()
+    series = [
+        ("texto", "Texto", NENC_SEQUENCE[0]),
+        ("voz", "Voz", NENC_SEQUENCE[1 % len(NENC_SEQUENCE)]),
+        ("indice", "Índice combinado", NENC_SEQUENCE[2 % len(NENC_SEQUENCE)]),
+    ]
+    for coluna, legenda, cor in series:
+        fig.add_trace(
+            go.Bar(
+                x=tabela["grupo"],
+                y=tabela[coluna],
+                name=legenda,
+                marker_color=cor,
+                customdata=tabela["trechos"],
+                hovertemplate=f"<b>%{{x}}</b><br>{legenda}: %{{y:+.2f}}<br>%{{customdata}} trechos<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        title=title or "Índice Combinado de Sentimento (Texto + Voz)",
+        xaxis_title=eixo_x,
+        yaxis_title="-1 (negativo) a +1 (positivo)",
+        yaxis=dict(range=[-1, 1], zeroline=True),
+        template="nenc",
+        barmode="group",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+
 def create_project_word_ranking(
     tr_df: pd.DataFrame,
     title: str = "",

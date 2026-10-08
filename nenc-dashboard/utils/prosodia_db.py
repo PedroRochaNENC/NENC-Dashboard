@@ -1028,6 +1028,36 @@ def get_audio_blobs_for_project(project_id: int) -> Dict[int, Dict[str, Optional
     }
 
 
+def get_sincronizados_for_project(project_id: int) -> Dict[str, bytes]:
+    """Sincronizado de cada áudio do projeto, indexado por session_id.
+
+    Só a coluna que a régua do índice combinado precisa: a página do áudio
+    pede a do projeto inteiro e não deve carregar prosódia e transcrição junto.
+    """
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT session_id, sincronizado_csv
+                FROM audios WHERE project_id = ? AND sincronizado_csv IS NOT NULL
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT session_id, sincronizado_csv
+                FROM audios
+                WHERE project_id = ? AND organization_id = ? AND sincronizado_csv IS NOT NULL
+                """,
+                (project_id, organization_id),
+            ).fetchall()
+
+    _audit("prosodia.audio.blobs", "project", project_id, organization_id or 0)
+    return {str(row["session_id"]): row["sincronizado_csv"] for row in rows}
+
+
 def attach_audio_blobs(project_id: int, audios: List[Dict]) -> List[Dict]:
     """Copia dos áudios com o conteúdo preenchido, na mesma ordem.
 
