@@ -39,6 +39,8 @@ SEM_MENSAGEM_LOCAL = "sem_mensagem_local"
 SESSAO_SEM_ID = "sessao_sem_id"
 NAO_ENCONTRADO = "nao_encontrado_na_api"
 
+BACKUP_LABEL = "received_at_backfill"
+
 
 def classificar(local: dict, api: Optional[dict]) -> tuple[str, Optional[str]]:
     """Decide o que fazer com uma entrevista. Devolve (categoria, received_at)."""
@@ -116,7 +118,7 @@ def main() -> int:
         print("Nada a gravar.")
         return 0
 
-    print("Backup: {}".format(_backup(database_path)))
+    print("Backup: {}".format(_backup(database_path, BACKUP_LABEL)))
     with conn:
         conn.executemany(
             "UPDATE audios SET received_at = ? WHERE id = ? AND COALESCE(received_at, '') = ''",

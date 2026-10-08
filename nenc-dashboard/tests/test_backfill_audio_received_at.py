@@ -1,6 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.backfill_audio_received_at import (
+    BACKUP_LABEL,
     CARIMBAR,
     MENSAGEM_DIVERGENTE,
     NAO_ENCONTRADO,
@@ -9,6 +12,21 @@ from scripts.backfill_audio_received_at import (
     SESSAO_SEM_ID,
     classificar,
 )
+from scripts.backfill_interview_qr_codes import _backup
+
+
+class BackupTests(unittest.TestCase):
+    def test_each_script_names_its_own_backup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / "prosodia.db"
+            database.write_bytes(b"sqlite")
+
+            received = _backup(database, BACKUP_LABEL)
+            qr = _backup(database)
+
+            self.assertTrue(received.name.startswith("prosodia_before_received_at_backfill_"))
+            self.assertTrue(qr.name.startswith("prosodia_before_qr_backfill_"))
+            self.assertEqual(received.read_bytes(), b"sqlite")
 
 
 class ClassificarTests(unittest.TestCase):

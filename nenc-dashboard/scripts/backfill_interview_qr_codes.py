@@ -87,9 +87,10 @@ def _buscar_na_api(base_url: str, api_key: str, audio_id: int) -> Optional[dict]
         raise
 
 
-def _backup(database_path: Path) -> Path:
+def _backup(database_path: Path, label: str = "qr_backfill") -> Path:
+    """Copia o banco para backups/; `label` diz no nome qual script gravou."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    destination = database_path.parent / "backups" / "prosodia_before_qr_backfill_{}.db".format(stamp)
+    destination = database_path.parent / "backups" / "prosodia_before_{}_{}.db".format(label, stamp)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(database_path, destination)
     return destination
