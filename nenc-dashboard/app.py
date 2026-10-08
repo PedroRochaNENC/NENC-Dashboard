@@ -267,10 +267,14 @@ def _prosodia_pages(user: auth.User) -> dict[str, list]:
         # Nível 2: a seção leva o nome do projeto — é onde o contexto ativo
         # cabe, acima das páginas dele.
         project_pages = [
+            _page("modules/prosodia/resumo.py",
+                  "Resumo", "gauge"),
             _page("modules/prosodia/entrevistas.py",
                   "Áudios", "list-bullets"),
             _page("modules/prosodia/analise_geral.py",
                   "Análise Geral", "chart-bar"),
+            _page("modules/prosodia/qr_codes.py",
+                  "QR codes", "qr-code"),
             _page("modules/prosodia/audios.py",
                   "Uploads", "upload-simple"),
             _page("modules/prosodia/preparacao.py",

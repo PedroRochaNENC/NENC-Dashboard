@@ -369,6 +369,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE audios ADD COLUMN duration_seconds REAL")
         if "qr_code_name" not in audio_cols:
             conn.execute("ALTER TABLE audios ADD COLUMN qr_code_name TEXT")
+        if "received_at" not in audio_cols:
+            conn.execute("ALTER TABLE audios ADD COLUMN received_at TEXT")
 
         for table_name in (
             "projects",
@@ -690,12 +692,17 @@ def create_audio(
     sincronizado_csv: Optional[bytes] = None,
     whatsapp_message_id: Optional[str] = None,
     qr_code_name: Optional[str] = None,
+    received_at: Optional[str] = None,
 ) -> int:
     """Salva um áudio com seus arquivos brutos. Retorna o ID gerado.
 
     `qr_code_name` e o QR por onde o participante entrou, copiado da API na
     importacao. A tabela de Entrevistas e a exportacao Power BI leem daqui para
     nao depender da API no ar a cada render. Upload direto nao tem QR.
+
+    `received_at` e a hora em que a mensagem chegou a API (ISO, em UTC), para o
+    Resumo contar entradas por hora; `created_at` marca so a importacao. Upload
+    direto nao tem.
     """
     _require_write()
     organization_id = _active_organization_id()
@@ -706,10 +713,10 @@ def create_audio(
         cur = conn.execute(
             """INSERT INTO audios
                (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-                whatsapp_message_id, qr_code_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                whatsapp_message_id, qr_code_name, received_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (actual_org_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-             whatsapp_message_id, qr_code_name or None),
+             whatsapp_message_id, qr_code_name or None, received_at or None),
         )
         audio_id = cur.lastrowid
     _audit("prosodia.audio.create", "audio", audio_id, actual_org_id, write=True)
@@ -754,6 +761,68 @@ def get_audios(project_id: int) -> List[Dict]:
             ).fetchall()
     _audit("prosodia.audio.list", "project", project_id, organization_id or 0)
     return [dict(r) for r in rows]
+
+
+def get_audio_entries(project_id: int) -> List[Dict]:
+    """Metadado de entrada de cada áudio do projeto, sem os blobs.
+
+    `received_at` (chegada na API, em UTC) e `created_at` (importação, na hora
+    local do servidor) vêm separados: estão em fusos diferentes, e quem lê
+    decide qual vale.
+    """
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT a.id, a.session_id, a.qr_code_name, a.duration_seconds,
+                       NULLIF(a.received_at, '') AS received_at, a.created_at,
+                       (SELECT COUNT(*) FROM analyses an
+                        WHERE an.audio_id = a.id) AS n_analyses
+                FROM audios a
+                WHERE a.project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT a.id, a.session_id, a.qr_code_name, a.duration_seconds,
+                       NULLIF(a.received_at, '') AS received_at, a.created_at,
+                       (SELECT COUNT(*) FROM analyses an
+                        WHERE an.audio_id = a.id AND an.organization_id = a.organization_id) AS n_analyses
+                FROM audios a
+                WHERE a.project_id = ? AND a.organization_id = ?
+                """,
+                (project_id, organization_id),
+            ).fetchall()
+    _audit("prosodia.audio.summary", "project", project_id, organization_id or 0)
+    return [dict(r) for r in rows]
+
+
+def get_project_activity() -> Dict[int, Dict]:
+    """Por projeto da organização ativa: QR codes com entrada e últimas entradas.
+
+    Conta só o que já entrou no banco local, sem chamar a API por projeto. A
+    última entrada vem em duas, pelos fusos: a maior `received_at` (UTC) e a
+    maior `created_at` entre os áudios sem `received_at` (hora do servidor).
+    """
+    organization_id = _active_organization_id()
+    sql = """
+        SELECT project_id,
+               COUNT(DISTINCT NULLIF(TRIM(COALESCE(qr_code_name, '')), '')) AS n_qr,
+               MAX(NULLIF(received_at, '')) AS ultima_recebida,
+               MAX(CASE WHEN COALESCE(received_at, '') = '' THEN created_at END) AS ultima_importada
+        FROM audios
+    """
+    params: list = []
+    if organization_id:
+        sql += " WHERE organization_id = ?"
+        params.append(organization_id)
+    sql += " GROUP BY project_id"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return {int(row["project_id"]): dict(row) for row in rows}
 
 
 def _ts_to_seconds(ts: str) -> float:

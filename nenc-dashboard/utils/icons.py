@@ -96,6 +96,14 @@ _BODIES: dict[str, str] = {
         '<path d="M4 4v16h16"/><path d="M8.2 20v-6.4"/><path d="M12 20V8.6"/>'
         '<path d="M15.8 20v-4.2"/><path d="M19.4 20v-9"/>'
     ),
+    "gauge": (
+        '<path d="M3.6 16.4a8.4 8.4 0 1 1 16.8 0"/>'
+        '<path d="m12 16.4 3.6-5"/><circle cx="12" cy="16.4" r="1.2"/>'
+    ),
+    "arrows-left-right": (
+        '<path d="M4 8.4h15.4"/><path d="m15.8 4.8 3.6 3.6-3.6 3.6"/>'
+        '<path d="M20 15.6H4.6"/><path d="m8.2 12-3.6 3.6 3.6 3.6"/>'
+    ),
     "sparkle": (
         '<path d="M12 3.4 13.7 9l5.6 1.7-5.6 1.7L12 18l-1.7-5.6L4.7 10.7 10.3 9Z"/>'
         '<path d="M18.4 16.6l.7 2.2 2.2.7-2.2.7-.7 2.2-.7-2.2-2.2-.7 2.2-.7Z"/>'
@@ -254,6 +262,7 @@ MATERIAL: dict[str, str] = {
     "books": ":material/library_books:",
     "chart-line": ":material/show_chart:",
     "chart-bar": ":material/bar_chart:",
+    "gauge": ":material/speed:",
     "sparkle": ":material/auto_awesome:",
     "seal-check": ":material/verified:",
     "address-book": ":material/contacts:",

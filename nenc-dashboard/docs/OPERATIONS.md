@@ -253,6 +253,24 @@ As medias por locutor e as tabelas de ativacao mudam depois do passo 3: e
 correcao do alinhamento, nao regressao. Verificacoes de qualidade e analises de
 IA ja salvas ficam como estavam ate um novo Reverificar ou Regenerar.
 
+## Hora de chegada dos audios (Resumo do NencBoost)
+
+O Resumo do projeto conta entradas por QR code e por hora. A hora certa e a de
+chegada da mensagem na API (`audios.received_at`, gravada na importacao, em
+UTC); `created_at` marca so a importacao e concentraria o acervo no horario de
+cada sincronizacao. A coluna nasce vazia para o que foi importado antes dela, e
+o Resumo usa a hora da importacao para esses audios, avisando quantos sao
+embaixo do grafico. Para preencher:
+
+1. Deploy do dashboard: `init_db` cria `audios.received_at` na primeira subida.
+2. Dentro do container, primeiro em simulacao:
+   `python scripts/backfill_audio_received_at.py --database /app/data/prosodia.db`
+3. Depois com `--apply` (faz backup do banco antes de gravar). So recebe a hora
+   o audio cujo `whatsapp_message_id` na API e igual ao local, a mesma regra do
+   `backfill_interview_qr_codes.py`.
+
+As horas aparecem no fuso `NENC_TZ` (padrao `America/Sao_Paulo`).
+
 ## Recuperacao de administrador
 
 O bootstrap nao deve ser reutilizado para recuperar acesso. Um administrador
