@@ -67,12 +67,20 @@ def _local_time(value, naive_tz) -> pd.Timestamp:
     return stamp.tz_convert(_TZ).tz_localize(None)
 
 
-def _received_time(value) -> pd.Timestamp:
+def received_time(value) -> pd.Timestamp:
+    """`received_at` (UTC, da API) em `NENC_TZ`."""
     return _local_time(value, "UTC")
 
 
-def _imported_time(value) -> pd.Timestamp:
+def imported_time(value) -> pd.Timestamp:
+    """`created_at` (hora local do servidor) em `NENC_TZ`."""
     return _local_time(value, _SERVER_TZ)
+
+
+def entry_time(received_at, created_at) -> pd.Timestamp:
+    """Hora de entrada de um áudio: a chegada na API, ou a importação no acervo antigo."""
+    stamp = received_time(received_at)
+    return imported_time(created_at) if pd.isna(stamp) else stamp
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +94,8 @@ def project_entries(project_id: int) -> pd.DataFrame:
     `created_at`; `hora_real` diz qual das duas valeu.
     """
     frame = pd.DataFrame(prosodia_db.get_audio_entries(project_id), columns=_ENTRY_COLUMNS)
-    received = pd.to_datetime(frame["received_at"].map(_received_time))
-    imported = pd.to_datetime(frame["created_at"].map(_imported_time))
+    received = pd.to_datetime(frame["received_at"].map(received_time))
+    imported = pd.to_datetime(frame["created_at"].map(imported_time))
     frame["hora_real"] = received.notna()
     frame["entrou_em"] = received.where(received.notna(), imported)
     frame["qr_code_name"] = frame["qr_code_name"].fillna("").astype(str).str.strip()
@@ -104,8 +112,8 @@ def project_activity() -> Dict[int, dict]:
     """
     activity = {}
     for project_id, row in prosodia_db.get_project_activity().items():
-        stamps = [stamp for stamp in (_received_time(row.get("ultima_recebida")),
-                                      _imported_time(row.get("ultima_importada")))
+        stamps = [stamp for stamp in (received_time(row.get("ultima_recebida")),
+                                      imported_time(row.get("ultima_importada")))
                   if not pd.isna(stamp)]
         activity[project_id] = {
             "n_qr": int(row.get("n_qr") or 0),

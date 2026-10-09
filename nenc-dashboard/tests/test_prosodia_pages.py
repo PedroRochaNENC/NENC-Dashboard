@@ -54,8 +54,7 @@ class SincronizadoNaoFalhaEmSilencioTests(unittest.TestCase):
         nomes = {p.name for p in _paginas()}
 
         self.assertIn("analise_geral.py", nomes)
-        self.assertIn("audio_analise.py", nomes)
-        self.assertIn("audio_timeline.py", nomes)
+        self.assertIn("audio.py", nomes)
 
     def test_the_sweep_finds_blocks_that_read_the_sincronizado(self):
         """Se o padrão de leitura mudar, o teste abaixo perde o alvo."""
@@ -85,10 +84,40 @@ class SincronizadoNaoFalhaEmSilencioTests(unittest.TestCase):
                         )
 
     def test_the_pages_that_read_it_have_a_logger(self):
-        for nome in ("analise_geral.py", "audio_analise.py", "audio_timeline.py"):
+        for nome in ("analise_geral.py", "audio.py"):
             with self.subTest(pagina=nome):
                 fonte = (PAGES_DIR / nome).read_text(encoding="utf-8")
                 self.assertIn("logging.getLogger(__name__)", fonte)
+
+
+class PaginaUnicaDoAudioTests(unittest.TestCase):
+    """Timeline e Análise viraram `audio.py`; os saltos antigos não podem se perder."""
+
+    def test_old_pages_only_redirect(self):
+        for nome in ("audio_timeline.py", "audio_analise.py"):
+            with self.subTest(pagina=nome):
+                fonte = (PAGES_DIR / nome).read_text(encoding="utf-8")
+                self.assertIn('st.switch_page("modules/prosodia/audio.py")', fonte)
+                self.assertLess(len(fonte.splitlines()), 30, "{} deveria só redirecionar".format(nome))
+
+    def test_jumps_land_on_the_audio_page(self):
+        for nome in ("analise_geral.py", "entrevistas.py"):
+            with self.subTest(pagina=nome):
+                fonte = (PAGES_DIR / nome).read_text(encoding="utf-8")
+                self.assertIn('"modules/prosodia/audio.py"', fonte)
+                self.assertNotIn('"modules/prosodia/audio_timeline.py"', fonte)
+                self.assertNotIn('"modules/prosodia/audio_analise.py"', fonte)
+
+    def test_menu_has_one_audio_item_and_hides_the_old_pages(self):
+        fonte = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn('_page("modules/prosodia/audio.py", audio_label, "waveform")', fonte)
+        for antiga in ("audio_timeline.py", "audio_analise.py"):
+            trecho = fonte[fonte.index(antiga):fonte.index(antiga) + 120]
+            self.assertIn('visibility="hidden"', trecho)
+
+    def test_audios_list_keeps_the_filtered_order_for_the_arrows(self):
+        fonte = (PAGES_DIR / "entrevistas.py").read_text(encoding="utf-8")
+        self.assertIn('st.session_state["en_filtered_ids"]', fonte)
 
 
 class EtapaEstrategicaRecebeOsSinaisTests(unittest.TestCase):

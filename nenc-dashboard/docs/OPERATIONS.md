@@ -271,6 +271,22 @@ embaixo do grafico. Para preencher:
 
 As horas aparecem no fuso `NENC_TZ` (padrao `America/Sao_Paulo`).
 
+## Indice combinado na lista de Audios
+
+A lista de Audios mostra e filtra o indice combinado de cada audio, gravado em
+`audios.indice_combinado` (com as metades `indice_texto` e `indice_voz`, que a
+faixa "Divergente" usa) para a tabela nao ler o Sincronizado de todos a cada
+tela. A voz e medida contra todos os audios do projeto, entao o projeto inteiro
+e recalculado a cada importacao, reprocessamento, "Atualizar dados da API" ou
+exclusao. O acervo anterior as colunas nasce sem indice:
+
+1. Deploy do dashboard e um acesso a qualquer pagina do NencBoost (`init_db`
+   cria as colunas).
+2. Dentro do container, em simulacao (mostra, por projeto, quantos audios
+   recebem indice e em que faixa):
+   `python scripts/backfill_indice_combinado.py --database /app/data/prosodia.db`
+3. Depois com `--apply` (backup `prosodia_before_indice_backfill_*.db` antes).
+
 ## Recuperacao de administrador
 
 O bootstrap nao deve ser reutilizado para recuperar acesso. Um administrador

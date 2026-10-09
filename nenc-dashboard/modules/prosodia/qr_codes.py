@@ -120,7 +120,12 @@ def _flash(message: str) -> None:
 # ---------------------------------------------------------------------------
 
 ui.inject_theme()
-ui.breadcrumb("NencBoost", project["name"], "QR codes")
+st.page_link("modules/prosodia/resumo.py", label="Voltar para Resumo", icon=":material/arrow_back:")
+ui.breadcrumb_nav(
+    ("NencBoost", "modules/prosodia/projetos.py"),
+    (project["name"], "modules/prosodia/resumo.py"),
+    ("QR codes", None),
+)
 
 if not is_configured():
     page_title("qr-code", "QR codes", project["name"])

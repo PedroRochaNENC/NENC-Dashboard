@@ -230,6 +230,18 @@ _BODIES: dict[str, str] = {
     "minus": '<path d="M5.4 12h13.2"/>',
     "x": '<path d="m6.2 6.2 11.6 11.6"/><path d="m17.8 6.2-11.6 11.6"/>',
     "play": '<path d="M7.6 4.8 19 12 7.6 19.2Z"/>',
+    "pause": '<rect x="6.4" y="4.8" width="3.8" height="14.4" rx="1"/><rect x="13.8" y="4.8" width="3.8" height="14.4" rx="1"/>',
+    "timer": (
+        '<circle cx="12" cy="13.2" r="7.4"/><path d="M12 13.2 15.2 10"/>'
+        '<path d="M9.6 2.8h4.8"/>'
+    ),
+    "calendar-blank": (
+        '<rect x="3.8" y="5" width="16.4" height="15.2" rx="1.6"/>'
+        '<path d="M16.4 3.2v3.6"/><path d="M7.6 3.2v3.6"/><path d="M3.8 9.4h16.4"/>'
+    ),
+    "check-circle": '<circle cx="12" cy="12" r="8.4"/><path d="m8.4 12.4 2.4 2.4 4.8-5"/>',
+    "warning-circle": '<circle cx="12" cy="12" r="8.4"/><path d="M12 7.8v5"/><path d="M12 16.2h.01"/>',
+    "x-circle": '<circle cx="12" cy="12" r="8.4"/><path d="m9.2 9.2 5.6 5.6"/><path d="m14.8 9.2-5.6 5.6"/>',
     "list-bullets": (
         '<path d="M9 6.4h11"/><path d="M9 12h11"/><path d="M9 17.6h11"/>'
         '<path d="M4.6 6.4h.01"/><path d="M4.6 12h.01"/><path d="M4.6 17.6h.01"/>'
@@ -244,7 +256,7 @@ _BODIES: dict[str, str] = {
     ),
 }
 
-FILLED = {"play", "sparkle", "funnel"}
+FILLED = {"play", "pause", "sparkle", "funnel"}
 
 # `st.Page` aceita apenas emoji ou ":material/nome:". Este mapa mantem o
 # mesmo vocabulario do conjunto SVG dentro do menu lateral do Streamlit.

@@ -11,6 +11,7 @@ import io
 import csv
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
@@ -361,8 +362,12 @@ def init_db() -> None:
                 "ALTER TABLE projects ADD COLUMN tipo_projeto TEXT NOT NULL "
                 "DEFAULT 'entrevista_qualitativa'"
             )
+        if "last_sync_at" not in cols:
+            # Fim da última sincronização com a API, em UTC, para o estado
+            # "Sincronizado há N min" da lista de Áudios.
+            conn.execute("ALTER TABLE projects ADD COLUMN last_sync_at TEXT")
 
-        audio_cols = {r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
+        audio_cols ={r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
             conn.execute("ALTER TABLE audios ADD COLUMN whatsapp_message_id TEXT")
         if "duration_seconds" not in audio_cols:
@@ -371,6 +376,11 @@ def init_db() -> None:
             conn.execute("ALTER TABLE audios ADD COLUMN qr_code_name TEXT")
         if "received_at" not in audio_cols:
             conn.execute("ALTER TABLE audios ADD COLUMN received_at TEXT")
+        # Índice combinado do áudio e as duas metades, gravados para a lista
+        # de Áudios não ler o Sincronizado de cada um a cada render.
+        for coluna in ("indice_combinado", "indice_texto", "indice_voz"):
+            if coluna not in audio_cols:
+                conn.execute("ALTER TABLE audios ADD COLUMN {} REAL".format(coluna))
 
         for table_name in (
             "projects",
@@ -934,6 +944,10 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.created_at,
                     a.duration_seconds,
                     a.qr_code_name,
+                    a.received_at,
+                    a.indice_combinado,
+                    a.indice_texto,
+                    a.indice_voz,
                     a.openai_file_id_prosodia,
                     a.openai_file_id_transcricao,
                     (
@@ -978,6 +992,10 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.created_at,
                     a.duration_seconds,
                     a.qr_code_name,
+                    a.received_at,
+                    a.indice_combinado,
+                    a.indice_texto,
+                    a.indice_voz,
                     a.openai_file_id_prosodia,
                     a.openai_file_id_transcricao,
                     (
@@ -1125,6 +1143,45 @@ def get_sincronizados_for_project(project_id: int) -> Dict[str, bytes]:
 
     _audit("prosodia.audio.blobs", "project", project_id, organization_id or 0)
     return {str(row["session_id"]): row["sincronizado_csv"] for row in rows}
+
+
+def mark_project_synced(project_id: int) -> None:
+    """Registra o fim de uma sincronização com a API (UTC, ISO)."""
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        conn.execute(
+            "UPDATE projects SET last_sync_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"), project_id),
+        )
+    _audit("prosodia.project.sync", "project", project_id, organization_id or 0, write=True)
+
+
+def save_audio_indices(project_id: int, indices: Dict[str, tuple]) -> int:
+    """Grava o índice combinado de todos os áudios do projeto de uma vez.
+
+    `indices` vai de session_id a (indice, texto, voz). Áudio do projeto que
+    não está no dict fica com NULL: sem sentimento do texto ou sem valência,
+    não há índice. Devolve quantos áudios receberam valor.
+    """
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        conn.execute(
+            "UPDATE audios SET indice_combinado = NULL, indice_texto = NULL, indice_voz = NULL "
+            "WHERE project_id = ?",
+            (project_id,),
+        )
+        conn.executemany(
+            "UPDATE audios SET indice_combinado = ?, indice_texto = ?, indice_voz = ? "
+            "WHERE project_id = ? AND session_id = ?",
+            [(indice, texto, voz, project_id, session_id)
+             for session_id, (indice, texto, voz) in indices.items()],
+        )
+    _audit("prosodia.audio.indices", "project", project_id, organization_id or 0, write=True)
+    return len(indices)
 
 
 def attach_audio_blobs(project_id: int, audios: List[Dict]) -> List[Dict]:

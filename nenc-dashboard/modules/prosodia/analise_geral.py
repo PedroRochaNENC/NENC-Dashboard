@@ -19,6 +19,7 @@ from utils.icons import page_title
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
 from utils import pdf_report
+from utils import prosodia_overview as overview
 
 from utils.prosodia_db import (
     init_db,
@@ -49,13 +50,11 @@ from utils.prosodia_signals import (
 )
 # from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
 from utils.prosodia_charts import (
-    create_combined_sentiment_chart,
     create_speaker_stats,
     create_project_acoustic_comparison,
-    create_project_emotion_distribution,
-    create_project_text_sentiment_distribution,
     create_project_word_ranking,
 )
+from utils.prosodia_project_types import ENTREVISTA_QUALITATIVA, normalize_project_type
 from utils.prosodia_prompts import (
     get_prosodia_project_system_prompt,
     build_project_user_prompt,
@@ -707,20 +706,13 @@ audios = get_audios_for_interviews(project_id)
 # Header
 # ------------------------------------------------------------------
 ui.inject_theme()
-ui.breadcrumb("NencBoost", project.get("name", ""), "Análise Geral")
-h1, h2, h3 = st.columns([5, 1, 1])
-with h1:
-    page_title(
-        "chart-bar", "Análise Geral", project.get("name", "")
-    )
-with h2:
-    st.write("")
-    if st.button("Áudios", width="stretch"):
-        st.switch_page("modules/prosodia/entrevistas.py")
-with h3:
-    st.write("")
-    if pode_editar and st.button("Uploads", width="stretch"):
-        st.switch_page("modules/prosodia/audios.py")
+st.page_link("modules/prosodia/resumo.py", label="Voltar para Resumo", icon=":material/arrow_back:")
+ui.breadcrumb_nav(
+    ("NencBoost", "modules/prosodia/projetos.py"),
+    (project.get("name", ""), "modules/prosodia/resumo.py"),
+    ("Análise Geral", None),
+)
+page_title("chart-bar", "Análise Geral", "{} · {} áudios".format(project.get("name", ""), len(audios)))
 
 # --------------------------------------------------------------------
 # Exportacao para Power BI — desativada.
@@ -780,124 +772,163 @@ if not audios:
     st.info("Nenhum áudio disponível para análise geral. Faça uploads primeiro.")
     st.stop()
 
-all_vad, all_tr, all_sinc = _load_project_frames(project_id, audios)
+# ------------------------------------------------------------------
+# Filtros: valem para a página inteira, inclusive para o que vai à IA
+# ------------------------------------------------------------------
+audios_projeto = audios
+_inicio, _fim = overview.period_bounds(audios_projeto)
+with st.container(border=True):
+    f_qr, f_periodo, f_origem, f_total = st.columns([2, 2, 2, 1.4], vertical_alignment="bottom")
+    filtro_qr = f_qr.multiselect(
+        "QR code", overview.qr_options(audios_projeto), placeholder="Todos", key="prj_f_qr"
+    )
+    filtro_periodo = overview.as_period(f_periodo.date_input(
+        "Período", value=(_inicio, _fim), min_value=_inicio, max_value=_fim,
+        format="DD/MM/YYYY", key="prj_f_periodo",
+    ))
+    filtro_origem = f_origem.multiselect(
+        "Origem", list(overview.ORIGENS), format_func=overview.ORIGENS.get,
+        placeholder="WhatsApp e upload", key="prj_f_origem",
+    )
+    audios = overview.filter_audios(audios_projeto, filtro_qr, filtro_periodo, filtro_origem)
+    f_total.markdown(
+        '<div style="text-align:right;font-size:.78rem;color:var(--nenc-muted);padding-bottom:.6rem">'
+        "{} de {} áudios</div>".format(len(audios), len(audios_projeto)),
+        unsafe_allow_html=True,
+    )
+
+# O recorte fica escrito na análise por IA salva; vazio sem filtro. Marcar
+# todos os QR codes é o mesmo que não filtrar por QR.
+recorte = overview.filter_description(
+    [] if set(filtro_qr) == set(overview.qr_options(audios_projeto)) else filtro_qr,
+    filtro_periodo, filtro_origem, (_inicio, _fim),
+)
+
+if not audios:
+    st.info("Nenhum áudio atende aos filtros.")
+    st.stop()
+
+# A régua da voz do índice combinado é o projeto inteiro, com ou sem filtro:
+# o índice de um áudio não muda com o recorte e bate com o Resumo e com a
+# página do áudio. O filtro só escolhe quais áudios entram na página.
+all_vad, all_tr, all_sinc = _load_project_frames(project_id, audios_projeto)
+referencia_voz = referencia_valencia(all_sinc)
+if len(audios) < len(audios_projeto):
+    _sessoes = {str(a.get("session_id") or "") for a in audios}
+    all_vad, all_tr, all_sinc = (
+        df[df["session_id"].astype(str).isin(_sessoes)].reset_index(drop=True)
+        if "session_id" in df.columns else df
+        for df in (all_vad, all_tr, all_sinc)
+    )
 
 # ------------------------------------------------------------------
-# Sidebar
+# Painel: números, distribuição, recortes e o que olhar de perto
 # ------------------------------------------------------------------
-with st.sidebar:
-    st.header("Controles")
-    analysis_mode = st.radio("Modo de analise", ["Rapida (1 chamada)", "Aprofundada (2 etapas)"])
-    use_kb = st.checkbox("Usar Base de Conhecimento", value=True)
-    # Um unico seletor para todos os provedores; as chaves ficam no .env.
-    ai_provider_id, ai_model = ui.ai_model_selector("prj_ai_model", use_kb=use_kb)
 
 
 def _run_ai(**kwargs) -> dict:
-    """Chama o modelo escolhido no seletor (ver `generate_analysis`)."""
+    """Chama o modelo escolhido no cartão da análise (ver `generate_analysis`)."""
     return generate_analysis(ai_provider_id, ai_model, **kwargs)
 
 
-# ------------------------------------------------------------------
-# Resumo agregado
-# ------------------------------------------------------------------
-st.divider()
-st.subheader("Resumo Agregado do Projeto")
+def _linhas_escolhidas(evento) -> list:
+    selecao = getattr(evento, "selection", None) if evento else None
+    if selecao is None:
+        return []
+    if isinstance(selecao, dict):
+        return selecao.get("rows", [])
+    return getattr(selecao, "rows", []) or []
+
+
+def _inicio_do_trecho(linha):
+    """Segundo em que o trecho começa: `seconds`, senão `start_s`."""
+    for coluna in ("seconds", "start_s"):
+        valor = linha.get(coluna)
+        if valor is not None and pd.notna(valor):
+            return float(valor)
+    return None
+
+
+def _abrir_na_timeline(linha, pergunta: str, origem: str, timestamp: str) -> None:
+    """Grava o foco e cruza para o nível do áudio (ver `app.py`)."""
+    sessao = linha.get("session_id")
+    alvo = next((a for a in audios if a.get("session_id") == sessao), None)
+    if not alvo:
+        st.error("Não foi possível localizar este áudio.")
+        return
+    st.session_state["pros_audio_id"] = alvo["id"]
+    st.session_state["pros_timeline_focus"] = {
+        "audio_id": alvo["id"],
+        "session_id": sessao,
+        "question": pergunta,
+        "seconds": _inicio_do_trecho(linha),
+        "timestamp": timestamp,
+        "speaker": str(linha.get("SpeakerName", "")),
+        "text": str(linha.get("Text", "")),
+        "source": origem,
+    }
+    st.session_state["_navigate_to"] = "modules/prosodia/audio.py"
+    st.rerun()
+
 
 n_interviews = len(audios)
 n_speakers = all_tr["SpeakerName"].nunique() if not all_tr.empty and "SpeakerName" in all_tr.columns else 0
 total_speech = float(all_vad["duration"].sum()) if not all_vad.empty and "duration" in all_vad.columns else 0.0
 n_messages = len(all_tr)
 n_words = _safe_word_sum(all_tr)
-
 cov_total = int(sum(int(a.get("coverage_total", 0)) for a in audios))
 ai_found = int(sum(int(a.get("coverage_ai_found", 0)) for a in audios))
 kw_found = int(sum(int(a.get("coverage_kw_found", 0)) for a in audios))
 
-m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("Áudios", n_interviews)
-m2.metric("Locutores", n_speakers)
-m3.metric("Fala total (s)", f"{total_speech:.1f}")
-m4.metric("Mensagens", n_messages)
-m5.metric("Palavras", n_words)
-m6.metric("Cobertura IA/Keywords", f"{ai_found}/{cov_total} - {kw_found}/{cov_total}" if cov_total else "-")
-
-if not all_tr.empty and "SpeakerName" in all_tr.columns:
-    st.divider()
-    st.subheader("Participacao por Locutor (Projeto)")
-    fig_stats = create_speaker_stats(all_tr, session_id=None, title="Participacao geral por locutor")
-    st.plotly_chart(fig_stats, width="stretch")
-
-if not all_sinc.empty:
-    st.divider()
-    st.subheader("Métricas Acústicas Comparadas")
-    
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        fig_comp = create_project_acoustic_comparison(
-            all_sinc, title="Média de Indicadores por Áudio", tr_df=all_tr
-        )
-        st.plotly_chart(fig_comp, use_container_width=True)
-    with col_c2:
-        fig_emo = create_project_emotion_distribution(all_sinc, title="Distribuição de Emoções por Áudio (%)")
-        st.plotly_chart(fig_emo, use_container_width=True)
-        
-if not all_tr.empty:
-    st.divider()
-    st.subheader("Ranking de Palavras Mais Frequentes (Projeto)")
-    fig_words = create_project_word_ranking(all_tr, title="Palavras Mais Mencionadas nas Transcrições", top_n=15)
-    st.plotly_chart(fig_words, use_container_width=True)
-
-# ------------------------------------------------------------------
-# Sentimento do texto × voz
-# ------------------------------------------------------------------
 fonte_sentimento = all_tr if tem_sentimento_texto(all_tr) else all_sinc
 project_divergences = detectar_divergencias(all_sinc)
-referencia_voz = referencia_valencia(all_sinc)
 indice_por_audio = indice_combinado_por_grupo(all_sinc, referencia_voz, "session_id")
-if tem_sentimento_texto(fonte_sentimento):
-    st.divider()
-    st.subheader("Sentimento do Texto × Voz")
-    st.markdown(
-        "Cada trecho transcrito recebe uma nota de -1 a +1 pelo sentimento do que foi dito "
-        "(inferência automática de um modelo de linguagem, não verdade sobre o que o "
-        "respondente sente). À esquerda, quanto do tempo de fala de cada áudio foi positivo, "
-        "neutro ou negativo; à direita, o sentimento do texto ao lado da valência da voz."
-    )
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        st.plotly_chart(
-            create_project_text_sentiment_distribution(
-                fonte_sentimento, title="Sentimento do Texto por Áudio (% do tempo de fala)"
-            ),
-            use_container_width=True,
-        )
-    with col_s2:
-        st.plotly_chart(
-            create_project_acoustic_comparison(
-                all_sinc,
-                title="Texto × Voz: Sentimento e Valência por Áudio",
-                tr_df=fonte_sentimento,
-                metrics=["dim_valence"],
-            ),
-            use_container_width=True,
-        )
+indice_projeto = indice_combinado_por_grupo(all_sinc, referencia_voz, None)
+qualitativa = normalize_project_type(project.get("tipo_projeto")) == ENTREVISTA_QUALITATIVA
 
-    if not indice_por_audio.empty:
-        st.write("")
-        st.subheader("Índice Combinado de Sentimento")
-        st.markdown(
-            "Uma nota de -1 a +1 por trecho: metade vem do sentimento do texto, metade da "
-            "valência da voz medida em relação a todos os áudios do projeto (dois desvios-padrão "
-            "acima ou abaixo valem +1 ou -1). Serve para comparar áudios dentro do projeto, não "
-            "como medida absoluta; as barras de Texto e Voz mostram de qual leitura vem a polaridade."
-        )
-        st.plotly_chart(
-            create_combined_sentiment_chart(
-                indice_por_audio, title="Índice Combinado por Áudio (Texto + Voz)"
-            ),
-            use_container_width=True,
-        )
+_geral = indice_projeto.iloc[0] if not indice_projeto.empty else None
+_horas, _resto = divmod(int(total_speech), 3600)
+_fala = "{}h {:02d}min de fala".format(_horas, _resto // 60) if _horas else "{} min de fala".format(_resto // 60)
+_div_audios = project_divergences["session_id"].nunique() if not project_divergences.empty else 0
+st.markdown(
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.7rem;margin:.4rem 0 .2rem">'
+    + overview.kpi_html("Áudios", str(n_interviews), _fala)
+    + overview.kpi_html(
+        "Índice combinado",
+        "{:+.2f}".format(_geral["indice"]).replace(".", ",") if _geral is not None else "—",
+        "texto + voz, −1 a +1", accent=True)
+    + overview.kpi_html(
+        "Tempo positivo",
+        "{:.0%}".format(_geral["positivo"]) if _geral is not None else "—",
+        "{:.0%} negativo".format(_geral["negativo"]) if _geral is not None else "sem sentimento do texto")
+    + overview.kpi_html("Voz × texto", str(len(project_divergences)), "divergências em {} áudios".format(_div_audios))
+    + overview.kpi_html(
+        "Cobertura do roteiro",
+        "{:.0%}".format(ai_found / cov_total) if cov_total else "—",
+        "perguntas respondidas (IA)")
+    + "</div>",
+    unsafe_allow_html=True,
+)
+
+# -- 01 ---------------------------------------------------------------
+st.markdown(overview.section_html("01", "Como o sentimento se distribui"), unsafe_allow_html=True)
+if indice_por_audio.empty:
+    st.caption("Sem sentimento do texto e valência vocal nos mesmos áudios: o índice combinado não pode ser calculado.")
+else:
+    c_hist, c_disp = st.columns(2, gap="small")
+    with c_hist:
+        with st.container(border=True):
+            st.markdown(overview.card_title(
+                "Índice combinado por áudio",
+                "como os {} áudios se espalham de −1 a +1".format(len(indice_por_audio))), unsafe_allow_html=True)
+            st.plotly_chart(overview.fig_index_histogram(indice_por_audio), width="stretch", key="prj_hist")
+    with c_disp:
+        with st.container(border=True):
+            st.markdown(overview.card_title(
+                "Texto × voz", "cada ponto é um áudio: nota do texto e voz em relação ao projeto"),
+                unsafe_allow_html=True)
+            st.plotly_chart(overview.fig_text_voice(indice_por_audio, audios), width="stretch", key="prj_disp")
+    with st.expander("Tabela do índice por áudio"):
         st.dataframe(
             pd.DataFrame({
                 "Áudio": indice_por_audio["grupo"],
@@ -913,216 +944,157 @@ if tem_sentimento_texto(fonte_sentimento):
             hide_index=True,
         )
         st.caption(
-            "Fatias em proporção do tempo de fala com as duas leituras; neutro é |índice| < 0,2. "
-            "Trechos sem nota do texto ou sem valência ficam de fora."
+            "Metade a nota do texto, metade a valência da voz em relação a todos os áudios do projeto, "
+            "com ou sem filtro. Fatias em proporção do tempo de fala; neutro é |índice| < 0,2."
         )
 
-    st.write("")
-    st.subheader("Momentos de Divergência Voz × Texto")
-    st.markdown(
-        "Trechos em que texto e voz apontam em sentidos opostos: texto claramente positivo com "
-        "a valência vocal bem abaixo do habitual do locutor, ou o contrário. São candidatos a "
-        "leitura qualitativa (ironia, cortesia protocolar, insatisfação normalizada), não prova. "
-        "Selecione uma linha e clique no botão para navegar até a timeline do áudio."
+# -- 02 ---------------------------------------------------------------
+st.markdown(overview.section_html("02", "Onde ele muda"), unsafe_allow_html=True)
+resumo_qr = overview.qr_summary(audios, indice_por_audio, all_sinc, project_divergences)
+with st.container(border=True):
+    st.markdown(overview.card_title(
+        "Por QR code", "qual ponto de contato puxa o sentimento para cima ou para baixo"), unsafe_allow_html=True)
+    if resumo_qr["Índice"].notna().any():
+        st.plotly_chart(overview.fig_qr_index(resumo_qr), width="stretch", key="prj_qr")
+    st.dataframe(
+        resumo_qr,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Índice": st.column_config.NumberColumn(format="%+.2f"),
+            "Positivo": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+        },
     )
+
+top_moments = _extract_high_activation_moments(all_sinc, top_n=15) if not all_sinc.empty else pd.DataFrame()
+grouped_topics = []
+if not top_moments.empty:
+    moments_list = [
+        {
+            "session_id": str(row.get("session_id", "")),
+            "SpeakerName": _limpo(row.get("SpeakerName")) or "Desconhecido",
+            "Timestamp": _tempo_do_momento(row),
+            "Text": _limpo(row.get("Text", "")),
+            "dim_arousal": float(row.get("dim_arousal", 0.0)) if pd.notna(row.get("dim_arousal")) else 0.0,
+            "topic": extract_topic_from_text(_limpo(row.get("Text", ""))),
+        }
+        for _, row in top_moments.iterrows()
+    ]
+    grouped_topics = _group_similar_topics(moments_list)
+
+c_semana, c_temas = st.columns([1.25, 1], gap="small")
+with c_semana:
+    with st.container(border=True):
+        st.markdown(overview.card_title(
+            "Ao longo da coleta", "índice combinado por semana, com as entradas ao fundo"), unsafe_allow_html=True)
+        serie = overview.weekly(audios, indice_por_audio)
+        if len(serie) >= 2:
+            st.plotly_chart(overview.fig_weekly(serie), width="stretch", key="prj_semana")
+        else:
+            st.caption("Menos de duas semanas de coleta no filtro.")
+with c_temas:
+    with st.container(border=True):
+        st.markdown(overview.card_title(
+            "Temas que mais mobilizam", "momentos de maior ativação, agrupados por tema"), unsafe_allow_html=True)
+        if grouped_topics:
+            df_grouped = pd.DataFrame(grouped_topics)
+            df_grouped.columns = ["Tópico Consolidado", "Ocorrências", "Arousal Médio", "Áudios Relacionados", "Exemplo de Destaque"]
+            df_grouped["Arousal Médio"] = df_grouped["Arousal Médio"].map(lambda v: f"{v:.2f}")
+            st.dataframe(df_grouped[["Tópico Consolidado", "Ocorrências", "Arousal Médio"]], hide_index=True, width="stretch")
+            with st.expander("Exemplos e áudios"):
+                st.dataframe(df_grouped, hide_index=True, width="stretch")
+        else:
+            st.caption("Nenhum momento de alta ativação no filtro.")
+
+if qualitativa:
+    if not all_tr.empty and "SpeakerName" in all_tr.columns:
+        with st.expander("Participação por locutor"):
+            st.plotly_chart(
+                create_speaker_stats(all_tr, session_id=None, title="Participação geral por locutor"),
+                width="stretch",
+            )
+    q_activations = _calculate_questions_activation(audios, all_sinc) if not all_sinc.empty else []
+    if q_activations:
+        with st.expander("Perguntas com maior ativação prosódica"):
+            df_q = pd.DataFrame(q_activations)
+            df_q.columns = ["Pergunta", "Respostas Cobertas", "Arousal Médio", "Variação Pitch Médio",
+                            "Variação Volume Médio", "Destaque (Maior Arousal)"]
+            for coluna in ("Arousal Médio", "Variação Pitch Médio", "Variação Volume Médio"):
+                df_q[coluna] = df_q[coluna].map(lambda v: f"{v:.2f}")
+            st.dataframe(df_q, width="stretch", hide_index=True)
+
+with st.expander("Médias acústicas por áudio e palavras mais frequentes"):
+    if not all_sinc.empty:
+        st.plotly_chart(
+            create_project_acoustic_comparison(all_sinc, title="Média de indicadores por áudio", tr_df=all_tr),
+            width="stretch",
+        )
+    if not all_tr.empty:
+        st.plotly_chart(
+            create_project_word_ranking(all_tr, title="Palavras mais mencionadas", top_n=15),
+            width="stretch",
+        )
+
+# -- 03 ---------------------------------------------------------------
+st.markdown(overview.section_html("03", "O que olhar de perto"), unsafe_allow_html=True)
+with st.container(border=True):
+    st.markdown(overview.card_title(
+        "Onde texto e voz discordam",
+        "{} trechos em {} áudios, mais fortes primeiro".format(len(project_divergences), _div_audios)),
+        unsafe_allow_html=True)
     if project_divergences.empty:
-        st.caption("Nenhuma divergência acima dos limiares nos áudios do projeto.")
+        st.caption(
+            "Nenhuma divergência acima dos limiares nos áudios do filtro."
+            if tem_sentimento_texto(all_sinc)
+            else "Os áudios do filtro não trazem sentimento do texto."
+        )
     else:
+        _qr_da_sessao = {str(a.get("session_id") or ""): overview.qr_label(a) for a in audios}
         df_div = pd.DataFrame({
+            "QR code": project_divergences["session_id"].astype(str).map(_qr_da_sessao),
             "Áudio": project_divergences["session_id"],
             "Tempo": [
                 formatar_tempo(inicio) or ts
                 for inicio, ts in zip(project_divergences["start_s"], project_divergences["Timestamp"])
             ],
-            "Locutor": project_divergences["SpeakerName"].replace("", "Desconhecido"),
-            "Fala (Transcrição)": project_divergences["Text"],
-            "Texto (nota)": project_divergences["sentimento_texto"].map(lambda v: f"{v:+.2f}"),
-            "Justificativa": project_divergences["sentimento_justificativa"],
-            "Voz (valência)": [
+            "Fala": project_divergences["Text"],
+            "Texto": project_divergences["sentimento_texto"].map(lambda v: f"{v:+.2f}"),
+            "Voz": [
                 f"{v:+.2f} (z {z:+.1f})"
                 for v, z in zip(project_divergences["valencia_voz"], project_divergences["z_valencia"])
             ],
             "Leitura": project_divergences["tipo"],
         })
-        div_event = st.dataframe(
-            df_div,
-            width="stretch",
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="prj_div_select",
-        )
+        div_event = st.dataframe(df_div, width="stretch", hide_index=True, on_select="rerun",
+                                 selection_mode="single-row", key="prj_div_select")
+        div_rows = _linhas_escolhidas(div_event)
+        if st.button("Abrir na timeline", key="prj_div_open", disabled=not div_rows,
+                     help="Selecione uma linha da tabela."):
+            linha = project_divergences.iloc[int(div_rows[0])]
+            _abrir_na_timeline(linha, "Divergência voz × texto", linha.get("tipo", "Divergência voz × texto"),
+                               str(linha.get("Timestamp", "")))
 
-        div_rows = []
-        if div_event:
-            selection = getattr(div_event, "selection", None)
-            if isinstance(selection, dict):
-                div_rows = selection.get("rows", [])
-            elif selection is not None:
-                div_rows = getattr(selection, "rows", []) or []
-
-        if st.button("Ir para divergência na Timeline do Áudio"):
-            if not div_rows:
-                st.info("Selecione uma divergência na tabela acima para localizar a timeline correspondente.")
-            else:
-                idx = int(div_rows[0])
-                if idx < 0 or idx >= len(project_divergences):
-                    st.warning("Não foi possível identificar a divergência selecionada.")
-                else:
-                    div_row = project_divergences.iloc[idx]
-                    target_sess = div_row.get("session_id")
-                    target_audio = next((a for a in audios if a.get("session_id") == target_sess), None)
-                    if target_audio:
-                        inicio = div_row.get("start_s")
-                        st.session_state["pros_audio_id"] = target_audio["id"]
-                        st.session_state["pros_timeline_focus"] = {
-                            "audio_id": target_audio["id"],
-                            "session_id": target_sess,
-                            "question": "Divergência voz × texto",
-                            "seconds": float(inicio) if pd.notna(inicio) else None,
-                            "timestamp": str(div_row.get("Timestamp", "")),
-                            "speaker": str(div_row.get("SpeakerName", "")),
-                            "text": str(div_row.get("Text", "")),
-                            "source": div_row.get("tipo", "Divergência voz × texto"),
-                        }
-                        # Cruza para o nivel do audio; ver `app.py`.
-                        st.session_state["_navigate_to"] = (
-                            "modules/prosodia/audio_timeline.py"
-                        )
-                        st.rerun()
-                    else:
-                        st.error("Não foi possível localizar o ID deste áudio.")
-
-if not all_sinc.empty:
-    st.divider()
-    st.subheader("Momentos de Maior Ativação Prosódica (Projeto)")
-    st.markdown(
-        "Esta seção exibe os momentos dos áudios com a maior combinação de ativação emocional (Arousal) "
-        "e variações de voz (Pitch e Volume). Selecione uma linha e clique no botão para navegar até a timeline detalhada."
-    )
-    
-    top_moments = _extract_high_activation_moments(all_sinc, top_n=15)
-    if not top_moments.empty:
-        df_show = pd.DataFrame()
-        txt_series = top_moments["Text"].fillna("") if "Text" in top_moments.columns else pd.Series([""] * len(top_moments))
-        df_show["Tópico"] = [extract_topic_from_text(t) for t in txt_series]
-        df_show["Áudio"] = top_moments["session_id"]
-        
-        spk_series = top_moments["SpeakerName"].fillna("Desconhecido") if "SpeakerName" in top_moments.columns else pd.Series(["Desconhecido"] * len(top_moments))
-        df_show["Locutor"] = spk_series.astype(str).str.strip().replace("nan", "Desconhecido")
-        
-        df_show["Tempo"] = [_tempo_do_momento(row) for _, row in top_moments.iterrows()]
-        
-        df_show["Fala (Transcrição)"] = txt_series.astype(str).str.strip().replace("nan", "")
-        
-        if "dim_arousal" in top_moments.columns:
-            df_show["Arousal"] = top_moments["dim_arousal"].fillna(0.0).map(lambda v: f"{v:.2f}")
-        else:
-            df_show["Arousal"] = "0.00"
-        
-        top_table_event = st.dataframe(
-            df_show,
-            width='stretch',
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key=f"prj_top_moments_select",
-        )
-        
-        selected_rows = []
-        if top_table_event:
-            selection = getattr(top_table_event, "selection", None)
-            if isinstance(selection, dict):
-                selected_rows = selection.get("rows", [])
-            elif selection is not None:
-                selected_rows = getattr(selection, "rows", []) or []
-                
-        if st.button("Ir para momento na Timeline do Áudio"):
-            if not selected_rows:
-                st.info("Selecione um momento na tabela acima para localizar a timeline correspondente.")
-            else:
-                idx = int(selected_rows[0])
-                if idx < 0 or idx >= len(top_moments):
-                    st.warning("Não foi possível identificar o momento selecionado.")
-                else:
-                    moment_row = top_moments.iloc[idx]
-                    
-                    target_sess = moment_row.get("session_id")
-                    target_audio = next((a for a in audios if a.get("session_id") == target_sess), None)
-                
-                    if target_audio:
-                        st.session_state["pros_audio_id"] = target_audio["id"]
-                        st.session_state["pros_timeline_focus"] = {
-                            "audio_id": target_audio["id"],
-                            "session_id": target_sess,
-                            "question": "Momento de Alta Ativação Geral",
-                            "seconds": float(moment_row.get("seconds", moment_row.get("start_s", 0.0))),
-                            "timestamp": _tempo_do_momento(moment_row),
-                            "speaker": str(moment_row.get("SpeakerName", "")),
-                            "text": str(moment_row.get("Text", "")),
-                            "source": "Filtro de Ativação Consolidado",
-                        }
-                        # Cruza para o nivel do audio; ver `app.py`.
-                        st.session_state["_navigate_to"] = (
-                            "modules/prosodia/audio_timeline.py"
-                        )
-                        st.rerun()
-                    else:
-                        st.error("Não foi possível localizar o ID deste áudio.")
-                    
-        # Tabela de Tópicos Consolidados/Agrupados
-        moments_list = []
-        for _, row in top_moments.iterrows():
-            moments_list.append({
-                "session_id": str(row.get("session_id", "")),
-                "SpeakerName": _limpo(row.get("SpeakerName")) or "Desconhecido",
-                "Timestamp": _tempo_do_momento(row),
-                "Text": _limpo(row.get("Text", "")),
-                "dim_arousal": float(row.get("dim_arousal", 0.0)) if pd.notna(row.get("dim_arousal")) else 0.0,
-                "topic": extract_topic_from_text(_limpo(row.get("Text", ""))),
-            })
-            
-        grouped_topics = _group_similar_topics(moments_list)
-        if grouped_topics:
-            st.write("")
-            st.subheader("Tópicos Consolidados de Maior Ativação")
-            st.markdown(
-                "Agrupamento temático dos momentos de maior expressividade e arousal do projeto. "
-                "Agrupa tópicos equivalentes que compartilham termos centrais."
-            )
-            
-            df_grouped = pd.DataFrame(grouped_topics)
-            df_grouped.columns = ["Tópico Consolidado", "Ocorrências", "Arousal Médio", "Áudios Relacionados", "Exemplo de Destaque"]
-            df_grouped["Arousal Médio"] = df_grouped["Arousal Médio"].map(lambda v: f"{v:.2f}")
-            
-            st.dataframe(
-                df_grouped,
-                width='stretch',
-                hide_index=True,
-            )
-            
-        # Seção: Perguntas com Maior Ativação Prosódica
-        q_activations = _calculate_questions_activation(audios, all_sinc)
-        if q_activations:
-            st.write("")
-            st.subheader("Perguntas com Maior Ativação Prosódica")
-            st.markdown(
-                "Análise de quais perguntas do roteiro geraram maior expressividade de voz e arousal emocional nas respostas dos respondentes."
-            )
-            
-            df_q = pd.DataFrame(q_activations)
-            df_q.columns = ["Pergunta", "Respostas Cobertas", "Arousal Médio", "Variação Pitch Médio", "Variação Volume Médio", "Destaque (Maior Arousal)"]
-            df_q["Arousal Médio"] = df_q["Arousal Médio"].map(lambda v: f"{v:.2f}")
-            df_q["Variação Pitch Médio"] = df_q["Variação Pitch Médio"].map(lambda v: f"{v:.2f}")
-            df_q["Variação Volume Médio"] = df_q["Variação Volume Médio"].map(lambda v: f"{v:.2f}")
-            
-            st.dataframe(
-                df_q,
-                width='stretch',
-                hide_index=True,
-            )
+with st.expander("Momentos de maior ativação prosódica"):
+    if top_moments.empty:
+        st.caption("Não foi possível extrair momentos de alta ativação no filtro.")
     else:
-        st.info("Não foi possível extrair momentos de alta ativação acústica no projeto.")
+        textos = top_moments["Text"].fillna("") if "Text" in top_moments.columns else pd.Series([""] * len(top_moments))
+        df_show = pd.DataFrame({
+            "Tópico": [extract_topic_from_text(t) for t in textos],
+            "Áudio": top_moments["session_id"],
+            "Tempo": [_tempo_do_momento(row) for _, row in top_moments.iterrows()],
+            "Fala": textos.astype(str).str.strip(),
+            "Arousal": top_moments["dim_arousal"].fillna(0.0).map(lambda v: f"{v:.2f}")
+            if "dim_arousal" in top_moments.columns else "0.00",
+        })
+        mom_event = st.dataframe(df_show, width="stretch", hide_index=True, on_select="rerun",
+                                 selection_mode="single-row", key="prj_top_moments_select")
+        mom_rows = _linhas_escolhidas(mom_event)
+        if st.button("Abrir na timeline", key="prj_mom_open", disabled=not mom_rows,
+                     help="Selecione uma linha da tabela."):
+            momento = top_moments.iloc[int(mom_rows[0])]
+            _abrir_na_timeline(momento, "Momento de Alta Ativação Geral", "Filtro de Ativação Consolidado",
+                               _tempo_do_momento(momento))
 
 # ------------------------------------------------------------------
 # Construir contexto para IA
@@ -1177,8 +1149,22 @@ transcript_sample = _build_transcript_sample(all_tr)
 # ------------------------------------------------------------------
 # Analise Geral por IA
 # ------------------------------------------------------------------
-st.divider()
-st.subheader("Analise Geral por IA")
+st.markdown(overview.section_html("04", "Análise por IA"), unsafe_allow_html=True)
+with st.container(border=True):
+    c_modo, c_base, c_modelo = st.columns([1.3, 1.2, 2], vertical_alignment="top")
+    analysis_mode = c_modo.segmented_control(
+        "Modo", ["Rapida (1 chamada)", "Aprofundada (2 etapas)"],
+        format_func=lambda m: "Rápida" if m.startswith("Rapida") else "Aprofundada",
+        default="Rapida (1 chamada)", key="prj_ai_mode",
+    ) or "Rapida (1 chamada)"
+    use_kb = c_base.toggle("Usar Base de Conhecimento", value=True, key="prj_ai_kb")
+    with c_modelo:
+        ai_provider_id, ai_model = ui.ai_model_selector("prj_ai_model", use_kb=use_kb)
+    if recorte:
+        st.caption(
+            "A análise gerada agora considera só o recorte ({}) e ele fica registrado no texto "
+            "salvo, no PDF e na Base de Conhecimento.".format(recorte)
+        )
 
 latest_analysis = get_latest_project_analysis(project_id)
 
@@ -1430,7 +1416,17 @@ if st.button(btn_label, type="primary"):
             )
             secao_sentimento = secoes_sentimento(sentimento_texto, divergencias)
 
-            user_prompt = build_project_user_prompt(
+            # Com filtro, a IA precisa saber que os dados são um recorte, senão
+            # descreve o subconjunto como se fosse o projeto inteiro.
+            aviso_recorte = (
+                "## Recorte analisado\n"
+                "Esta análise cobre só os áudios do recorte ({}): {} de {} áudios do projeto. "
+                "Descreva os achados como deste recorte, sem generalizar para o projeto inteiro.\n\n"
+                "---\n\n".format(recorte, n_interviews, len(audios_projeto))
+                if recorte
+                else ""
+            )
+            user_prompt = aviso_recorte + build_project_user_prompt(
                 project_context=proj_ctx,
                 acoustic_stats_text=acoustic_stats_text,
                 top_words_text=top_words_text,
@@ -1469,7 +1465,8 @@ if st.button(btn_label, type="primary"):
                 # rele-los da fonte — dai as divergencias entre as duas metades
                 # do relatorio.
                 strat_user = (
-                    f"Analise estatistica previa:\n{stat_result['text']}\n\n"
+                    aviso_recorte
+                    + f"Analise estatistica previa:\n{stat_result['text']}\n\n"
                     f"Dados consolidados do projeto:\n{acoustic_stats_text}\n\n"
                     f"Momentos de maior ativacao prosodica:\n{high_activation_text}\n\n"
                     f"Ranking de palavras:\n{top_words_text}\n\n"
@@ -1495,7 +1492,14 @@ if st.button(btn_label, type="primary"):
                 }
 
             used_model = ai_model
-            save_project_analysis(project_id, used_model, result.get("text", ""), result.get("citations", []))
+            # O recorte vai no próprio texto: é ele que a tela, o PDF e a Base de
+            # Conhecimento mostram, e o banco não guarda o filtro à parte.
+            texto_salvo = result.get("text", "")
+            if recorte:
+                texto_salvo = "**Recorte analisado:** {} · {} de {} áudios do projeto.\n\n{}".format(
+                    recorte, n_interviews, len(audios_projeto), texto_salvo
+                )
+            save_project_analysis(project_id, used_model, texto_salvo, result.get("citations", []))
             st.session_state[f"pr_kb_search_project_{project_id}"] = result.get(
                 "search", {}
             )
@@ -1509,7 +1513,7 @@ if st.button(btn_label, type="primary"):
                 project_name=project.get("name", ""),
                 model=used_model,
                 created_at=now_str,
-                text=result.get("text", ""),
+                text=texto_salvo,
                 citations=result.get("citations", []),
             )
             # Devolver a analise para a base so faz sentido para quem esta

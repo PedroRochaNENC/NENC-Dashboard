@@ -158,6 +158,28 @@ def _active_project(module_key: str = "prosodia") -> dict | None:
     return project
 
 
+def _open_audio_label() -> str | None:
+    """Rótulo do item do áudio aberto no menu ("Áudio #4821"), ou None.
+
+    O número é o id do áudio na API quando a sessão o traz (wa_<tel>_<id>),
+    o mesmo que a lista de Áudios mostra; senão, o id local.
+    """
+    audio_id = st.session_state.get("pros_audio_id")
+    if not audio_id:
+        return None
+    try:
+        from utils import prosodia_db
+        from utils.prosodia_overview import api_audio_id
+
+        audio = prosodia_db.get_audio(audio_id)
+    except Exception:
+        return None
+    if not audio:
+        st.session_state.pop("pros_audio_id", None)
+        return None
+    return "Áudio #{}".format(api_audio_id(audio.get("session_id")) or audio_id)
+
+
 def _jornada_pages(user: auth.User) -> dict[str, list]:
     """Menu da Jornada de Compra, no mesmo desenho de três níveis do NencBoost.
 
@@ -271,6 +293,20 @@ def _prosodia_pages(user: auth.User) -> dict[str, list]:
                   "Resumo", "gauge"),
             _page("modules/prosodia/entrevistas.py",
                   "Áudios", "list-bullets"),
+        ]
+        # Nível 3: a página do áudio aberto, logo abaixo de Áudios. Timeline
+        # e Análise viraram uma página só; as duas antigas ficam registradas
+        # e ocultas por um ciclo, só para redirecionar.
+        audio_label = _open_audio_label()
+        if audio_label:
+            project_pages.extend([
+                _page("modules/prosodia/audio.py", audio_label, "waveform"),
+                _page("modules/prosodia/audio_timeline.py", "Timeline",
+                      "chart-line", visibility="hidden"),
+                _page("modules/prosodia/audio_analise.py", "Análise",
+                      "sparkle", visibility="hidden"),
+            ])
+        project_pages.extend([
             _page("modules/prosodia/analise_geral.py",
                   "Análise Geral", "chart-bar"),
             _page("modules/prosodia/qr_codes.py",
@@ -279,16 +315,7 @@ def _prosodia_pages(user: auth.User) -> dict[str, list]:
                   "Uploads", "upload-simple"),
             _page("modules/prosodia/preparacao.py",
                   "Dados do Projeto", "note-pencil"),
-        ]
-        # Nível 3: Timeline e Análise pertencem a um áudio, e são
-        # abertas pelas ações da linha na tabela de Áudios.
-        if st.session_state.get("pros_audio_id"):
-            project_pages.extend([
-                _page("modules/prosodia/audio_timeline.py",
-                      "Timeline", "chart-line"),
-                _page("modules/prosodia/audio_analise.py",
-                      "Análise", "sparkle"),
-            ])
+        ])
         sections[str(project["name"])] = project_pages
 
     # Nível 1: continua visível com um projeto aberto, senão Campanhas e Base

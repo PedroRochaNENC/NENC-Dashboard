@@ -639,7 +639,11 @@ with tab_audios:
                                     sucesso_count += 1
                                 except Exception as e:
                                     st.error(f"Erro ao processar importação do áudio {session_id}: {e}")
-                                    
+
+                            if sucesso_count:
+                                from utils.prosodia_indice import atualizar_sem_derrubar
+
+                                atualizar_sem_derrubar(project_id)
                             st.success(
                                 f"Importação concluída!\n\n"
                                 f"- **Sucessos:** {sucesso_count}\n"

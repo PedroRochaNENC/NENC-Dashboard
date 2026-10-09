@@ -295,6 +295,9 @@ if json_files or csv_files or sinc_files:
 
             progress.progress((i + 1) / total, text=f"{sid} concluído.")
 
+        from utils.prosodia_indice import atualizar_sem_derrubar
+
+        atualizar_sem_derrubar(project_id)
         st.success(f"{total} áudio(s) processado(s) com sucesso!")
         st.switch_page("modules/prosodia/entrevistas.py")
 

@@ -7,8 +7,9 @@ Tela principal de consulta dos áudios de um projeto:
 - ações de timeline, análise, download e exclusão
 """
 
+import io
 import logging
-from datetime import date, datetime
+import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +18,7 @@ from utils import auth
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
 
+from utils import prosodia_overview as overview
 from utils import ui
 from utils.icons import page_title
 from utils.prosodia_db import (
@@ -24,8 +26,13 @@ from utils.prosodia_db import (
     get_project,
     get_audio,
     get_audios_for_interviews,
+    attach_audio_blobs,
     delete_audio,
+    mark_project_synced,
 )
+from utils.prosodia_indice import FAIXAS as FAIXAS_INDICE
+from utils.prosodia_indice import atualizar_sem_derrubar as atualizar_indices_sem_derrubar
+from utils.prosodia_indice import faixa as faixa_indice
 from utils.organization_data import claim_external_resource, list_external_resources
 from utils.prosodia_quality import thresholds_for_project
 
@@ -46,13 +53,6 @@ _STATUS_LABEL = {
 
 def _status_text(status: str) -> str:
     return _STATUS_LABEL.get(status or "pending", status or "pending")
-
-
-def _to_date(value: str) -> date:
-    try:
-        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
-    except Exception:
-        return date.today()
 
 
 def _normalize_phone(value) -> str:
@@ -96,63 +96,63 @@ thresholds = thresholds_for_project(project)
 # ------------------------------------------------------------------
 # Cabecalho
 # ------------------------------------------------------------------
-ui.breadcrumb("NencBoost", project["name"], "Áudios")
-
-# Os dois saltos que mais se usam a partir daqui. Ambos os destinos ja estao
-# no menu do projeto aberto, entao `switch_page` direto basta — nao ha
-# mudanca de nivel para o `_navigate_to` cobrir.
-titulo, ir_analise, voltar = st.columns(
-    [6, 1.7, 1.7], vertical_alignment="center"
+st.page_link("modules/prosodia/resumo.py", label="Voltar para Resumo", icon=":material/arrow_back:")
+ui.breadcrumb_nav(
+    ("NencBoost", "modules/prosodia/projetos.py"),
+    (project["name"], "modules/prosodia/resumo.py"),
+    ("Áudios", None),
 )
-with titulo:
-    page_title(
-        "list-bullets",
-        "Áudios",
-        "{} no projeto".format(len(get_audios_for_interviews(project_id))),
-    )
-with ir_analise:
-    if st.button("Análise Geral", width="stretch", key="en_ir_analise"):
-        st.switch_page("modules/prosodia/analise_geral.py")
-with voltar:
-    if st.button("← Projetos", width="stretch", key="en_voltar_projetos"):
-        st.switch_page("modules/prosodia/projetos.py")
+from utils.whatsapp_api_client import is_configured as wa_configured
+
+_no_projeto = get_audios_for_interviews(project_id)
+_processando = sum(1 for a in _no_projeto if a.get("quality_status") in ("pending", "processing", "running"))
+campaign_id = project.get("whatsapp_campaign_id")
+api_project_id = project.get("api_project_id")
+sync_clicked = refresh_clicked = False
+
+c_titulo, c_sync = st.columns([3, 2], vertical_alignment="bottom")
+with c_titulo:
+    page_title("list-bullets", "Áudios", "{} no projeto · {} em processamento na API".format(
+        len(_no_projeto), _processando))
 
 # ------------------------------------------------------------------
-# Sincronização com WhatsApp API
+# Sincronização com WhatsApp API: estado + botão dividido
 #
 # Os áudios na API chegam via webhook do WhatsApp e NÃO estão
 # obrigatoriamente vinculados a uma campanha. A sincronização exige:
 # - Um projeto externo pertencente à organização, ou
 # - Telefones de contatos registrados em uma campanha pertencente à organização.
 # ------------------------------------------------------------------
-from utils.whatsapp_api_client import is_configured as wa_configured
+if wa_configured():
+    with c_sync:
+        st.markdown(
+            '<div style="display:flex;justify-content:flex-end;align-items:center;gap:.45rem;'
+            'font-size:.75rem;color:var(--nenc-muted);margin-bottom:.35rem">{}</div>'.format(
+                overview.sync_status_html(project.get("last_sync_at"), api_project_id, campaign_id)
+            ),
+            unsafe_allow_html=True,
+        )
+        with st.container(horizontal=True, horizontal_alignment="right", gap="xxsmall"):
+            sync_clicked = st.button(
+                "Sincronizar agora", key="wa_sync_btn", icon=":material/sync:",
+                disabled=not (api_project_id or campaign_id),
+                help=None if (api_project_id or campaign_id)
+                else "Associe uma campanha ou um projeto da API em Dados do Projeto.",
+            )
+            with st.popover("", icon=":material/expand_more:", help="Mais opções de sincronização"):
+                refresh_clicked = st.button(
+                    "Atualizar dados da API (sem nova análise)",
+                    key="wa_refresh_btn",
+                    disabled=not pode_editar,
+                    help=(
+                        "Baixa de novo o resultado dos áudios já importados e refaz os CSVs: "
+                        "alinhamento da fala pelo tempo e sentimento do texto calculado pela API. "
+                        "Não reprocessa na API, não gera análise de IA nem refaz a verificação "
+                        "de qualidade."
+                    ),
+                )
 
 if wa_configured():
-    campaign_id = project.get("whatsapp_campaign_id")
-    api_project_id = project.get("api_project_id")
-
-    sync_label = "Sincronizar com WhatsApp"
-    if api_project_id:
-        sync_label += f" (Projeto API #{api_project_id})"
-    elif campaign_id:
-        sync_label += f" (Campanha #{campaign_id})"
-    else:
-        sync_label += " (associe uma campanha ou projeto API)"
-
-    col_sync, col_refresh = st.columns([3, 2])
-    with col_sync:
-        sync_clicked = st.button(sync_label, type="secondary", key="wa_sync_btn")
-    with col_refresh:
-        refresh_clicked = pode_editar and st.button(
-            "Atualizar dados da API (sem nova análise)",
-            key="wa_refresh_btn",
-            help=(
-                "Baixa de novo o resultado dos áudios já importados e refaz os CSVs: "
-                "alinhamento da fala pelo tempo e sentimento do texto calculado pela API. "
-                "Não reprocessa na API, não gera análise de IA nem refaz a verificação "
-                "de qualidade."
-            ),
-        )
 
     if refresh_clicked:
         from utils.prosodia_db import get_audios
@@ -160,6 +160,8 @@ if wa_configured():
 
         with st.spinner("Atualizando os áudios importados da API…"):
             resumo = atualizar_conteudo_audios_importados(get_audios(project_id))
+            if resumo["atualizados"]:
+                atualizar_indices_sem_derrubar(project_id)
         st.cache_data.clear()
         st.success(
             f"{resumo['atualizados']} áudio(s) atualizado(s); "
@@ -311,6 +313,7 @@ if wa_configured():
                                 pass
 
             if not audios_to_process:
+                mark_project_synced(project_id)
                 if processing_new_count > 0:
                     st.success(f"Sincronizado: {processing_new_count} novo(s) áudio(s) em processamento foram registrados na tabela!")
                     st.rerun()
@@ -560,6 +563,9 @@ if wa_configured():
                     progress.progress((idx + 1) / total, text=f"{session_id} concluído.")
 
                 progress.empty()
+                if synced:
+                    atualizar_indices_sem_derrubar(project_id)
+                mark_project_synced(project_id)
                 st.success(f"{synced} áudio(s) sincronizado(s) com sucesso!")
                 st.rerun()
 
@@ -577,80 +583,91 @@ if not audios:
         st.switch_page("modules/prosodia/audios.py")
     st.stop()
 
+# A coluna Recebido mostra a chegada na API; a ordem segue ela, não a da
+# importação, que junta num horário só tudo o que entrou num mesmo sync.
+audios = sorted(audios, key=lambda a: overview.entry_time(a) or pd.Timestamp.min, reverse=True)
+
 # ------------------------------------------------------------------
 # Filtros
 # ------------------------------------------------------------------
-all_dates = [_to_date(a.get("created_at", "")) for a in audios]
-min_date = min(all_dates) if all_dates else date.today()
-max_date = max(all_dates) if all_dates else date.today()
+_QUALIDADE = (
+    ("todos", "Todos"), ("pass", "Aprovados"), ("warn", "Com alerta"), ("fail", "Com problema"),
+    ("processing", "Processando"), ("failed", "Falharam"), ("sem_analise", "Sem análise"),
+)
 
-f1, f2, f3, f4, f5 = st.columns([3, 2, 2, 1.4, 1.4])
-with f1:
-    search = st.text_input(
-        "Buscar",
-        placeholder="Buscar por sessão ou ID",
-        key="en_search",
-        label_visibility="collapsed",
-    ).strip().lower()
-with f2:
-    # Sem selecao = sem filtro (ver o `if status_filter and ...` abaixo).
-    # Marcar os seis por padrao nao mudava o resultado e empilhava seis selos
-    # em tres linhas, deixando o campo com o triplo da altura dos vizinhos.
-    status_filter = st.multiselect(
-        "Status",
-        options=["pass", "warn", "fail", "pending", "processing", "failed"],
-        format_func=lambda s: _STATUS_LABEL.get(s, s),
-        key="en_status",
-        label_visibility="collapsed",
-        placeholder="Status",
-    )
-with f3:
-    selected_period = st.date_input(
-        "Período",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date,
-        key="en_date_filter",
-        label_visibility="collapsed",
-    )
-with f4:
-    ai_range = st.slider(
-        "Cobertura IA (%)", 0, 100, (0, 100), key="en_ai_range"
-    )
-with f5:
-    kw_range = st.slider(
-        "Cobertura keywords (%)", 0, 100, (0, 100), key="en_kw_range"
-    )
 
-if isinstance(selected_period, tuple) and len(selected_period) == 2:
-    dt_start, dt_end = selected_period
-elif isinstance(selected_period, list) and len(selected_period) == 2:
-    dt_start, dt_end = selected_period[0], selected_period[1]
-else:
-    dt_start = dt_end = selected_period
+def _estado(audio: dict) -> str:
+    status = audio.get("quality_status", "pending")
+    return "processing" if status in ("pending", "processing", "running") else status
+
+
+contagem = {chave: 0 for chave, _ in _QUALIDADE}
+for audio in audios:
+    contagem["todos"] += 1
+    contagem[_estado(audio)] = contagem.get(_estado(audio), 0) + 1
+    if _estado(audio) in ("pass", "warn", "fail") and not int(audio.get("n_analyses", 0)):
+        contagem["sem_analise"] += 1
+
+min_date, max_date = overview.period_bounds(audios)
+f_busca, f_qr, f_periodo, f_indice, f_mais = st.columns([2.4, 1.7, 1.9, 1.6, 1.35], vertical_alignment="bottom")
+search = f_busca.text_input(
+    "Buscar", placeholder="Número do áudio, sessão ou telefone", key="en_search"
+).strip().lower()
+filtro_qr = f_qr.selectbox("QR code", ["Todos"] + overview.qr_options(audios), key="en_qr")
+periodo = overview.as_period(f_periodo.date_input(
+    "Recebido", value=(min_date, max_date), min_value=min_date, max_value=max_date,
+    format="DD/MM/YYYY", key="en_date_filter",
+))
+filtro_indice = f_indice.selectbox(
+    "Índice combinado", ("Todos",) + FAIXAS_INDICE + ("Sem índice",), key="en_indice",
+    help="Favorável ≥ +0,2; Desfavorável ≤ −0,2; Divergente quando texto e voz passam de 0,2 "
+         "em sentidos opostos. A voz é medida em relação a todos os áudios do projeto.",
+)
+with f_mais:
+    with st.popover("Mais filtros", width="stretch"):
+        ai_range = st.slider("Cobertura IA (%)", 0, 100, (0, 100), key="en_ai_range")
+        kw_range = st.slider("Cobertura keywords (%)", 0, 100, (0, 100), key="en_kw_range")
+
+filtro_qualidade = st.pills(
+    "Qualidade",
+    [chave for chave, _ in _QUALIDADE],
+    format_func=lambda chave: "{} {}".format(dict(_QUALIDADE)[chave], contagem.get(chave, 0)),
+    default="todos",
+    key="en_quality",
+    label_visibility="collapsed",
+) or "todos"
 
 filtered = []
 for audio in audios:
     sid = str(audio.get("session_id", ""))
-    audio_id_text = str(audio.get("id", ""))
-    status = audio.get("quality_status", "pending")
-    created_date = _to_date(audio.get("created_at", ""))
-    ai_pct = float(audio.get("coverage_ai_pct", 0.0))
-    kw_pct = float(audio.get("coverage_kw_pct", 0.0))
-
-    if search and search not in sid.lower() and search not in audio_id_text:
+    if search and not any(search in campo for campo in (
+        sid.lower(), str(audio.get("id", "")), str(overview.api_audio_id(sid) or ""),
+    )):
         continue
-    if status_filter and status not in status_filter:
+    if filtro_qr != "Todos" and overview.qr_label(audio) != filtro_qr:
         continue
-    if created_date < dt_start or created_date > dt_end:
+    if filtro_indice != "Todos":
+        faixa = faixa_indice(audio.get("indice_combinado"), audio.get("indice_texto"), audio.get("indice_voz"))
+        if (faixa or "Sem índice") != filtro_indice:
+            continue
+    if periodo:
+        dia = overview.entry_date(audio)
+        if dia is None or dia < periodo[0] or dia > periodo[1]:
+            continue
+    if filtro_qualidade == "sem_analise":
+        if _estado(audio) not in ("pass", "warn", "fail") or int(audio.get("n_analyses", 0)):
+            continue
+    elif filtro_qualidade != "todos" and _estado(audio) != filtro_qualidade:
         continue
-    if ai_pct < ai_range[0] or ai_pct > ai_range[1]:
+    if not (ai_range[0] <= float(audio.get("coverage_ai_pct", 0.0)) <= ai_range[1]):
         continue
-    if kw_pct < kw_range[0] or kw_pct > kw_range[1]:
+    if not (kw_range[0] <= float(audio.get("coverage_kw_pct", 0.0)) <= kw_range[1]):
         continue
-
     filtered.append(audio)
 
+chosen = []
+# As setas ‹ › da página do áudio seguem esta ordem, com os filtros atuais.
+st.session_state["en_filtered_ids"] = [a["id"] for a in filtered]
 st.caption(f"{len(filtered)} áudio(s) encontrado(s) de {len(audios)} no projeto.")
 
 # ------------------------------------------------------------------
@@ -666,59 +683,29 @@ else:
         status = a.get("quality_status", "pending")
         is_processing = status in ("pending", "processing", "running")
         is_failed = status == "failed"
-
-        # Os pares "cobertas / %" viram uma coluna de progresso; os tres
-        # contadores de checks viram um selo unico de qualidade. O detalhe
-        # continua na aba Qualidade da entrevista.
+        # Os tres contadores de checks viram um selo unico de qualidade; o
+        # detalhe continua na aba Qualidade do audio.
         quality = _STATUS_LABEL.get(status, status)
         if not (is_processing or is_failed):
             warn = int(a.get("checks_warn", 0))
             fail = int(a.get("checks_fail", 0))
-            if fail:
-                quality = "{} problema(s)".format(fail)
-            elif warn:
-                quality = "{} alerta(s)".format(warn)
-            else:
-                quality = "Aprovado"
-
-        # Sem nome de QR, a origem decide o rotulo: upload direto nunca teve QR;
-        # entrevista do WhatsApp sem nome fica "Sem QR" e nao "Geral", porque
-        # pode so nao ter sido carimbada ainda (importada antes desta coluna).
-        # "wa_upload_<id>" e upload feito pela API, sem mensagem e portanto sem
-        # QR: o prefixo "wa_" sozinho o confundia com entrevista do WhatsApp.
+            quality = (
+                "{} problema(s)".format(fail) if fail
+                else "{} alerta(s)".format(warn) if warn
+                else "Aprovado"
+            )
         session_id = str(a.get("session_id", ""))
-        if a.get("qr_code_name"):
-            qr_code_label = a["qr_code_name"]
-        elif session_id.startswith("wa_") and not session_id.startswith("wa_upload_"):
-            qr_code_label = "Sem QR"
-        else:
-            qr_code_label = "Upload direto"
-
+        pronto = not (is_processing or is_failed)
         rows.append({
-            "Sessão": a.get("session_id", ""),
-            "QR Code": qr_code_label,
-            "Data": str(a.get("created_at", ""))[:10],
-            "Duração": (
-                a.get("duration_str", "00:00")
-                if not (is_processing or is_failed)
-                else None
-            ),
+            "Áudio": "#{}".format(overview.api_audio_id(session_id) or a.get("id")),
+            "Telefone": overview.masked_phone(session_id),
+            "QR code": overview.qr_label(a),
+            "Recebido": overview.entry_text(a),
+            "Duração": a.get("duration_str", "00:00") if pronto else None,
+            "Índice": a.get("indice_combinado") if pronto else None,
             "Qualidade": quality,
-            "Cobertura IA": (
-                float(a.get("coverage_ai_pct", 0.0)) / 100
-                if not (is_processing or is_failed)
-                else None
-            ),
-            "Keywords": (
-                float(a.get("coverage_kw_pct", 0.0)) / 100
-                if not (is_processing or is_failed)
-                else None
-            ),
-            "Análises": (
-                int(a.get("n_analyses", 0))
-                if not (is_processing or is_failed)
-                else None
-            ),
+            "Cobertura": float(a.get("coverage_ai_pct", 0.0)) / 100 if pronto else None,
+            "Análise": ("feita" if int(a.get("n_analyses", 0)) else "pendente") if pronto else "—",
         })
 
     table_event = st.dataframe(
@@ -726,35 +713,56 @@ else:
         width="stretch",
         hide_index=True,
         on_select="rerun",
-        selection_mode="single-row",
+        selection_mode="multi-row",
         key="en_interviews_table",
         column_config={
-            "Cobertura IA": st.column_config.ProgressColumn(
-                "Cobertura IA", format="percent", min_value=0, max_value=1
+            "Índice": st.column_config.NumberColumn(
+                "Índice", format="%+.2f",
+                help="Índice combinado do áudio, de −1 a +1: metade o texto, metade a voz "
+                     "em relação a todos os áudios do projeto.",
             ),
-            "Keywords": st.column_config.ProgressColumn(
-                "Keywords", format="percent", min_value=0, max_value=1
+            "Cobertura": st.column_config.ProgressColumn(
+                "Cobertura", format="percent", min_value=0, max_value=1,
+                help="Perguntas do roteiro cobertas, pela IA. Palavras-chave em Mais filtros.",
             ),
         },
     )
 
-    selected_rows = []
-    if table_event:
-        selection = getattr(table_event, "selection", None)
-        if isinstance(selection, dict):
-            selected_rows = selection.get("rows", [])
-        elif selection is not None:
-            selected_rows = getattr(selection, "rows", []) or []
+    selection = getattr(table_event, "selection", None) if table_event else None
+    selected_rows = (
+        selection.get("rows", []) if isinstance(selection, dict)
+        else (getattr(selection, "rows", []) or []) if selection is not None
+        else []
+    )
+    chosen = [filtered[int(i)] for i in selected_rows if 0 <= int(i) < len(filtered)]
+    if len(chosen) == 1:
+        selected_audio = chosen[0]
+    elif len(chosen) > 1:
 
-    if selected_rows:
-        try:
-            row_idx = int(selected_rows[0])
-            if 0 <= row_idx < len(filtered):
-                selected_audio = filtered[row_idx]
-            else:
-                selected_audio = None
-        except (ValueError, IndexError):
-            selected_audio = None
+        def _pacote(escolhidos: list) -> bytes:
+            """Os arquivos de cada áudio, com os nomes que o loader reconhece."""
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as pacote:
+                for item in attach_audio_blobs(project_id, escolhidos):
+                    sid = item.get("session_id", "sessao")
+                    for campo, nome in (
+                        ("prosodia_json", "NencLex-{}.json"),
+                        ("transcricao_csv", "Transcricao-{}.csv"),
+                        ("sincronizado_csv", "Sincronizado-{}.csv"),
+                    ):
+                        if item.get(campo):
+                            pacote.writestr(nome.format(sid), item[campo])
+            return buffer.getvalue()
+
+        with st.container(border=True):
+            b_info, b_zip = st.columns([3, 1.4], vertical_alignment="center")
+            b_info.markdown("**{} áudios selecionados**".format(len(chosen)))
+            b_zip.download_button(
+                "Baixar arquivos (.zip)", data=_pacote(chosen),
+                file_name="audios_{}.zip".format(project_id), mime="application/zip",
+                width="stretch", key="en_bulk_zip",
+            )
+            st.caption("Abrir, reprocessar e excluir valem para um áudio por vez: deixe só um selecionado.")
 
 # ------------------------------------------------------------------
 # Ações da linha selecionada
@@ -762,7 +770,8 @@ else:
 st.markdown("")
 
 if not selected_audio:
-    st.info("Selecione uma linha na tabela para abrir ou excluir o áudio.")
+    if len(chosen) < 2:
+        st.info("Selecione um áudio na tabela para abrir, reprocessar ou excluir.")
 else:
     selected_id = selected_audio["id"]
 
@@ -773,9 +782,9 @@ else:
 
     is_wa = str(selected_audio.get("session_id", "")).startswith("wa_")
     if is_wa:
-        ac1, ac2, ac3, ac4 = st.columns(4)
+        ac1, ac3, ac4 = st.columns(3)
     else:
-        ac1, ac2, ac4 = st.columns(3)
+        ac1, ac4 = st.columns(2)
         ac3 = None
 
     status = selected_audio.get("quality_status", "pending")
@@ -783,22 +792,18 @@ else:
     is_failed = status == "failed"
 
     with ac1:
-        help_msg_tl = "A timeline estará disponível assim que o processamento for concluído." if (is_processing or is_failed) else ""
-        if st.button("Timeline", width="stretch", key=f"en_tl_{selected_id}", disabled=is_processing or is_failed, help=help_msg_tl):
+        # O st.dataframe não navega pelo clique na linha: com uma linha
+        # selecionada, abrir o áudio é a primeira ação.
+        if st.button(
+            "Abrir áudio", type="primary", width="stretch", key=f"en_open_{selected_id}",
+            disabled=is_processing or is_failed,
+            help="O áudio abre assim que o processamento for concluído." if (is_processing or is_failed) else None,
+        ):
             st.session_state["pros_audio_id"] = selected_id
-            # Cruza para o nivel da entrevista: a pagina so entra no menu no
-            # rerun seguinte, entao o salto passa por `_navigate_to`.
-            st.session_state["_navigate_to"] = (
-                "modules/prosodia/audio_timeline.py"
-            )
-            st.rerun()
-    with ac2:
-        help_msg_an = "A análise estará disponível assim que o processamento for concluído." if (is_processing or is_failed) else ""
-        if st.button("Análise", width="stretch", key=f"en_an_{selected_id}", disabled=is_processing or is_failed, help=help_msg_an):
-            st.session_state["pros_audio_id"] = selected_id
-            st.session_state["_navigate_to"] = (
-                "modules/prosodia/audio_analise.py"
-            )
+            st.session_state.pop("pros_timeline_focus", None)
+            # Cruza para o nivel do audio: a pagina so entra no menu no rerun
+            # seguinte, entao o salto passa por `_navigate_to`.
+            st.session_state["_navigate_to"] = "modules/prosodia/audio.py"
             st.rerun()
             
     if is_wa and ac3 is not None:
@@ -847,7 +852,8 @@ else:
                                 # 4. Atualizar blobs locais no SQLite
                                 from utils.prosodia_db import update_audio_content
                                 update_audio_content(selected_id, json_bytes, csv_bytes, sinc_bytes)
-                                
+                                atualizar_indices_sem_derrubar(project_id)
+
                                 # 5. Limpar cache do Streamlit
                                 st.cache_data.clear()
                                 
@@ -1071,6 +1077,7 @@ else:
                     st.error(f"Falha ao excluir a gravação na API ({e}). O áudio não foi excluído.")
                 else:
                     delete_audio(selected_id)
+                    atualizar_indices_sem_derrubar(project_id)
                     st.session_state.pop(f"confirm_del_interview_{selected_id}", None)
                     st.session_state.pop("en_interviews_table", None)
                     if st.session_state.get("pros_audio_id") == selected_id:

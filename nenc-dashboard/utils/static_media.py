@@ -6,7 +6,7 @@ execucao; o `static/` e servido direto pelo servidor, com Range (o player pula
 para qualquer ponto sem baixar tudo). O preco e que o `static/` nao tem
 autenticacao: por isso o nome e um token aleatorio preso a sessao, e a copia
 expira por idade — o mesmo cuidado que o NencBoost toma com o audio
-(`modules/prosodia/audio_timeline.py`).
+(`utils/prosodia_audio.py`, `preparar_audio_estatico`).
 """
 
 import os

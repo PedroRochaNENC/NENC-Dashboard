@@ -184,7 +184,12 @@ def _signals(project_id: int, version: tuple) -> dict:
 # ---------------------------------------------------------------------------
 
 ui.inject_theme()
-ui.breadcrumb("NencBoost", project["name"], "Resumo")
+st.page_link("modules/prosodia/projetos.py", label="Voltar para Todos os projetos", icon=":material/arrow_back:")
+ui.breadcrumb_nav(
+    ("NencBoost", "modules/prosodia/projetos.py"),
+    (project["name"], None),
+    ("Resumo", None),
+)
 
 entries = summary.project_entries(project["id"])
 numbers = summary.kpis(entries)

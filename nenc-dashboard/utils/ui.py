@@ -17,6 +17,7 @@ Ordem de uso numa pagina de modulo:
 
 from __future__ import annotations
 
+import html
 import json
 import math
 from typing import Any, Callable, Iterable, Sequence
@@ -65,6 +66,8 @@ h3 {{ font-size: 1.05rem !important; }}
     color: var(--nenc-dim);
 }}
 [data-testid="stSidebarNav"] a {{ border-radius: 6px; }}
+/* Pagina do audio aberto: nivel 3, recuado abaixo de Audios */
+[data-testid="stSidebarNav"] a[href$="/prosodia-audio"] {{ margin-left: 30px; }}
 [data-testid="stSidebarNav"] a[aria-current="page"] {{
     background: rgba(145,132,217,.13);
     border-left: 2px solid var(--nenc-accent);
@@ -88,6 +91,24 @@ h3 {{ font-size: 1.05rem !important; }}
 }}
 button:focus-visible {{
     outline: 2px solid var(--nenc-accent); outline-offset: 2px;
+}}
+
+/* Trilha clicavel (breadcrumb_nav): os st.page_link perdem o formato de
+   botao e ficam do tamanho do texto da trilha */
+.st-key-nenc_breadcrumb {{ padding: .1rem 0 .5rem; }}
+.st-key-nenc_breadcrumb [data-testid="stPageLink-NavLink"] {{
+    padding: 0; margin: 0; min-height: 0; background: none;
+}}
+.st-key-nenc_breadcrumb [data-testid="stPageLink-NavLink"] p,
+.st-key-nenc_breadcrumb [data-testid="stMarkdownContainer"] p {{
+    font-size: .75rem; margin: 0; line-height: 1.4;
+}}
+/* O Streamlit poe -1rem embaixo de todo markdown; na linha da trilha isso
+   zerava a altura do texto e o deixava abaixo dos links */
+.st-key-nenc_breadcrumb [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
+.st-key-nenc_breadcrumb [data-testid="stPageLink-NavLink"] p {{ color: var(--nenc-faint); }}
+.st-key-nenc_breadcrumb [data-testid="stPageLink-NavLink"]:hover p {{
+    color: var(--nenc-accent-300); text-decoration: underline; text-underline-offset: 3px;
 }}
 </style>
 """
@@ -190,6 +211,39 @@ def breadcrumb(*parts: str) -> None:
         ),
         unsafe_allow_html=True,
     )
+
+
+def breadcrumb_nav(*items: tuple[str, str | None]) -> None:
+    """Trilha clicavel. Cada item e (rotulo, pagina); pagina None e so texto.
+
+    Os itens com pagina sao `st.page_link`, que troca de pagina na mesma
+    sessao: um <a href> abriria uma sessao nova e pediria login de novo. O
+    ultimo item e a pagina atual e nunca vira link.
+    """
+    visible = [(label, page) for label, page in items if label]
+    if not visible:
+        return
+    separator = '<span style="color:var(--nenc-dim);display:flex">{}</span>'.format(
+        icon("caret-right", 11)
+    )
+    with st.container(
+        horizontal=True, vertical_alignment="center", gap="xxsmall", key="nenc_breadcrumb"
+    ):
+        for index, (label, page) in enumerate(visible):
+            if index:
+                st.markdown(separator, unsafe_allow_html=True, width="content")
+            is_last = index == len(visible) - 1
+            if page and not is_last:
+                st.page_link(page, label=label)
+            else:
+                st.markdown(
+                    '<span style="color:{c}">{t}</span>'.format(
+                        c="var(--nenc-muted)" if is_last else "var(--nenc-faint)",
+                        t=html.escape(label),
+                    ),
+                    unsafe_allow_html=True,
+                    width="content",
+                )
 
 
 def status_chip(name: str, text: str, tone: str = "muted") -> str:
