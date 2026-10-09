@@ -21,7 +21,11 @@ import json
 from typing import Dict, List, Optional
 import pandas as pd
 
-from utils.prosodia_project_types import PESQUISA_OPINIAO, normalize_project_type
+from utils.prosodia_project_types import (
+    PESQUISA_OPINIAO,
+    normalize_duracao_esperada,
+    normalize_project_type,
+)
 
 
 def _parse_json_response(raw: str) -> list:
@@ -129,7 +133,8 @@ THRESHOLDS = DEFAULT_THRESHOLDS
 
 # Pesquisa de opinião: áudio curto de um único respondente, como o recado de
 # WhatsApp enviado pelo QR Code. Só os mínimos de fala mudam; o equilíbrio
-# entre locutores nem é checado nesse tipo (ver run_quality_checks).
+# entre locutores nem é checado nesse tipo (ver run_quality_checks). Os
+# padrões por tipo só valem para projeto sem faixa de duração esperada.
 DEFAULT_THRESHOLDS_PESQUISA_OPINIAO = {
     **DEFAULT_THRESHOLDS,
     "duration_fail_s": 5.0,
@@ -140,8 +145,73 @@ DEFAULT_THRESHOLDS_PESQUISA_OPINIAO = {
 }
 
 
-def default_thresholds(tipo_projeto: Optional[str] = None) -> Dict:
-    """Limiares padrão do tipo de projeto."""
+# Faixa de duração esperada do áudio: (duração de referência em s, porte).
+# A referência é o limite inferior da faixa (20 s no recado de até 30 s) e
+# ancora os mínimos de fala: alerta abaixo de metade dela em fala, erro abaixo
+# de um quarto. Calibrado nos áudios do NencBoost: a fala ocupa ~85% dos
+# recados e ~65% das entrevistas longas, corre a 110–190 WPM e cada segmento
+# VAD dura ~3 s. Daí palavras a 90 WPM no alerta e a 60 WPM no erro, e um
+# segmento a cada 5 s de fala.
+_FAIXAS_DURACAO = {
+    "ate_30s": (20, "curto"),
+    "30s_1min": (30, "curto"),
+    "1_3min": (60, "medio"),
+    "3_10min": (180, "medio"),
+    "10_30min": (600, "longo"),
+    "30_60min": (1800, "longo"),
+    "acima_1h": (3600, "longo"),
+}
+
+# Áudio curto tem poucos turnos e segmentos: uma marca de ininteligível pesa
+# muito na proporção, o WPM e o F0 oscilam mais, e uma voz só é o normal (o
+# alerta de dominância fica para quando ela faz 100% das palavras). Conversa
+# longa tem mais pausas de troca de turno e fica com os padrões gerais. Volume
+# e neutralidade emocional não dependem da duração.
+_TOLERANCIA_POR_PORTE = {
+    "curto": {
+        "unintelligible_warn_pct": 0.35,
+        "unintelligible_fail_pct": 0.50,
+        "silence_ratio_warn": 0.50,
+        "speaker_dominance_warn_pct": 1.00,
+        "wpm_low_warn": 60,
+        "wpm_high_warn": 300,
+        "f0_zero_ratio_warn": 0.85,
+    },
+    "medio": {
+        "unintelligible_warn_pct": 0.25,
+        "unintelligible_fail_pct": 0.40,
+        "silence_ratio_warn": 0.65,
+        "speaker_dominance_warn_pct": 0.95,
+        "wpm_low_warn": 70,
+        "wpm_high_warn": 270,
+    },
+    "longo": {},
+}
+
+
+def thresholds_for_duracao(duracao_esperada: str) -> Dict:
+    """Limiares recomendados para a faixa de duração esperada do áudio."""
+    referencia_s, porte = _FAIXAS_DURACAO[duracao_esperada]
+    alerta_s = float(round(referencia_s / 2))
+    erro_s = float(round(referencia_s / 4))
+    return {
+        **DEFAULT_THRESHOLDS,
+        **_TOLERANCIA_POR_PORTE[porte],
+        "duration_fail_s": erro_s,
+        "duration_warn_s": alerta_s,
+        "words_fail": int(round(erro_s)),
+        "words_warn": int(round(alerta_s * 1.5)),
+        "min_vad_segments_warn": max(1, int(round(alerta_s / 5))),
+    }
+
+
+def default_thresholds(
+    tipo_projeto: Optional[str] = None, duracao_esperada: Optional[str] = None
+) -> Dict:
+    """Limiares padrão: os da faixa de duração; sem faixa, os do tipo."""
+    duracao = normalize_duracao_esperada(duracao_esperada)
+    if duracao:
+        return thresholds_for_duracao(duracao)
     if normalize_project_type(tipo_projeto) == PESQUISA_OPINIAO:
         return DEFAULT_THRESHOLDS_PESQUISA_OPINIAO.copy()
     return DEFAULT_THRESHOLDS.copy()
@@ -167,10 +237,11 @@ def get_merged_thresholds(
 
 
 def thresholds_for_project(project: Optional[Dict]) -> Dict:
-    """Limiares efetivos: os personalizados do projeto sobre os padrões do tipo.
+    """Limiares efetivos: os personalizados do projeto sobre os padrões dele.
 
     "Usar valores padrão" grava NULL em quality_thresholds, então o padrão só
-    se resolve aqui, na hora da checagem, e depende do tipo do projeto.
+    se resolve aqui, na hora da checagem, pela faixa de duração do projeto ou,
+    sem ela, pelo tipo.
     """
     project = project or {}
     custom = None
@@ -182,7 +253,10 @@ def thresholds_for_project(project: Optional[Dict]) -> Dict:
     if not isinstance(custom, dict):
         custom = None
     return get_merged_thresholds(
-        custom, base=default_thresholds(project.get("tipo_projeto"))
+        custom,
+        base=default_thresholds(
+            project.get("tipo_projeto"), project.get("duracao_esperada")
+        ),
     )
 
 

@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
 from utils import auth
-from utils.prosodia_project_types import DEFAULT_PROJECT_TYPE, PROJECT_TYPE_LABELS
+from utils.prosodia_project_types import (
+    DEFAULT_PROJECT_TYPE,
+    DURACAO_ESPERADA_LABELS,
+    PROJECT_TYPE_LABELS,
+)
 
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "prosodia.db"
 
@@ -267,6 +271,7 @@ def init_db() -> None:
                 api_project_id INTEGER,
                 quality_thresholds TEXT,
                 tipo_projeto TEXT    NOT NULL DEFAULT 'entrevista_qualitativa',
+                duracao_esperada TEXT,
                 created_by_user_id INTEGER
                              REFERENCES users(id) ON DELETE SET NULL,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
@@ -362,6 +367,10 @@ def init_db() -> None:
                 "ALTER TABLE projects ADD COLUMN tipo_projeto TEXT NOT NULL "
                 "DEFAULT 'entrevista_qualitativa'"
             )
+        if "duracao_esperada" not in cols:
+            # Projetos existentes ficam com NULL e seguem com os limiares de
+            # qualidade do tipo até alguém escolher a faixa na edição.
+            conn.execute("ALTER TABLE projects ADD COLUMN duracao_esperada TEXT")
         if "last_sync_at" not in cols:
             # Fim da última sincronização com a API, em UTC, para o estado
             # "Sincronizado há N min" da lista de Áudios.
@@ -418,6 +427,14 @@ def _require_known_project_type(tipo_projeto: str) -> None:
         raise ValueError("Tipo de projeto desconhecido: {!r}".format(tipo_projeto))
 
 
+def _require_known_duracao(duracao_esperada: Optional[str]) -> None:
+    """A faixa calibra os limiares: um valor desconhecido não entra no banco."""
+    if duracao_esperada is not None and duracao_esperada not in DURACAO_ESPERADA_LABELS:
+        raise ValueError(
+            "Faixa de duração desconhecida: {!r}".format(duracao_esperada)
+        )
+
+
 def create_project(
     name: str,
     especialidade: str = "",
@@ -432,9 +449,11 @@ def create_project(
     api_project_id: Optional[int] = None,
     qr_verification_text: Optional[str] = None,
     tipo_projeto: str = DEFAULT_PROJECT_TYPE,
+    duracao_esperada: Optional[str] = None,
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     _require_known_project_type(tipo_projeto)
+    _require_known_duracao(duracao_esperada)
     actor = _require_write()
     organization_id = _active_organization_id()
     if not organization_id:
@@ -457,8 +476,9 @@ def create_project(
                     quality_thresholds,
                     api_project_id,
                     qr_verification_text,
-                    tipo_projeto
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tipo_projeto,
+                    duracao_esperada
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 organization_id,
                 _actor_user_id(actor),
@@ -475,6 +495,7 @@ def create_project(
                 api_project_id,
                 qr_verification_text,
                 tipo_projeto,
+                duracao_esperada,
             ),
         )
         project_id = cur.lastrowid
@@ -583,15 +604,17 @@ def update_project(
     api_project_id: Optional[int] = None,
     qr_verification_text: Optional[str] = None,
     tipo_projeto: Optional[str] = None,
+    duracao_esperada: Optional[str] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente.
 
-    `tipo_projeto=None` mantém o tipo salvo: as telas que regravam o projeto
-    repassando os próprios campos (texto do QR, vínculo com a API, campanha)
-    não conhecem o tipo, e sem isso o apagariam.
+    `tipo_projeto=None` e `duracao_esperada=None` mantêm os valores salvos: as
+    telas que regravam o projeto repassando os próprios campos (texto do QR,
+    vínculo com a API, campanha) não os conhecem, e sem isso os apagariam.
     """
     if tipo_projeto is not None:
         _require_known_project_type(tipo_projeto)
+    _require_known_duracao(duracao_esperada)
     actor = _require_write()
     # A autoria e conferida antes do claim: uma recusa nao pode deixar para
     # tras a posse de um recurso externo que nunca chegou a ser vinculado.
@@ -614,7 +637,8 @@ def update_project(
                        quality_thresholds=?,
                        api_project_id=?,
                        qr_verification_text=?,
-                       tipo_projeto=COALESCE(?, tipo_projeto)
+                       tipo_projeto=COALESCE(?, tipo_projeto),
+                       duracao_esperada=COALESCE(?, duracao_esperada)
                    WHERE id=?""",
                 (
                     name,
@@ -630,6 +654,7 @@ def update_project(
                     api_project_id,
                     qr_verification_text,
                     tipo_projeto,
+                    duracao_esperada,
                     project_id,
                 ),
             )
@@ -648,7 +673,8 @@ def update_project(
                        quality_thresholds=?,
                        api_project_id=?,
                        qr_verification_text=?,
-                       tipo_projeto=COALESCE(?, tipo_projeto)
+                       tipo_projeto=COALESCE(?, tipo_projeto),
+                       duracao_esperada=COALESCE(?, duracao_esperada)
                    WHERE id=? AND organization_id=?""",
                 (
                     name,
@@ -664,6 +690,7 @@ def update_project(
                     api_project_id,
                     qr_verification_text,
                     tipo_projeto,
+                    duracao_esperada,
                     project_id,
                     organization_id,
                 ),
