@@ -36,6 +36,7 @@ def _contact_id(contact: dict):
 
 
 def _update_project_campaign(project: dict, campaign_id) -> None:
+    # update_project regrava todas as colunas: campo não repassado é apagado.
     update_project(
         project_id=project["id"],
         name=project["name"],
@@ -49,6 +50,7 @@ def _update_project_campaign(project: dict, campaign_id) -> None:
         whatsapp_campaign_id=campaign_id,
         quality_thresholds=project.get("quality_thresholds"),
         api_project_id=project.get("api_project_id"),
+        qr_verification_text=project.get("qr_verification_text"),
     )
 
 # A navegacao de volta vive no menu lateral, na seccao "Coleta via WhatsApp".

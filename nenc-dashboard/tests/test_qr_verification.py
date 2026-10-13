@@ -1,3 +1,5 @@
+import ast
+import inspect
 import os
 import tempfile
 import unittest
@@ -145,6 +147,76 @@ class TestQRCodeSuggestion(unittest.TestCase):
             {"code": None},
         ]
         self.assertEqual(suggest_next_qr_code(5, qr_codes), "05-03")
+
+
+PROSODIA_PAGES = Path(__file__).resolve().parent.parent / "modules" / "prosodia"
+
+
+def _nome_chamado(func) -> str:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _chaves_do_dict(arvore, nome: str):
+    """Chaves do dict literal atribuído a `nome`, ou None se não houver."""
+    for no in ast.walk(arvore):
+        if (
+            isinstance(no, ast.Assign)
+            and isinstance(no.value, ast.Dict)
+            and any(isinstance(alvo, ast.Name) and alvo.id == nome for alvo in no.targets)
+        ):
+            return {k.value for k in no.value.keys if isinstance(k, ast.Constant)}
+    return None
+
+
+class TestPagesKeepProjectFields(unittest.TestCase):
+    """update_project regrava todas as colunas: quem não repassa uma a apaga.
+
+    Vincular ou desvincular uma campanha apagava o texto de verificação do QR,
+    porque whatsapp_campanhas.py não o repassava. As páginas são scripts
+    Streamlit e não rodam num teste de unidade; o contrato é lido do código.
+    Tipo e faixa de duração ficam de fora: None neles mantém o valor salvo.
+    """
+
+    def test_every_page_call_passes_every_column(self):
+        parametros = list(inspect.signature(update_project).parameters)
+        obrigatorios = set(parametros) - {"tipo_projeto", "duracao_esperada"}
+        verificadas = 0
+        for pagina in sorted(PROSODIA_PAGES.glob("*.py")):
+            arvore = ast.parse(pagina.read_text(encoding="utf-8"))
+            for chamada in ast.walk(arvore):
+                if not (
+                    isinstance(chamada, ast.Call)
+                    and _nome_chamado(chamada.func) == "update_project"
+                ):
+                    continue
+                passados = set(parametros[: len(chamada.args)])
+                for keyword in chamada.keywords:
+                    if keyword.arg is not None:
+                        passados.add(keyword.arg)
+                        continue
+                    # **campos: vale o dict literal montado na página
+                    # (qr_codes._save_project).
+                    chaves = None
+                    if isinstance(keyword.value, ast.Name):
+                        chaves = _chaves_do_dict(arvore, keyword.value.id)
+                    self.assertIsNotNone(
+                        chaves,
+                        "{}:{} repassa um ** que o teste não sabe ler".format(
+                            pagina.name, chamada.lineno
+                        ),
+                    )
+                    passados |= chaves
+                verificadas += 1
+                with self.subTest(pagina=pagina.name, linha=chamada.lineno):
+                    self.assertEqual(obrigatorios - passados, set())
+
+        # Glob vazio ou chamada renomeada passariam o teste por vacuidade.
+        # Hoje: preparacao.py, qr_codes.py e whatsapp_campanhas.py.
+        self.assertGreaterEqual(verificadas, 3)
 
 
 if __name__ == "__main__":
