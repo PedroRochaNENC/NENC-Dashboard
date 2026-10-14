@@ -1711,19 +1711,53 @@ def build_whatsapp_deeplink(phone: str, verification_text: str, code: str = "") 
     return f"https://wa.me/{clean_phone}?text={encoded_text}"
 
 
+QR_LOGO_PATH = Path(__file__).resolve().parent.parent / "static" / "qr_logo.png"
+# Caixa maxima do logo, em fracao do lado do QR. O logo atual e o logotipo
+# "NENC" (largo e baixo), recortado sem margem. Com correcao H (~30%
+# recuperavel) ele cobre ~6% da area e o codigo continua legivel.
+QR_LOGO_MAX_WIDTH = 0.34
+QR_LOGO_MAX_HEIGHT = 0.17
+
+
+def _paste_qr_logo(img):
+    """Cola o logo no centro do QR sobre um fundo branco com respiro."""
+    from PIL import Image, ImageDraw
+
+    img = img.convert("RGB")
+    logo = Image.open(QR_LOGO_PATH).convert("RGBA")
+    logo.thumbnail(
+        (int(img.width * QR_LOGO_MAX_WIDTH), int(img.width * QR_LOGO_MAX_HEIGHT)),
+        Image.LANCZOS,
+    )
+
+    pad = max(6, img.width // 60)
+    box_w, box_h = logo.width + 2 * pad, logo.height + 2 * pad
+    box_x, box_y = (img.width - box_w) // 2, (img.height - box_h) // 2
+    ImageDraw.Draw(img).rounded_rectangle(
+        (box_x, box_y, box_x + box_w, box_y + box_h),
+        radius=pad,
+        fill="white",
+    )
+    img.paste(logo, (box_x + pad, box_y + pad), logo)
+    return img
+
+
 def generate_qr_code_bytes(data_url: str) -> bytes:
     """Gera a imagem PNG em bytes a partir de uma URL/texto para exibição ou download."""
     try:
         import qrcode
         qr = qrcode.QRCode(
             version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            # Correcao H porque o logo no centro esconde parte dos modulos.
+            error_correction=qrcode.constants.ERROR_CORRECT_H,
             box_size=10,
             border=4,
         )
         qr.add_data(data_url)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
+        if QR_LOGO_PATH.exists():
+            img = _paste_qr_logo(img)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
