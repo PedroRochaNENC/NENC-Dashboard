@@ -232,6 +232,31 @@ Com menos de 5 trechos com voz, a leitura é "não avaliável (n trechos)". Os l
 
 ## 8. Estrutura do relatório
 
+Implementada na fase 4, em `utils/prosodia_relatorio.py`: `escrever_relatorio` faz a chamada à IA, separa a resposta nas seções (`separar_secoes`), monta o relatório (`montar_relatorio`) e confere as referências (`verificar_referencias`). As regras desta seção valem como estão escritas. O que o código decidiu além delas:
+
+- **Montagem.**
+  - Os títulos seguem o exemplo da §10: Resumo Executivo sem número, as seções de 1 a 6 e o Apêndice técnico no fim.
+  - Cada leitura da Matriz começa pelo nome do grupo, e o código a põe embaixo da tabela do grupo, sem o nome. Leitura sem nome de grupo vai inteira depois das duas tabelas.
+  - Não entra a leitura de grupo sem áudio, nem a da Matriz ou do Termômetro não avaliáveis: fica só o texto do código.
+  - Seção que a IA não escreveu sai com o aviso "A IA não escreveu esta seção".
+  - Ficam fora do relatório, com aviso na verificação, as seções que a estrutura proíbe (taxonomia, tabela, cabeçalho, apêndice, metodologia, limitações, introdução, conclusão, referências), com título no nível das seções ou acima, e toda tabela escrita pela IA. Qualquer outro título é subtítulo da seção em que está.
+  - As referências da base continuam fora do texto: a página, o .md e o PDF as mostram a partir das citações, como hoje.
+  - Sem respondente contado, a IA não é chamada. Resposta sem texto é erro, para não salvar relatório vazio.
+- **IDs dos achados.** O código numera os achados antes da chamada, na ordem da tabela, e manda a lista na tarefa. A verificação usa a numeração que a IA escreveu.
+- **Verificação.** Além das seis regras abaixo:
+  - cada achado traz o subtema, a faixa e a fração da sua linha, e a voz que ele cita não contradiz a da tabela (qualificador, direção e ativação);
+  - todo subtema em padrão ou sinal tem um achado só, e menção isolada não tem ID;
+  - toda hipótese tem "Como validar", e toda recomendação tem classificação, driver, área e "Como medir";
+  - R citado também tem de existir;
+  - sessão do WhatsApp no texto (`wa_` seguido do telefone) vira aviso;
+  - só o texto que entra no relatório é conferido.
+- **Frações.**
+  - Logo depois de um ID ("A1, 19/64"), vale qualquer fração do tema daquele achado: o total, as duas da coluna Δ ou a de um grupo da Matriz.
+  - Logo depois do nome de um tema ou de um emergente, vale qualquer fração dele.
+  - Solta, vale qualquer fração das tabelas.
+  - Número com zero à esquerda ("30/09") e a data da análise anterior não contam como fração.
+- **Subtema na prosa.** É reconhecido pelo "Categoria > Subtema". Emergente escrito como "Categoria > rótulo" também vale.
+
 1. Cabeçalho (código)
 2. Resumo Executivo (IA)
 3. Taxonomia de Temas e temas emergentes (código)
@@ -317,6 +342,24 @@ Para cada grupo da tabela recebida: *Perfil:* uma ou duas frases. *Ação:* uma 
 ### Termômetro — leitura
 Duas ou três frases sobre o que puxa o saldo, citando IDs. Não altere o número.
 ```
+
+Implementado na fase 4, em `utils/prosodia_prompts.py`: `sistema_analise_geral(tipo)` e `mensagem_analise_geral`, que fecha com a tarefa de `tarefa_analise_geral`. Quem monta a mensagem com as tabelas é `mensagem_para_ia`, em `prosodia_relatorio`. O que o código decidiu além do que está escrito acima:
+
+- **Nomes.** O prompt novo tem nomes próprios. Os prompts de projeto antigos (rápido, estatístico e estratégico) e o `build_project_user_prompt` ficam até a fase 5, porque a página ainda os usa.
+- **Ordem.** O adendo do tipo vem logo depois do papel.
+- **Texto.** Entraram instruções que não estão na lista acima:
+  - recomendação é ação da empresa: ferramenta de análise, nova coleta ou ajuste da pesquisa vão para o "Como validar" de uma hipótese;
+  - os exemplos dos achados saem dos trechos recebidos;
+  - "texto", "voz" e "índice" da Matriz vêm explicados.
+- **Estrutura Obrigatória.** Três frases a mais: com menos achados, menos recomendações; cada leitura da Matriz começa pelo nome do grupo; Matriz ou Termômetro não avaliável vira "Não avaliável".
+- **Exemplo.** É o da §10, com o nome do grupo antes de cada leitura da Matriz.
+- **Tarefa.** Traz a linha de cada achado já com o ID, o subtema, a faixa, a fração e a voz; os grupos da Matriz com áudio; o que não é avaliável; e os avisos de leitura exploratória e de variação observada. Sem subtema em padrão ou sinal, hipóteses e recomendações viram uma frase.
+- **Mensagem.**
+  - A tabela de temas vai sem os emergentes, que vêm no bloco próprio, depois dos trechos.
+  - Na entrevista, as divergências ficam só com as falas do entrevistado. O apêndice mostra todas.
+  - Os Sumários Executivos são só dos áudios contados, pelo alias, e a sessão citada no texto deles vira o alias.
+  - O bloco de sumários tem teto de 80 mil caracteres. Passou disso, entram primeiro os dos áudios citados nos trechos, e o apêndice diz quantos ficaram de fora.
+- **Chamada.** Temperatura 0,3 e até 8.000 tokens de saída, com folga para os modelos que raciocinam.
 
 ## 10. Exemplo de saída (setor fictício)
 
@@ -437,8 +480,8 @@ Ordem de implementação:
 
 1. Banco e Preparação (taxonomia). **Feita.**
 2. Classificação por áudio, com cache, e a proposta de taxonomia provisória. **Feita.**
-3. Agregação e apêndice, com testes, mais a coluna `project_analyses.temas_json` e a extração do Sumário Executivo. **Feita.** Ficam para a fase 4 a montagem do relatório e a verificação das referências.
-4. Prompt e montagem do relatório.
+3. Agregação e apêndice, com testes, mais a coluna `project_analyses.temas_json` e a extração do Sumário Executivo. **Feita.** A montagem do relatório e a verificação das referências ficaram para a fase 4.
+4. Prompt e montagem do relatório, com a verificação das referências. **Feita.** Ficam para a fase 5: chamar `escrever_relatorio` na página, com `generate_analysis` como `gerar` e o filtro novo da base; mostrar na tela os problemas da verificação; salvar o texto, as citações e o snapshot; tirar o seletor de modo e os prompts antigos de projeto; e ajustar `tests/test_project_type.py`.
 5. Fluxo na página e filtro da base.
 6. Validação com a Smart Fit e com uma Entrevista.
 
