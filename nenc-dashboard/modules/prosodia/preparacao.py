@@ -1,9 +1,10 @@
 """
 Prosódia — Dados do Projeto.
 
-Formulário de criação/edição de um projeto: nome, tipo, contexto e perguntas.
-As perguntas e a faixa de duração esperada dos áudios alimentam a verificação
-automática de qualidade de cada áudio.
+Formulário de criação/edição de um projeto: nome, tipo, contexto, perguntas e
+taxonomia de temas. As perguntas e a faixa de duração esperada dos áudios
+alimentam a verificação automática de qualidade de cada áudio; a taxonomia, a
+contagem de temas da Análise Geral.
 """
 
 import json
@@ -38,6 +39,11 @@ from utils.prosodia_project_types import (
     PROJECT_TYPE_LABELS,
     normalize_duracao_esperada,
     normalize_project_type,
+)
+from utils.prosodia_temas import (
+    TAXONOMIA_PROVISORIA,
+    TAXONOMIA_VALIDADA,
+    parse_taxonomia,
 )
 
 init_db()
@@ -270,6 +276,77 @@ with st.container():
         help=(
             "Esses nomes são buscados literalmente nas transcrições. "
             "Inclua grafias e apelidos relevantes em linhas separadas."
+        ),
+    )
+
+    st.divider()
+    st.subheader("Taxonomia de temas")
+    st.markdown(
+        "Categorias e subtemas em que a Análise Geral classifica as falas, para contar "
+        "quantos respondentes trataram de cada assunto. Use **um subtema por linha**, "
+        "no formato `Categoria > Subtema`, com uma definição opcional depois de "
+        "dois-pontos. O que não couber aparece no relatório como tema emergente."
+    )
+    taxonomia_texto = st.text_area(
+        "Taxonomia de temas",
+        value=project.get("taxonomia") or "",
+        placeholder=(
+            "Atendimento > Cordialidade: tratamento pelo nome, gentileza fora do roteiro\n"
+            "Atendimento > Tempo de espera: fila, demora para ser atendido\n"
+            "Produto > Defeito: item quebrado, com falha ou fora de funcionamento"
+        ),
+        height=180,
+        label_visibility="collapsed",
+    )
+    taxonomia_lida = parse_taxonomia(taxonomia_texto)
+    if taxonomia_lida.subtemas:
+        categorias_lidas = taxonomia_lida.categorias()
+        n_subtemas, n_categorias = len(taxonomia_lida.subtemas), len(categorias_lidas)
+        st.caption(
+            "{} {} em {} {}.".format(
+                n_subtemas,
+                "subtema" if n_subtemas == 1 else "subtemas",
+                n_categorias,
+                "categoria" if n_categorias == 1 else "categorias",
+            )
+        )
+        with st.expander("Árvore da taxonomia"):
+            arvore = []
+            for categoria, subtemas in categorias_lidas.items():
+                arvore.append("**{}**".format(categoria))
+                for subtema in subtemas:
+                    item = "- {}".format(subtema.nome)
+                    if subtema.definicao:
+                        item += " — _{}_".format(subtema.definicao)
+                    arvore.append(item)
+                arvore.append("")
+            st.markdown("\n".join(arvore))
+    else:
+        st.caption(
+            "_Deixe em branco para a IA propor uma taxonomia provisória na próxima "
+            "Análise Geral._"
+        )
+    if taxonomia_lida.linhas_invalidas:
+        exemplos = taxonomia_lida.linhas_invalidas[:5]
+        extras = len(taxonomia_lida.linhas_invalidas) - len(exemplos)
+        st.warning(
+            "Fora do formato `Categoria > Subtema`, estas linhas não entram na análise: "
+            + "; ".join("`{}`".format(linha) for linha in exemplos)
+            + (" e mais {}.".format(extras) if extras else ".")
+        )
+    if taxonomia_lida.repetidos:
+        st.warning(
+            "Subtemas repetidos contam uma vez só: {}.".format(
+                ", ".join(taxonomia_lida.repetidos)
+            )
+        )
+    taxonomia_validada = st.checkbox(
+        "Taxonomia validada com a cliente",
+        value=project.get("taxonomia_status") == TAXONOMIA_VALIDADA,
+        disabled=not taxonomia_lida.subtemas,
+        help=(
+            "Enquanto não estiver marcada, a Análise Geral avisa no cabeçalho que a "
+            "taxonomia é provisória."
         ),
     )
 
@@ -679,6 +756,16 @@ if submitted:
 
         quality_thresholds_json = json.dumps(custom_thresholds) if custom_thresholds else None
 
+        # A marca de validada só vale com algum subtema no formato; sem texto,
+        # o projeto fica sem taxonomia e sem status.
+        taxonomia_salvar = taxonomia_texto.strip()
+        if not taxonomia_salvar:
+            status_taxonomia = ""
+        elif taxonomia_validada and taxonomia_lida.subtemas:
+            status_taxonomia = TAXONOMIA_VALIDADA
+        else:
+            status_taxonomia = TAXONOMIA_PROVISORIA
+
         # Criar ou desvincular projeto na API se configurado
         api_project_id_to_save = current_api_project_id
         if is_configured():
@@ -716,6 +803,8 @@ if submitted:
                 qr_verification_text=qr_verification_input.strip() if qr_verification_input else None,
                 tipo_projeto=tipo_projeto,
                 duracao_esperada=duracao_esperada,
+                taxonomia=taxonomia_salvar,
+                taxonomia_status=status_taxonomia,
             )
             st.success("Projeto atualizado!")
         else:
@@ -734,6 +823,8 @@ if submitted:
                 qr_verification_text=qr_verification_input.strip() if qr_verification_input else None,
                 tipo_projeto=tipo_projeto,
                 duracao_esperada=duracao_esperada,
+                taxonomia=taxonomia_salvar,
+                taxonomia_status=status_taxonomia,
             )
             st.session_state["pros_project_id"] = new_id
             saved_project_id = new_id

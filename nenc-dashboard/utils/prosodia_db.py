@@ -21,6 +21,7 @@ from utils.prosodia_project_types import (
     DURACAO_ESPERADA_LABELS,
     PROJECT_TYPE_LABELS,
 )
+from utils.prosodia_temas import TAXONOMIA_STATUS_LABELS
 
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "prosodia.db"
 
@@ -272,6 +273,8 @@ def init_db() -> None:
                 quality_thresholds TEXT,
                 tipo_projeto TEXT    NOT NULL DEFAULT 'entrevista_qualitativa',
                 duracao_esperada TEXT,
+                taxonomia    TEXT,
+                taxonomia_status TEXT,
                 created_by_user_id INTEGER
                              REFERENCES users(id) ON DELETE SET NULL,
                 created_at   TEXT    DEFAULT (datetime('now','localtime'))
@@ -375,6 +378,12 @@ def init_db() -> None:
             # Fim da última sincronização com a API, em UTC, para o estado
             # "Sincronizado há N min" da lista de Áudios.
             conn.execute("ALTER TABLE projects ADD COLUMN last_sync_at TEXT")
+        if "taxonomia" not in cols:
+            # Taxonomia de temas da Análise Geral (utils/prosodia_temas.py).
+            # Projetos existentes ficam sem ela até alguém cadastrar uma.
+            conn.execute("ALTER TABLE projects ADD COLUMN taxonomia TEXT")
+        if "taxonomia_status" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN taxonomia_status TEXT")
 
         audio_cols ={r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -435,6 +444,14 @@ def _require_known_duracao(duracao_esperada: Optional[str]) -> None:
         )
 
 
+def _require_known_taxonomia_status(taxonomia_status: Optional[str]) -> None:
+    """Status desconhecido não entra no banco; vazio é projeto sem taxonomia."""
+    if taxonomia_status and taxonomia_status not in TAXONOMIA_STATUS_LABELS:
+        raise ValueError(
+            "Status de taxonomia desconhecido: {!r}".format(taxonomia_status)
+        )
+
+
 def create_project(
     name: str,
     especialidade: str = "",
@@ -450,10 +467,13 @@ def create_project(
     qr_verification_text: Optional[str] = None,
     tipo_projeto: str = DEFAULT_PROJECT_TYPE,
     duracao_esperada: Optional[str] = None,
+    taxonomia: str = "",
+    taxonomia_status: str = "",
 ) -> int:
     """Cria um novo projeto. Retorna o ID gerado."""
     _require_known_project_type(tipo_projeto)
     _require_known_duracao(duracao_esperada)
+    _require_known_taxonomia_status(taxonomia_status)
     actor = _require_write()
     organization_id = _active_organization_id()
     if not organization_id:
@@ -477,8 +497,10 @@ def create_project(
                     api_project_id,
                     qr_verification_text,
                     tipo_projeto,
-                    duracao_esperada
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    duracao_esperada,
+                    taxonomia,
+                    taxonomia_status
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 organization_id,
                 _actor_user_id(actor),
@@ -496,6 +518,8 @@ def create_project(
                 qr_verification_text,
                 tipo_projeto,
                 duracao_esperada,
+                taxonomia,
+                taxonomia_status,
             ),
         )
         project_id = cur.lastrowid
@@ -605,16 +629,20 @@ def update_project(
     qr_verification_text: Optional[str] = None,
     tipo_projeto: Optional[str] = None,
     duracao_esperada: Optional[str] = None,
+    taxonomia: Optional[str] = None,
+    taxonomia_status: Optional[str] = None,
 ) -> None:
     """Atualiza os campos de um projeto existente.
 
-    `tipo_projeto=None` e `duracao_esperada=None` mantêm os valores salvos: as
-    telas que regravam o projeto repassando os próprios campos (texto do QR,
-    vínculo com a API, campanha) não os conhecem, e sem isso os apagariam.
+    `tipo_projeto`, `duracao_esperada`, `taxonomia` e `taxonomia_status` em
+    None mantêm os valores salvos: as telas que regravam o projeto repassando
+    os próprios campos (texto do QR, vínculo com a API, campanha) não os
+    conhecem, e sem isso os apagariam. Texto vazio apaga a taxonomia.
     """
     if tipo_projeto is not None:
         _require_known_project_type(tipo_projeto)
     _require_known_duracao(duracao_esperada)
+    _require_known_taxonomia_status(taxonomia_status)
     actor = _require_write()
     # A autoria e conferida antes do claim: uma recusa nao pode deixar para
     # tras a posse de um recurso externo que nunca chegou a ser vinculado.
@@ -638,7 +666,9 @@ def update_project(
                        api_project_id=?,
                        qr_verification_text=?,
                        tipo_projeto=COALESCE(?, tipo_projeto),
-                       duracao_esperada=COALESCE(?, duracao_esperada)
+                       duracao_esperada=COALESCE(?, duracao_esperada),
+                       taxonomia=COALESCE(?, taxonomia),
+                       taxonomia_status=COALESCE(?, taxonomia_status)
                    WHERE id=?""",
                 (
                     name,
@@ -655,6 +685,8 @@ def update_project(
                     qr_verification_text,
                     tipo_projeto,
                     duracao_esperada,
+                    taxonomia,
+                    taxonomia_status,
                     project_id,
                 ),
             )
@@ -674,7 +706,9 @@ def update_project(
                        api_project_id=?,
                        qr_verification_text=?,
                        tipo_projeto=COALESCE(?, tipo_projeto),
-                       duracao_esperada=COALESCE(?, duracao_esperada)
+                       duracao_esperada=COALESCE(?, duracao_esperada),
+                       taxonomia=COALESCE(?, taxonomia),
+                       taxonomia_status=COALESCE(?, taxonomia_status)
                    WHERE id=? AND organization_id=?""",
                 (
                     name,
@@ -691,6 +725,8 @@ def update_project(
                     qr_verification_text,
                     tipo_projeto,
                     duracao_esperada,
+                    taxonomia,
+                    taxonomia_status,
                     project_id,
                     organization_id,
                 ),

@@ -178,12 +178,18 @@ class TestPagesKeepProjectFields(unittest.TestCase):
     Vincular ou desvincular uma campanha apagava o texto de verificação do QR,
     porque whatsapp_campanhas.py não o repassava. As páginas são scripts
     Streamlit e não rodam num teste de unidade; o contrato é lido do código.
-    Tipo e faixa de duração ficam de fora: None neles mantém o valor salvo.
+    Tipo, faixa de duração e taxonomia ficam de fora: None neles mantém o
+    valor salvo.
     """
 
     def test_every_page_call_passes_every_column(self):
         parametros = list(inspect.signature(update_project).parameters)
-        obrigatorios = set(parametros) - {"tipo_projeto", "duracao_esperada"}
+        obrigatorios = set(parametros) - {
+            "tipo_projeto",
+            "duracao_esperada",
+            "taxonomia",
+            "taxonomia_status",
+        }
         verificadas = 0
         for pagina in sorted(PROSODIA_PAGES.glob("*.py")):
             arvore = ast.parse(pagina.read_text(encoding="utf-8"))
