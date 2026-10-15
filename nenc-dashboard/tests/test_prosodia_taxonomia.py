@@ -9,6 +9,8 @@ campo nem derruba as linhas boas.
 import ast
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +21,9 @@ from utils.prosodia_temas import (
     TAXONOMIA_PROVISORIA,
     TAXONOMIA_VALIDADA,
     Subtema,
+    formatar_taxonomia,
     parse_taxonomia,
+    versao_taxonomia,
 )
 
 PREPARACAO = Path(__file__).resolve().parent.parent / "modules" / "prosodia" / "preparacao.py"
@@ -135,7 +139,34 @@ class ParseTaxonomiaTests(unittest.TestCase):
                 self.assertEqual(taxonomia.categorias(), {})
 
 
-class TaxonomiaPersistenceTests(unittest.TestCase):
+class VersaoEFormatoTests(unittest.TestCase):
+    def test_version_ignores_order_and_spacing_but_not_labels_or_definitions(self):
+        base = versao_taxonomia(parse_taxonomia("Ambiente > Lotação: fila\nAtendimento > Cordialidade"))
+
+        self.assertEqual(
+            base,
+            versao_taxonomia(parse_taxonomia("Atendimento  >  Cordialidade\n- Ambiente > Lotação:   fila")),
+        )
+        self.assertNotEqual(
+            base, versao_taxonomia(parse_taxonomia("Ambiente > Lotação: espera\nAtendimento > Cordialidade"))
+        )
+        self.assertNotEqual(
+            base, versao_taxonomia(parse_taxonomia("Ambiente > Lotação: fila\nAtendimento > Simpatia"))
+        )
+        self.assertEqual(versao_taxonomia(parse_taxonomia("")), "")
+
+    def test_format_is_the_inverse_of_parse(self):
+        taxonomia = parse_taxonomia(
+            "- Ambiente > Lotação:  fila\n\nAtendimento > Cordialidade\nlinha fora do formato"
+        )
+
+        texto = formatar_taxonomia(taxonomia)
+
+        self.assertEqual(texto, "Ambiente > Lotação: fila\nAtendimento > Cordialidade")
+        self.assertEqual(parse_taxonomia(texto).subtemas, taxonomia.subtemas)
+
+
+class _BancoDescartavel(unittest.TestCase):
     def setUp(self):
         # Banco descartavel: sem NENC_DB_PATH o teste escreveria no banco local.
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -173,6 +204,8 @@ class TaxonomiaPersistenceTests(unittest.TestCase):
         self.environment.stop()
         self.temporary_directory.cleanup()
 
+
+class TaxonomiaPersistenceTests(_BancoDescartavel):
     def _taxonomia(self, project_id):
         project = prosodia_db.get_project(project_id)
         return project["taxonomia"], project["taxonomia_status"]
@@ -231,6 +264,122 @@ class TaxonomiaPersistenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prosodia_db.update_project(project_id, name="Projeto", taxonomia_status="aprovada")
         self.assertEqual(self._taxonomia(project_id), ("A > B", TAXONOMIA_PROVISORIA))
+
+    def test_set_project_taxonomy_touches_only_the_taxonomy(self):
+        # Caminho da taxonomia provisória proposta pela IA na Análise Geral.
+        project_id = prosodia_db.create_project(
+            "Recados",
+            especialidade="Lavanderia",
+            qr_verification_text="Texto do QR",
+            duracao_esperada="ate_30s",
+        )
+
+        prosodia_db.set_project_taxonomy(project_id, "Ambiente > Lotação: fila", TAXONOMIA_PROVISORIA)
+
+        project = prosodia_db.get_project(project_id)
+        self.assertEqual(
+            self._taxonomia(project_id), ("Ambiente > Lotação: fila", TAXONOMIA_PROVISORIA)
+        )
+        self.assertEqual(
+            (project["especialidade"], project["qr_verification_text"], project["duracao_esperada"]),
+            ("Lavanderia", "Texto do QR", "ate_30s"),
+        )
+
+    def test_set_project_taxonomy_refuses_unknown_status(self):
+        project_id = prosodia_db.create_project("Recados")
+
+        with self.assertRaises(ValueError):
+            prosodia_db.set_project_taxonomy(project_id, "A > B", "aprovada")
+        self.assertFalse(self._taxonomia(project_id)[0])
+
+
+class AudioTemasPersistenceTests(_BancoDescartavel):
+    TEMAS = {
+        "respondente": None,
+        "respondente_incerto": False,
+        "temas": [
+            {
+                "subtema": "Ambiente > Lotação",
+                "polaridade": "negativa",
+                "evidencia": "fila no sábado",
+                "trechos": [{"linha": 1, "segmento_idx": 4, "inicio_s": 2.5}],
+            }
+        ],
+        "emergentes": [],
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.project_id = prosodia_db.create_project("Recados")
+        self.audio_id = prosodia_db.create_audio(self.project_id, "wa_1")
+
+    def _linhas_na_tabela(self):
+        with prosodia_db._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM audio_temas").fetchone()[0]
+
+    def test_saves_and_reads_back_by_audio(self):
+        prosodia_db.save_audio_temas(self.audio_id, "chave-1", "versao-1", "gpt-4.1-mini", self.TEMAS)
+
+        salvos = prosodia_db.get_audio_temas_for_project(self.project_id)
+
+        self.assertEqual(list(salvos), [self.audio_id])
+        item = salvos[self.audio_id]
+        self.assertEqual(
+            (item["chave"], item["versao_taxonomia"], item["modelo"]),
+            ("chave-1", "versao-1", "gpt-4.1-mini"),
+        )
+        self.assertEqual(item["temas"], self.TEMAS)
+
+    def test_a_new_classification_replaces_the_old_one(self):
+        prosodia_db.save_audio_temas(self.audio_id, "chave-1", "versao-1", "modelo", self.TEMAS)
+        prosodia_db.save_audio_temas(self.audio_id, "chave-2", "versao-2", "modelo", {"temas": []})
+
+        item = prosodia_db.get_audio_temas_for_project(self.project_id)[self.audio_id]
+
+        self.assertEqual((item["chave"], item["temas"]), ("chave-2", {"temas": []}))
+        self.assertEqual(self._linhas_na_tabela(), 1)
+
+    def test_audios_of_other_projects_do_not_show_up(self):
+        outro_projeto = prosodia_db.create_project("Outro")
+        outro_audio = prosodia_db.create_audio(outro_projeto, "wa_2")
+        prosodia_db.save_audio_temas(outro_audio, "chave", "versao", "modelo", self.TEMAS)
+
+        self.assertEqual(prosodia_db.get_audio_temas_for_project(self.project_id), {})
+
+    def test_unreadable_json_is_left_out(self):
+        prosodia_db.save_audio_temas(self.audio_id, "chave", "versao", "modelo", self.TEMAS)
+        with prosodia_db._connect() as conn:
+            conn.execute("UPDATE audio_temas SET temas_json = '{quebrado'")
+
+        self.assertEqual(prosodia_db.get_audio_temas_for_project(self.project_id), {})
+
+    def test_deleting_the_audio_deletes_its_classification(self):
+        prosodia_db.save_audio_temas(self.audio_id, "chave", "versao", "modelo", self.TEMAS)
+
+        with patch("utils.prosodia_db._remove_from_knowledge_base"):
+            prosodia_db.delete_audio(self.audio_id)
+
+        self.assertEqual(self._linhas_na_tabela(), 0)
+
+
+class ScriptsDoServidorTests(unittest.TestCase):
+    """Os scripts de manutenção rodam no Python do servidor, que não tem pandas.
+
+    migrate_legacy_data.py importa prosodia_db, que importa prosodia_temas: se
+    algum deles passar a importar pandas no topo, o script quebra só lá.
+    """
+
+    def test_prosodia_db_imports_without_pandas(self):
+        codigo = "import sys; import utils.prosodia_db; print('pandas' in sys.modules)"
+        saida = subprocess.run(
+            [sys.executable, "-c", codigo],
+            cwd=Path(__file__).resolve().parent.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        self.assertEqual(saida.stdout.strip(), "False")
 
 
 class LegacyDatabaseMigrationTests(unittest.TestCase):

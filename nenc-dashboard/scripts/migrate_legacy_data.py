@@ -29,6 +29,7 @@ OWNED_TABLES = (
     "quality_checks",
     "project_analyses",
     "high_activations",
+    "audio_temas",
 )
 
 

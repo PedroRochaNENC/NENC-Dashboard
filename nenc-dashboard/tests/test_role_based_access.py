@@ -124,6 +124,8 @@ class ProsodiaWriteGuardTests(unittest.TestCase):
         ("save_project_analysis", (1, "modelo", "texto")),
         ("save_quality_check", (1, "pass", [], [])),
         ("save_high_activations", (1, [])),
+        ("save_audio_temas", (1, "chave", "versao", "modelo", {})),
+        ("set_project_taxonomy", (1, "Categoria > Subtema", "provisoria")),
     )
 
     def setUp(self):

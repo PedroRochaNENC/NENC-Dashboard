@@ -20,6 +20,7 @@ pode_editar = auth.can_write(user)
 from utils.prosodia_db import (
     init_db,
     create_project,
+    get_audio_temas_for_project,
     get_project,
     update_project,
     user_can_modify_project,
@@ -43,7 +44,9 @@ from utils.prosodia_project_types import (
 from utils.prosodia_temas import (
     TAXONOMIA_PROVISORIA,
     TAXONOMIA_VALIDADA,
+    contar_emergentes,
     parse_taxonomia,
+    versao_taxonomia,
 )
 
 init_db()
@@ -349,6 +352,30 @@ with st.container():
             "taxonomia é provisória."
         ),
     )
+    # O que a última classificação achou fora da taxonomia salva, para a equipe
+    # decidir com a cliente o que entra na próxima versão.
+    if editing and project.get("taxonomia"):
+        versao_salva = versao_taxonomia(parse_taxonomia(project.get("taxonomia")))
+        emergentes = contar_emergentes(
+            item["temas"]
+            for item in get_audio_temas_for_project(project_id).values()
+            if item.get("versao_taxonomia") == versao_salva
+        )
+        if emergentes:
+            with st.expander("Temas emergentes ({})".format(len(emergentes))):
+                st.caption(
+                    "Apareceram nos áudios e não cabem na taxonomia salva. Leve para o "
+                    "campo os que fizerem sentido."
+                )
+                st.markdown("\n".join(
+                    "- **{}**{} — {} {}".format(
+                        rotulo,
+                        " ({})".format(categoria) if categoria else "",
+                        n,
+                        "áudio" if n == 1 else "áudios",
+                    )
+                    for rotulo, categoria, n in emergentes
+                ))
 
     st.divider()
     st.subheader("Briefing do Projeto (contexto para análises)")

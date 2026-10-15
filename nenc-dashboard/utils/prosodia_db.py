@@ -231,6 +231,7 @@ def _migrate_organization_ownership(conn: sqlite3.Connection) -> None:
         "quality_checks",
         "project_analyses",
         "high_activations",
+        "audio_temas",
     ):
         conn.execute(
             """
@@ -335,6 +336,21 @@ def init_db() -> None:
                 moments_json   TEXT,
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
             );
+
+            -- Classificação das falas de cada áudio na taxonomia do projeto,
+            -- uma linha por áudio. A chave diz com qual taxonomia, prompt e
+            -- transcrição ela foi feita (utils/prosodia_temas.py).
+            CREATE TABLE IF NOT EXISTS audio_temas (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id  INTEGER NOT NULL REFERENCES organizations(id),
+                audio_id         INTEGER NOT NULL UNIQUE
+                                 REFERENCES audios(id) ON DELETE CASCADE,
+                chave            TEXT    NOT NULL,
+                versao_taxonomia TEXT    NOT NULL,
+                modelo           TEXT,
+                temas_json       TEXT    NOT NULL,
+                created_at       TEXT    DEFAULT (datetime('now','localtime'))
+            );
             """
         )
 
@@ -418,6 +434,7 @@ def init_db() -> None:
             "quality_checks",
             "project_analyses",
             "high_activations",
+            "audio_temas",
         ):
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_{}_organization ON {}(organization_id)".format(
@@ -733,6 +750,34 @@ def update_project(
             )
     if result.rowcount:
         _audit("prosodia.project.update", "project", project_id, organization_id or 0, write=True)
+
+
+def set_project_taxonomy(project_id: int, taxonomia: str, taxonomia_status: str) -> None:
+    """Grava só a taxonomia do projeto, sem regravar os demais campos.
+
+    É o caminho da taxonomia provisória que a IA propõe na Análise Geral. A
+    Preparação grava a taxonomia junto do resto, por update_project.
+    """
+    _require_known_taxonomia_status(taxonomia_status)
+    actor = _require_write()
+    _assert_project_authorship(project_id, actor, "project.update_taxonomy")
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        if not organization_id:
+            result = conn.execute(
+                "UPDATE projects SET taxonomia = ?, taxonomia_status = ? WHERE id = ?",
+                (taxonomia, taxonomia_status, project_id),
+            )
+        else:
+            result = conn.execute(
+                """UPDATE projects SET taxonomia = ?, taxonomia_status = ?
+                   WHERE id = ? AND organization_id = ?""",
+                (taxonomia, taxonomia_status, project_id, organization_id),
+            )
+    if result.rowcount:
+        _audit(
+            "prosodia.project.update_taxonomy", "project", project_id, organization_id or 0, write=True
+        )
 
 
 def delete_project(project_id: int) -> None:
@@ -1859,4 +1904,92 @@ def get_high_activations_history_for_project(project_id: int) -> List[Dict]:
         item = dict(row)
         item["moments"] = json.loads(item.get("moments_json") or "[]")
         result.append(item)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Temas de cada áudio (classificação na taxonomia do projeto)
+# ---------------------------------------------------------------------------
+
+def save_audio_temas(
+    audio_id: int, chave: str, versao_taxonomia: str, modelo: str, temas: dict
+) -> None:
+    """Grava a classificação de temas do áudio no lugar da anterior.
+
+    Uma linha por áudio: a Análise Geral compara a chave com a da taxonomia,
+    do prompt e da transcrição atuais e só reclassifica quando ela muda.
+    """
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_audio(conn, audio_id, organization_id)
+        audio_row = conn.execute("SELECT organization_id FROM audios WHERE id = ?", (audio_id,)).fetchone()
+        actual_org_id = audio_row["organization_id"] if audio_row else (organization_id or 1)
+        conn.execute(
+            """INSERT INTO audio_temas
+                   (organization_id, audio_id, chave, versao_taxonomia, modelo, temas_json)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(audio_id) DO UPDATE SET
+                   organization_id = excluded.organization_id,
+                   chave = excluded.chave,
+                   versao_taxonomia = excluded.versao_taxonomia,
+                   modelo = excluded.modelo,
+                   temas_json = excluded.temas_json,
+                   created_at = datetime('now','localtime')""",
+            (
+                actual_org_id,
+                audio_id,
+                chave,
+                versao_taxonomia,
+                modelo,
+                json.dumps(temas, ensure_ascii=False),
+            ),
+        )
+    _audit("prosodia.audio_temas.save", "audio", audio_id, actual_org_id, write=True)
+
+
+def get_audio_temas_for_project(project_id: int) -> Dict[int, Dict]:
+    """Classificação de temas de cada áudio do projeto, por audio_id.
+
+    Cada item traz chave, versao_taxonomia, modelo, created_at e `temas`, o
+    JSON já lido. Linha com JSON ilegível fica de fora: o áudio volta a ser
+    classificado na próxima Análise Geral.
+    """
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        if not organization_id:
+            rows = conn.execute(
+                """
+                SELECT t.*
+                FROM audio_temas t
+                JOIN audios a
+                  ON a.id = t.audio_id
+                 AND a.organization_id = t.organization_id
+                WHERE a.project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT t.*
+                FROM audio_temas t
+                JOIN audios a
+                  ON a.id = t.audio_id
+                 AND a.organization_id = t.organization_id
+                WHERE a.project_id = ?
+                  AND t.organization_id = ?
+                """,
+                (project_id, organization_id),
+            ).fetchall()
+    _audit("prosodia.audio_temas.list", "project", project_id, organization_id or 0)
+    result = {}
+    for row in rows:
+        item = dict(row)
+        try:
+            item["temas"] = json.loads(item.pop("temas_json") or "{}")
+        except ValueError:
+            continue
+        result[item["audio_id"]] = item
     return result

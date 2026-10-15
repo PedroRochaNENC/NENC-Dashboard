@@ -99,35 +99,40 @@ Quem escreve o quê:
 - Formato: uma linha por subtema, `Categoria > Subtema`, com uma definição opcional depois de dois-pontos. Exemplo: `Equipamentos > Máquina fora de serviço: máquina parada, quebrada ou com aviso de manutenção`. A definição vai para o classificador e reduz a ambiguidade entre subtemas vizinhos.
 - Na Preparação (`preparacao.py`, depois de "Entidades prioritárias") entram o campo de texto, a caixa "Taxonomia validada com a cliente" e, abaixo, a lista dos temas emergentes do projeto com contagem, para copiar para o campo.
 - Com a taxonomia vazia, a geração faz uma chamada à IA com as falas dos respondentes (com limite de palavras por áudio nas entrevistas longas). A IA propõe de 3 a 6 categorias e de 8 a 15 subtemas, com definição. O código salva no campo com status `provisoria` e segue, e o cabeçalho do relatório avisa "Taxonomia provisória, gerada pela IA — a validar com a cliente".
-- A versão é o hash do texto normalizado. Se o texto muda, a versão muda e os áudios são reclassificados. A tela avisa quantos antes de gerar.
+- A versão é o hash dos subtemas e das definições, sem depender da ordem das linhas nem dos espaços. Se um rótulo ou uma definição muda, a versão muda e os áudios são reclassificados. A tela avisa quantos antes de gerar.
 
 ## 6. Classificação por áudio
 
-- Segue o mesmo padrão da cobertura de perguntas (`_coverage_ai_batch` em `prosodia_quality.py:580` e `coverage_client` em `ai_provider.py:299`): funciona com OpenAI, Groq e Anthropic, e na OpenAI usa o modelo barato (`gpt-4.1-mini`).
-- Entrada: a taxonomia numerada com as definições, os rótulos emergentes já usados no projeto (para repetir o mesmo nome) e a transcrição numerada por segmento, no formato `[12] (00:14) Locutor: texto`.
-- Saída em JSON:
+Implementada na fase 2, em `utils/prosodia_temas.py` e na tabela `audio_temas`.
+
+- **Chamada à IA.** As funções recebem `responder(sistema, usuario, max_tokens)`, montada por quem chama com o provedor escolhido na tela. Na OpenAI vale o modelo barato (`gpt-4.1-mini`), como na cobertura de perguntas (`coverage_client`, `ai_provider.py:299`). O módulo usa só a biblioteca padrão: `prosodia_db` o importa, e os scripts de manutenção rodam no Python do servidor, que não tem pandas.
+- **Entrada.** A taxonomia com as definições, até 40 rótulos emergentes já usados no projeto (para a IA repetir o nome) e a transcrição numerada de 1 a n, no formato `[12] (00:14) Locutor: texto`. O número existe só para a IA citar a fala; o segmento do Whisper e o tempo de cada linha ficam guardados no código. Arquivo sem `segmento_idx` (os antigos e os de upload manual, `prosodia_loader.py:204`) fica só com o tempo.
+- **Entrevista longa** vai em partes de até 4.000 palavras, cada uma citando só as próprias linhas, e o código junta as respostas.
+- **Saída em JSON:**
 
 ```json
 {
   "locutor_respondente": "Entrevistado",
   "temas": [
     {"subtema": "Equipamentos > Máquina fora de serviço", "polaridade": "negativa",
-     "segmentos": [3, 4], "evidencia": "paráfrase curta"}
+     "linhas": [3, 4], "evidencia": "paráfrase curta"}
   ],
   "emergentes": [
-    {"rotulo": "Estacionamento", "categoria_sugerida": "Ambiente", "polaridade": "negativa",
-     "segmentos": [7], "evidencia": "paráfrase curta"}
+    {"rotulo": "Estacionamento", "categoria": "Ambiente", "polaridade": "negativa",
+     "linhas": [7], "evidencia": "paráfrase curta"}
   ]
 }
 ```
 
-- A polaridade (`positiva`, `negativa`, `mista` ou `neutra`) é a do tema naquele áudio. Cada subtema aparece no máximo uma vez por áudio.
-- O código valida a saída:
-  - subtema fora da lista vira emergente;
-  - segmento inexistente é descartado;
-  - em entrevista, ficam só os segmentos do locutor respondente, porque pergunta do entrevistador não é menção.
-- Tabela nova `audio_temas` (organization_id, audio_id, versão da taxonomia, modelo, JSON, data), no padrão multi-organização das demais. Áudio já classificado na versão atual não é reclassificado, então regenerar sem áudio novo devolve as mesmas tabelas.
-- Áudios sem `segmento_idx` (os antigos e os de upload manual, `prosodia_loader.py:204`) usam a linha da transcrição como trecho, e a voz é casada pelo tempo. Sem tempo, o tema entra na contagem mas não na leitura de voz.
+- **Validação em código.** A resposta não é aceita como vem:
+  - o rótulo é comparado sem caixa nem acento; subtema fora da taxonomia vira emergente, e emergente que é um subtema da taxonomia volta para os temas;
+  - polaridade fora de `positiva`, `negativa`, `mista` ou `neutra` vira `neutra`, e o mesmo tema citado com elogio e com crítica vira `mista`;
+  - linha que não existe é descartada, e tema sem nenhuma linha válida cai, porque sem trecho não há como conferir a menção; ficam até 10 linhas por tema;
+  - na entrevista, ficam só as linhas do entrevistado. Vale o locutor que a IA apontar, se ele existir na transcrição; senão, o rótulo "Entrevistado" (nunca "Entrevistador") ou o único locutor do áudio. Sem nenhum dos dois, ficam todas as linhas e a classificação sai marcada com `respondente_incerto`.
+- **O que fica gravado** por tema: subtema, polaridade, evidência e trechos (linha, `segmento_idx`, `inicio_s`, `fim_s`), para a fase 3 ler a voz de cada trecho.
+- **Cache.** Uma linha por áudio em `audio_temas` (organization_id, audio_id, chave, versão da taxonomia, modelo, JSON, data). A chave muda com a taxonomia, o tipo do projeto, a transcrição ou a versão da classificação (`VERSAO_CLASSIFICACAO`, que sobe quando o prompt muda). Com a chave igual, o áudio não volta à IA, e regenerar sem áudio novo devolve as mesmas tabelas.
+- **Lote.** Até 4 chamadas simultâneas. O áudio que falha fica sem classificação nova e volta na geração seguinte.
+- **Taxonomia provisória.** `propor_taxonomia` lê até 800 palavras por áudio e 40 mil no total, e a resposta passa pelo mesmo parse do campo. A gravação (`set_project_taxonomy`, com status `provisoria`) acontece no fluxo da página, na fase 5.
 
 ## 7. Agregação em código
 
@@ -395,8 +400,8 @@ Inclui médias acústicas por respondente, distribuição de emoções, momentos
 
 Ordem de implementação:
 
-1. Banco e Preparação (taxonomia).
-2. Classificação por áudio, com cache.
+1. Banco e Preparação (taxonomia). **Feita.**
+2. Classificação por áudio, com cache, e a proposta de taxonomia provisória. **Feita.**
 3. Agregação e apêndice, com testes.
 4. Prompt e montagem do relatório.
 5. Fluxo na página e filtro da base.

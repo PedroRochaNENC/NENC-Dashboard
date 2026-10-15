@@ -21,7 +21,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 # Tabelas ligadas ao projeto pelo proprio project_id.
 PROJECT_OWNED_TABLES = ("project_analyses",)
 # Tabelas ligadas ao projeto atraves dos audios dele.
-AUDIO_OWNED_TABLES = ("analyses", "quality_checks", "high_activations")
+AUDIO_OWNED_TABLES = ("analyses", "quality_checks", "high_activations", "audio_temas")
 
 
 def _timestamp() -> str:
