@@ -136,6 +136,41 @@ Implementada na fase 2, em `utils/prosodia_temas.py` e na tabela `audio_temas`.
 
 ## 7. Agregação em código
 
+Implementada na fase 3, em `utils/prosodia_relatorio.py`. As regras desta seção valem como estão escritas. O que o código decidiu além delas:
+
+- **Quem entra no N.** Os respondentes com pelo menos um áudio com fala e com classificação válida, isto é, com a chave de agora (`classificacoes_validas`). Áudio sem fala, ou com classificação vencida ou que falhou, fica fora da contagem e aparece nas limitações. Quem falou e não tratou de tema nenhum entra no N.
+- **Voz por tema.** É a média, ponderada pela duração, dos trechos do tema que têm voz. Cada trecho é casado com o VAD pelo segmento do Whisper. Arquivo sem segmento casa pelo tempo, do início da fala até o início da fala seguinte. A régua da ativação é a mesma conta da valência, feita sobre `dim_arousal`: média e desvio de todas as linhas do VAD do projeto.
+- **Polaridade predominante.** É a polaridade com mais respondentes no tema. Empate no topo, ou mista ou neutra no topo, conta como "misto ou neutro".
+- **Matriz.**
+  - Usa o índice do áudio inteiro, o mesmo do Resumo e da página do áudio. Na entrevista, esse índice inclui as falas do entrevistador.
+  - O terço superior começa no quantil 2/3 e o inferior vai até o quantil 1/3.
+  - Cada grupo mostra até 15 áudios, do mais forte para o mais fraco.
+  - "Temas mais citados no grupo" lista até 3 subtemas, só os que aparecem em pelo menos 2 áudios do grupo.
+- **Termômetro.**
+  - Entram os respondentes da tabela de temas que têm nota do texto.
+  - Na entrevista, contam só as falas do entrevistado que a classificação apontou.
+  - A conta parte da média já arredondada a duas casas, para fechar com o número mostrado no relatório.
+  - O arredondamento final leva o meio para longe do zero.
+- **Δ.**
+  - Uma análise que já cobriu todos os áudios do recorte atual é regeneração da mesma onda e é pulada. Sem essa regra, regenerar sem áudio novo faria a coluna sumir.
+  - O snapshot guarda todos os áudios do recorte, contados ou não.
+  - As datas da análise e dos áudios vêm de `created_at`, que usa o mesmo relógio nas duas tabelas.
+- **Trechos de evidência.** Só para subtemas em padrão ou sinal. De cada respondente vai a fala com a nota do texto mais forte, e fala sem nota fica por último.
+- **Apêndice.**
+  - Os áudios aparecem sempre pelo alias. A legenda alias → sessão só entra com `incluir_legenda`.
+  - As médias acústicas e as emoções abrem com uma linha "Recorte inteiro".
+  - Uma tabela "Voz por tema" mostra os números por trás de cada leitura, para calibrar os limiares.
+  - Os decimais saem com vírgula, menos nas falas entre aspas.
+- **Sumário Executivo.**
+  - O título é reconhecido em três formatos: `## 1. Sumário Executivo`, `1. **Sumário Executivo** — texto` ou linha em negrito.
+  - O sumário vai até o título seguinte do mesmo tipo ou até uma linha horizontal.
+  - É cortado em 1.200 caracteres.
+
+Ficam para a fase 5:
+
+- montar na página a lista de `AudioDoProjeto`, com a transcrição numerada, a classificação válida e o `created_at`;
+- gravar o snapshot com `save_project_analysis(..., temas=snapshot(...))`.
+
 **Faixas.** A unidade de contagem é o respondente (ver §14).
 
 | Respondentes no subtema | Faixa | Uso no relatório |
@@ -402,7 +437,7 @@ Ordem de implementação:
 
 1. Banco e Preparação (taxonomia). **Feita.**
 2. Classificação por áudio, com cache, e a proposta de taxonomia provisória. **Feita.**
-3. Agregação e apêndice, com testes.
+3. Agregação e apêndice, com testes, mais a coluna `project_analyses.temas_json` e a extração do Sumário Executivo. **Feita.** Ficam para a fase 4 a montagem do relatório e a verificação das referências.
 4. Prompt e montagem do relatório.
 5. Fluxo na página e filtro da base.
 6. Validação com a Smart Fit e com uma Entrevista.

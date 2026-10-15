@@ -325,6 +325,7 @@ def init_db() -> None:
                 model          TEXT,
                 analysis_text  TEXT,
                 citations      TEXT,
+                temas_json     TEXT,
                 created_at     TEXT    DEFAULT (datetime('now','localtime'))
             );
 
@@ -415,6 +416,9 @@ def init_db() -> None:
         for coluna in ("indice_combinado", "indice_texto", "indice_voz"):
             if coluna not in audio_cols:
                 conn.execute("ALTER TABLE audios ADD COLUMN {} REAL".format(coluna))
+        # Snapshot de cada Análise Geral (áudios cobertos, recorte e tabela de
+        # temas): é com ele que a análise seguinte calcula "Anteriores → novos".
+        _ensure_column(conn, "project_analyses", "temas_json", "TEXT")
 
         for table_name in (
             "projects",
@@ -1619,8 +1623,13 @@ def save_project_analysis(
     model: str,
     analysis_text: str,
     citations: Optional[list] = None,
+    temas: Optional[dict] = None,
 ) -> int:
-    """Salva uma análise geral de projeto. Retorna o ID gerado."""
+    """Salva uma análise geral de projeto. Retorna o ID gerado.
+
+    `temas` é o snapshot da Análise Geral v2 (prosodia_relatorio.snapshot),
+    lido de volta como `temas` pelas funções de leitura.
+    """
     _require_write()
     organization_id = _active_organization_id()
     with _connect() as conn:
@@ -1629,9 +1638,16 @@ def save_project_analysis(
         actual_org_id = proj_row["organization_id"] if proj_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO project_analyses
-               (organization_id, project_id, model, analysis_text, citations)
-               VALUES (?, ?, ?, ?, ?)""",
-            (actual_org_id, project_id, model, analysis_text, json.dumps(citations or [])),
+               (organization_id, project_id, model, analysis_text, citations, temas_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                actual_org_id,
+                project_id,
+                model,
+                analysis_text,
+                json.dumps(citations or []),
+                json.dumps(temas, ensure_ascii=False) if temas is not None else None,
+            ),
         )
         analysis_id = cur.lastrowid
     _audit("prosodia.project_analysis.create", "project_analysis", analysis_id, actual_org_id, write=True)
@@ -1685,7 +1701,7 @@ def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
         return None
     d = dict(row)
     d["citations"] = json.loads(d.get("citations") or "[]")
-    return d
+    return _with_themes_snapshot(d)
 
 
 def get_project_analyses(project_id: int) -> List[Dict]:
@@ -1709,8 +1725,23 @@ def get_project_analyses(project_id: int) -> List[Dict]:
     for r in rows:
         d = dict(r)
         d["citations"] = json.loads(d.get("citations") or "[]")
-        result.append(d)
+        result.append(_with_themes_snapshot(d))
     return result
+
+
+def _with_themes_snapshot(analysis: Dict) -> Dict:
+    """Troca temas_json pelo snapshot já lido em `temas`.
+
+    None nas análises anteriores à v2, que não têm snapshot, e no JSON
+    ilegível: para o Δ, as duas são análise sem lista de áudios cobertos.
+    """
+    raw = analysis.pop("temas_json", None)
+    try:
+        snapshot = json.loads(raw) if raw else None
+    except ValueError:
+        snapshot = None
+    analysis["temas"] = snapshot if isinstance(snapshot, dict) else None
+    return analysis
 
 
 # ---------------------------------------------------------------------------

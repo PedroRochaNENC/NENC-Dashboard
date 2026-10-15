@@ -362,6 +362,45 @@ class AudioTemasPersistenceTests(_BancoDescartavel):
         self.assertEqual(self._linhas_na_tabela(), 0)
 
 
+class SnapshotDaAnaliseTests(_BancoDescartavel):
+    """O snapshot de cada Análise Geral é o que a seguinte usa para o Δ."""
+
+    SNAPSHOT = {
+        "versao": 1,
+        "recorte": {"qr": ["Centro"], "origem": [], "periodo": [], "descricao": "QR code Centro"},
+        "audios": [3, 5],
+        "respondentes": 2,
+        "temas": [{"subtema": "Ambiente > Lotação", "respondentes": 2, "faixa": "Menção isolada"}],
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.project_id = prosodia_db.create_project("Recados")
+
+    def test_snapshot_is_read_back_as_temas(self):
+        prosodia_db.save_project_analysis(self.project_id, "gpt-4.1", "texto", [], temas=self.SNAPSHOT)
+
+        historico = prosodia_db.get_project_analyses(self.project_id)
+        ultima = prosodia_db.get_latest_project_analysis(self.project_id)
+
+        self.assertEqual(historico[0]["temas"], self.SNAPSHOT)
+        self.assertEqual(ultima["temas"], self.SNAPSHOT)
+        self.assertNotIn("temas_json", ultima)
+
+    def test_analysis_without_snapshot_reads_none(self):
+        prosodia_db.save_project_analysis(self.project_id, "gpt-4.1", "texto")
+
+        self.assertIsNone(prosodia_db.get_project_analyses(self.project_id)[0]["temas"])
+        self.assertIsNone(prosodia_db.get_latest_project_analysis(self.project_id)["temas"])
+
+    def test_unreadable_snapshot_reads_none(self):
+        prosodia_db.save_project_analysis(self.project_id, "gpt-4.1", "texto", temas=self.SNAPSHOT)
+        with prosodia_db._connect() as conn:
+            conn.execute("UPDATE project_analyses SET temas_json = '{quebrado'")
+
+        self.assertIsNone(prosodia_db.get_latest_project_analysis(self.project_id)["temas"])
+
+
 class ScriptsDoServidorTests(unittest.TestCase):
     """Os scripts de manutenção rodam no Python do servidor, que não tem pandas.
 
@@ -412,6 +451,44 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
                 database.close()
 
         self.assertEqual(linha, (None, None))
+
+    def test_existing_project_analyses_get_no_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "nenc-insights.db"
+            auth.create_organization(
+                "Legacy Owner", database_path=database_path, _bootstrap=True
+            )
+            database = sqlite3.connect(database_path)
+            try:
+                database.execute(
+                    "CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+                )
+                database.execute(
+                    "CREATE TABLE project_analyses (id INTEGER PRIMARY KEY, project_id INTEGER, "
+                    "model TEXT, analysis_text TEXT, citations TEXT, created_at TEXT)"
+                )
+                database.execute("INSERT INTO projects (name) VALUES ('Projeto antigo')")
+                database.execute(
+                    "INSERT INTO project_analyses (project_id, model, analysis_text, citations, created_at) "
+                    "VALUES (1, 'gpt-4.1', 'Analise antiga', '[]', '2026-09-30 10:00:00')"
+                )
+                database.commit()
+            finally:
+                database.close()
+
+            with patch.dict(os.environ, {"NENC_DB_PATH": str(database_path)}):
+                prosodia_db.init_db()
+                prosodia_db.init_db()
+
+            database = sqlite3.connect(database_path)
+            try:
+                linha = database.execute(
+                    "SELECT analysis_text, temas_json FROM project_analyses"
+                ).fetchone()
+            finally:
+                database.close()
+
+        self.assertEqual(linha, ("Analise antiga", None))
 
 
 class PreparacaoGravaATaxonomiaTests(unittest.TestCase):

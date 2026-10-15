@@ -94,6 +94,15 @@ def _chave(texto: str) -> str:
     return "".join(c for c in decomposto if not unicodedata.combining(c)).casefold()
 
 
+def chave_rotulo(texto) -> str:
+    """A forma de comparação de um rótulo, para quem agrega fora daqui.
+
+    A Análise Geral junta os emergentes dos respondentes com esta chave, a
+    mesma que a classificação usa.
+    """
+    return _chave(_limpa(texto))
+
+
 def parse_taxonomia(texto: Optional[str]) -> Taxonomia:
     """Lê o campo de taxonomia do projeto.
 
@@ -384,7 +393,12 @@ def _polaridade(valor) -> str:
     return "neutra"
 
 
-def _junta_polaridades(primeira: str, segunda: str) -> str:
+def juntar_polaridades(primeira: str, segunda: str) -> str:
+    """Polaridade de um tema citado duas vezes: elogio e crítica viram mista.
+
+    Neutra não muda a outra. Serve às partes de uma entrevista longa e, na
+    Análise Geral, aos vários áudios do mesmo respondente.
+    """
     if primeira == segunda:
         return primeira
     avaliadas = {primeira, segunda} - {"neutra"}
@@ -418,7 +432,7 @@ def _acumula(destino: Dict[str, _Mencao], chave: str, mencao: _Mencao) -> None:
     if atual is None:
         destino[chave] = mencao
         return
-    atual.polaridade = _junta_polaridades(atual.polaridade, mencao.polaridade)
+    atual.polaridade = juntar_polaridades(atual.polaridade, mencao.polaridade)
     atual.linhas |= mencao.linhas
     atual.categoria = atual.categoria or mencao.categoria
     atual.evidencia = atual.evidencia or mencao.evidencia
