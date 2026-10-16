@@ -8,7 +8,9 @@ cada áudio já pronta, sem banco e sem IA.
 
 import json
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -53,6 +55,13 @@ def _tema(subtema, polaridade="negativa", linhas=(1,)):
             for n in linhas
         ],
     }
+
+
+def _emergente(rotulo, categoria, polaridade="negativa", linhas=(1,)):
+    emergente = _tema(rotulo, polaridade, linhas)
+    emergente["rotulo"] = emergente.pop("subtema")
+    emergente["categoria"] = categoria
+    return emergente
 
 
 def _sessao(numero, audio_id):
@@ -126,6 +135,150 @@ class ChaveRespondenteTests(unittest.TestCase):
             rel.chave_respondente("wa_+5521998548459_39", ENTREVISTA_QUALITATIVA),
             rel.chave_respondente("wa_+5521998548459_40", ENTREVISTA_QUALITATIVA),
         )
+
+
+def _arquivo(conteudo, audio):
+    """O áudio com a assinatura do arquivo: a mesma em dois áudios é o mesmo arquivo enviado de novo."""
+    return replace(audio, conteudo=conteudo)
+
+
+def _prosodia_json(*vad):
+    return json.dumps({"result": {"vad": [{"start": s, "end": e} for s, e in vad], "asr": []}}).encode("utf-8")
+
+
+class ConteudoRepetidoTests(unittest.TestCase):
+    def test_the_same_file_has_the_same_signature(self):
+        arquivo = _prosodia_json((0.0, 2.5), (3.1, 6.0))
+
+        self.assertEqual(
+            rel.assinatura_do_conteudo(arquivo), rel.assinatura_do_conteudo(_prosodia_json((0.0, 2.5), (3.1, 6.0)))
+        )
+        self.assertNotEqual(
+            rel.assinatura_do_conteudo(arquivo), rel.assinatura_do_conteudo(_prosodia_json((0.0, 2.6), (3.1, 6.0)))
+        )
+        # O JSON sem "result", que o prosodia_loader também lê.
+        self.assertIsNotNone(rel.assinatura_do_conteudo(b'{"vad": [{"start": 0.0, "end": 1.0}]}'))
+
+    def test_without_a_vad_segment_there_is_no_signature(self):
+        # Dois áudios mudos dariam o mesmo JSON.
+        for arquivo in (None, b"", _prosodia_json(), b"nao e json", b"[1, 2]", b'{"result": []}'):
+            with self.subTest(arquivo=arquivo):
+                self.assertIsNone(rel.assinatura_do_conteudo(arquivo))
+
+    def test_in_an_interview_copies_of_the_same_file_count_once(self):
+        # O 03 é o 01 enviado de novo, e a IA achou nele um tema a mais.
+        audios = [
+            _arquivo("a", _audio(1, _tema(MAQUINA))),
+            _arquivo("b", _audio(2, _tema(MAQUINA))),
+            _arquivo("a", _audio(3, _tema(MAQUINA), _tema(LOTACAO))),
+        ]
+
+        agregacao = _agregar(audios, tipo=ENTREVISTA_QUALITATIVA)
+
+        self.assertEqual(agregacao.repetidos, {3: 1})
+        self.assertEqual((agregacao.n_respondentes, agregacao.contados), (2, (1, 2)))
+        self.assertEqual(_linha_da_tabela(agregacao, MAQUINA).respondentes, 2)
+        self.assertEqual(agregacao.sem_mencao, [ATENDENTE, LOTACAO, PRECO])
+        # O snapshot guarda a cópia, para a análise seguinte não a tratar como nova.
+        self.assertEqual(rel.snapshot(agregacao, Recorte())["audios"], [1, 2, 3])
+
+    def test_in_opinion_different_audios_of_the_same_number_still_join(self):
+        # Arquivos diferentes do mesmo número: uma pessoa, que trata do que qualquer áudio dela tratar.
+        audios = [
+            _arquivo("a", _audio(1, _tema(MAQUINA), numero=9)),
+            _arquivo("b", _audio(2, _tema(LOTACAO), numero=9)),
+            _arquivo("c", _audio(3, _tema(MAQUINA))),
+        ]
+
+        agregacao = _agregar(audios)
+
+        self.assertEqual(agregacao.repetidos, {})
+        self.assertEqual((agregacao.n_respondentes, agregacao.contados), (2, (1, 2, 3)))
+        self.assertEqual(_linha_da_tabela(agregacao, MAQUINA).respondentes, 2)
+        self.assertEqual(_linha_da_tabela(agregacao, LOTACAO).respondentes, 1)
+
+    def test_in_opinion_the_same_file_from_another_number_counts_once(self):
+        # Um áudio encaminhado por outro número é o mesmo depoimento.
+        audios = [
+            _arquivo("a", _audio(1, _tema(MAQUINA), numero=9)),
+            _arquivo("a", _audio(2, _tema(MAQUINA), numero=5)),
+        ]
+
+        agregacao = _agregar(audios)
+
+        self.assertEqual((agregacao.repetidos, agregacao.n_respondentes), ({2: 1}, 1))
+
+    def test_the_first_copy_with_a_valid_classification_is_the_one_that_counts(self):
+        # A classificação do 01 falhou: conta o 02, e o 01 não aparece como sem classificação.
+        audios = [
+            _arquivo("a", _audio(1, classificada=False)),
+            _arquivo("a", _audio(2, _tema(LOTACAO))),
+            _arquivo("a", _audio(3, _tema(LOTACAO), _tema(PRECO))),
+        ]
+
+        agregacao = _agregar(audios, tipo=ENTREVISTA_QUALITATIVA)
+
+        self.assertEqual(agregacao.repetidos, {1: 2, 3: 2})
+        self.assertEqual((agregacao.contados, agregacao.sem_classificacao), ((2,), ()))
+        self.assertEqual([tema.subtema for tema in agregacao.temas], [LOTACAO])
+
+    def test_only_audios_of_the_cut_with_a_signature_are_joined(self):
+        audios = [
+            _arquivo("a", _audio(1, _tema(MAQUINA))),
+            _arquivo("a", _audio(2, _tema(MAQUINA))),
+            # Sem assinatura (prosodia_json ausente ou sem VAD), nada se junta.
+            _audio(3, _tema(MAQUINA)),
+            _audio(4, _tema(MAQUINA)),
+        ]
+
+        agregacao = _agregar(audios, tipo=ENTREVISTA_QUALITATIVA, recorte=[2, 3, 4])
+
+        self.assertEqual((agregacao.repetidos, agregacao.n_respondentes), ({}, 3))
+
+    def test_the_copy_stays_out_of_the_voice_the_thermometer_and_the_matrix(self):
+        audios = [
+            _arquivo("a", _audio(1, _tema(MAQUINA))),
+            _arquivo("a", _audio(2, _tema(MAQUINA))),
+            _audio(3, _tema(MAQUINA)),
+        ]
+        sinc = pd.DataFrame([
+            linha for a in audios for linha in _vad(a.session_id, (0, 1, 2), valencia=lambda s: 0.1 * s)
+        ])
+        transcricao = pd.DataFrame([
+            {"session_id": a.session_id, "start_s": 0.0, "end_s": 3.5, "sentimento_texto": 0.6} for a in audios
+        ])
+
+        with patch.object(rel, "montar_matriz", wraps=rel.montar_matriz) as matriz:
+            agregacao = _agregar(
+                audios, tipo=ENTREVISTA_QUALITATIVA, sinc_projeto=sinc, transcricao_projeto=transcricao
+            )
+
+        self.assertEqual(_linha_da_tabela(agregacao, MAQUINA).voz.respondentes, 2)
+        self.assertEqual(agregacao.termometro.respondentes, 2)
+        self.assertEqual([a.audio_id for a in matriz.call_args.args[2]], [1, 3])
+
+    def test_the_limitations_list_the_joined_audios_by_alias(self):
+        audios = [
+            _arquivo("a", _audio(1, _tema(MAQUINA))),
+            _arquivo("b", _audio(2, _tema(MAQUINA))),
+            _arquivo("a", _audio(3, _tema(MAQUINA))),
+            _arquivo("b", _audio(4, _tema(MAQUINA))),
+            _arquivo("b", _audio(5, _tema(MAQUINA))),
+        ]
+
+        varios = rel.apendice_markdown(_agregar(audios, tipo=ENTREVISTA_QUALITATIVA), None, None)
+        um = rel.apendice_markdown(_agregar(audios[:3], tipo=ENTREVISTA_QUALITATIVA), None, None)
+        nenhum = rel.apendice_markdown(_agregar(audios[:2], tipo=ENTREVISTA_QUALITATIVA), None, None)
+
+        self.assertIn(
+            "3 áudios do recorte são o mesmo arquivo de outro, enviado de novo (a análise de prosódia é "
+            "idêntica), e ficaram fora da contagem. Em cada grupo conta só o primeiro: Áudio 01 = Áudio 03; "
+            "Áudio 02 = Áudio 04 = Áudio 05.",
+            varios,
+        )
+        self.assertIn("1 áudio do recorte é o mesmo arquivo de outro", um)
+        self.assertIn("e ficou fora da contagem. Em cada grupo conta só o primeiro: Áudio 01 = Áudio 03.", um)
+        self.assertNotIn("mesmo arquivo", nenhum)
 
 
 class AliasesTests(unittest.TestCase):
@@ -370,6 +523,52 @@ class ContagemTests(unittest.TestCase):
             "Cheiro do sabão (Produtos), 1/3, 1 pos.",
             rel.tabela_temas_markdown(agregacao),
         )
+
+    def test_emergent_whose_category_is_a_subtheme_counts_in_that_subtheme(self):
+        # A categoria é o rótulo de Lotação em outra caixa, sem acento e sem espaços.
+        audios = [
+            _audio(1, emergentes=[_emergente("Fila no vestiário", "AMBIENTE>lotacao", linhas=(2,))]),
+            _audio(2, _tema(LOTACAO)),
+            _audio(3, _tema(LOTACAO, "positiva")),
+        ]
+
+        agregacao = _agregar(audios)
+
+        linha = _linha_da_tabela(agregacao, LOTACAO)
+        self.assertEqual((linha.respondentes, linha.polaridades), (3, {"negativa": 2, "positiva": 1}))
+        self.assertEqual(agregacao.emergentes, [])
+        self.assertIn((1, 2), [(trecho.audio_id, trecho.linha) for trecho in agregacao.trechos[LOTACAO]])
+        # A classificação gravada fica como está: a regra vale na leitura.
+        self.assertEqual(len(audios[0].classificacao["emergentes"]), 1)
+
+    def test_emergent_in_a_subtheme_the_respondent_cited_joins_the_polarities(self):
+        audios = [
+            # No mesmo áudio, o subtema com elogio e o emergente com crítica, com uma fala em comum.
+            _audio(1, _tema(LOTACAO, "positiva", linhas=(1,)),
+                   emergentes=[_emergente("Fila no vestiário", "Ambiente > Lotação", linhas=(1, 2))]),
+            # Em dois áudios do mesmo número.
+            _audio(2, _tema(LOTACAO, "neutra"), numero=7),
+            _audio(3, emergentes=[_emergente("Fila no vestiário", "ambiente > lotação")], numero=7),
+        ]
+        sinc = pd.DataFrame(_vad(_sessao(1, 1), (0, 1, 2), valencia=lambda s: 0.1 * s, linhas_por_segmento=3))
+
+        linha = _linha_da_tabela(_agregar(audios, sinc_projeto=sinc), LOTACAO)
+
+        self.assertEqual((linha.respondentes, linha.polaridades), (2, {"mista": 1, "negativa": 1}))
+        # A fala 1, citada no subtema e no emergente, entra uma vez na voz.
+        self.assertEqual(linha.voz.trechos, 2)
+
+    def test_only_the_whole_label_of_a_subtheme_brings_the_emergent_back(self):
+        # "Ambiente" é só a categoria, e "Lotação", só o nome do subtema.
+        audios = [
+            _audio(1, emergentes=[_emergente("Fila no vestiário", "Ambiente")]),
+            _audio(2, emergentes=[_emergente("Fila na catraca", "Lotação")]),
+        ]
+
+        agregacao = _agregar(audios)
+
+        self.assertEqual(agregacao.temas, [])
+        self.assertEqual([e.rotulo for e in agregacao.emergentes], ["Fila na catraca", "Fila no vestiário"])
 
 
 class VozPorTrechoTests(unittest.TestCase):

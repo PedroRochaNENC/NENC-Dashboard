@@ -132,8 +132,10 @@ class _BancoDescartavel(unittest.TestCase):
         for numero in range(1, audios + 1):
             self._audio(numero)
 
-    def _audio(self, numero):
-        return prosodia_db.create_audio(self.project_id, "wa_55119000000{:02d}_{}".format(numero, numero))
+    def _audio(self, numero, prosodia_json=None):
+        return prosodia_db.create_audio(
+            self.project_id, "wa_55119000000{:02d}_{}".format(numero, numero), prosodia_json=prosodia_json
+        )
 
     def _audios(self):
         return prosodia_db.get_audios_for_interviews(self.project_id)
@@ -319,6 +321,26 @@ class GeracaoTests(_BancoDescartavel):
         resultado = self._gerar(incluir_legenda=True)
 
         self.assertIn(audio["session_id"], resultado.relatorio.texto)
+
+    def test_the_same_file_sent_again_counts_once(self):
+        self._projeto(audios=0)
+        arquivo = json.dumps({"result": {"vad": [{"start": 0.0, "end": 2.5}]}}).encode("utf-8")
+        primeiro = self._audio(1, arquivo)
+        segundo = self._audio(2, json.dumps({"result": {"vad": [{"start": 0.0, "end": 3.0}]}}).encode("utf-8"))
+        copia = self._audio(3, arquivo)
+
+        resultado = self._gerar()
+
+        self.assertEqual(resultado.agregacao.repetidos, {copia: primeiro})
+        self.assertEqual(resultado.agregacao.n_respondentes, 2)
+        self.assertIn(
+            (3, "2 respondentes em 2 áudios contados do recorte (1 cópia de outro áudio, fora da contagem), "
+                "leitura exploratória."),
+            self.avisos,
+        )
+        self.assertIn("Em cada grupo conta só o primeiro: Áudio 01 = Áudio 03.", resultado.relatorio.texto)
+        analise = prosodia_db.get_latest_project_analysis(self.project_id)
+        self.assertEqual(analise["temas"]["audios"], sorted([primeiro, segundo, copia]))
 
 
 class ChamadasTests(unittest.TestCase):

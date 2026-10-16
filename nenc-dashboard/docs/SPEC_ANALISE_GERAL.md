@@ -139,7 +139,7 @@ Implementada na fase 2, em `utils/prosodia_temas.py` e na tabela `audio_temas`.
 ```
 
 - **Validação em código.** A resposta não é aceita como vem:
-  - o rótulo é comparado sem caixa nem acento; subtema fora da taxonomia vira emergente, e emergente que é um subtema da taxonomia volta para os temas;
+  - o rótulo é comparado sem caixa nem acento; subtema fora da taxonomia vira emergente, e emergente que é um subtema da taxonomia volta para os temas. O emergente cuja *categoria* é um subtema volta na agregação (§7), e a classificação gravada fica como veio;
   - polaridade fora de `positiva`, `negativa`, `mista` ou `neutra` vira `neutra`, e o mesmo tema citado com elogio e com crítica vira `mista`;
   - linha que não existe é descartada, e tema sem nenhuma linha válida cai, porque sem trecho não há como conferir a menção; ficam até 10 linhas por tema;
   - na entrevista, ficam só as linhas do entrevistado. Vale o locutor que a IA apontar, se ele existir na transcrição; senão, o rótulo "Entrevistado" (nunca "Entrevistador") ou o único locutor do áudio. Sem nenhum dos dois, ficam todas as linhas e a classificação sai marcada com `respondente_incerto`.
@@ -153,6 +153,12 @@ Implementada na fase 2, em `utils/prosodia_temas.py` e na tabela `audio_temas`.
 Implementada na fase 3, em `utils/prosodia_relatorio.py`. As regras desta seção valem como estão escritas. O que o código decidiu além delas:
 
 - **Quem entra no N.** Os respondentes com pelo menos um áudio com fala e com classificação válida, isto é, com a chave de agora (`classificacoes_validas`). Áudio sem fala, ou com classificação vencida ou que falhou, fica fora da contagem e aparece nas limitações. Quem falou e não tratou de tema nenhum entra no N.
+- **Áudios repetidos.** O mesmo arquivo enviado de novo conta uma vez, em qualquer tipo de projeto. Dois áudios do recorte com fala têm o mesmo conteúdo quando o `prosodia_json` deles é igual byte a byte e tem pelo menos um segmento de VAD (`assinatura_do_conteudo`). Sem segmento, dois áudios mudos dariam o mesmo JSON. O `prosodia_json` é a saída da API de prosódia para o arquivo. A transcrição e o Sincronizado não servem: o Whisper os refaz a cada envio, e eles saem um pouco diferentes. Na ABIHPEC, nenhuma cópia tinha a transcrição ou o Sincronizado iguais aos do original.
+  - Em cada grupo conta o primeiro áudio com classificação válida, ou o primeiro, se nenhum tem. É uma classificação por arquivo: na ABIHPEC, a IA deu subtemas diferentes às cópias em 3 dos 4 grupos, e somar as menções das cópias contaria essa variação.
+  - As cópias ficam fora da contagem, da voz por tema, do Termômetro, dos Sumários Executivos, dos dois lados do Δ e da tabela da Matriz. As limitações listam os grupos pelo alias ("Áudio 01 = Áudio 11"), e a tela da geração diz quantas cópias ficaram fora. O snapshot guarda as cópias com os demais áudios do recorte.
+  - A régua da voz e os terços da Matriz continuam sobre todos os áudios do projeto, com as cópias.
+  - Áudios diferentes do mesmo número seguem a regra da §14. Até a validação (§15), cada cópia contava como um respondente na Entrevista.
+- **Emergente com categoria de subtema.** Quando a categoria de um emergente é o rótulo inteiro de um subtema ("Produto > Instalações"), comparado sem caixa nem acento e com ou sem espaço em volta do ">", a menção conta nesse subtema, com a polaridade, a evidência e os trechos do emergente. Se o áudio já citava o subtema, as polaridades se juntam como as demais e a fala citada nos dois entra uma vez. Só a categoria ("Produto") ou só o nome ("Instalações") não basta. A regra vale na leitura, então pega as classificações já gravadas sem voltar à IA. Até a validação (§15), só o rótulo do emergente era conferido.
 - **Voz por tema.** É a média de cada respondente nos trechos do tema que têm voz, ponderada pela duração, e depois a média entre respondentes, com o mesmo peso para cada um, como no Termômetro. Até a validação (§15) era a média dos trechos, e quem falava muito decidia a leitura sozinho. Cada trecho é casado com o VAD pelo segmento do Whisper. Arquivo sem segmento casa pelo tempo, do início da fala até o início da fala seguinte. A régua da ativação é a mesma conta da valência, feita sobre `dim_arousal`: média e desvio de todas as linhas do VAD do projeto.
 - **Polaridade predominante.** É a polaridade com mais respondentes no tema. Empate no topo, ou mista ou neutra no topo, conta como "misto ou neutro".
 - **Matriz.**
@@ -528,6 +534,7 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   - Na Pesquisa de Opinião, áudios do WhatsApp com o mesmo número (`wa_+<número>_<seq>`) contam como um respondente, que menciona o tema se qualquer áudio dele mencionar.
   - Na Entrevista, cada áudio é um respondente, porque o número que envia é o do entrevistador.
   - Nas demais origens, cada áudio é um respondente.
+  - Em qualquer tipo, o mesmo arquivo enviado de novo conta uma vez, pelo primeiro áudio com classificação válida (§7). Áudios diferentes do mesmo número continuam juntos na Opinião e separados na Entrevista.
   - A Matriz continua por áudio.
 - **Aliases:** o corpo cita "Áudio 07" em vez do `session_id`, que traz o telefone. O código numera os áudios, a IA copia o alias (curto e difícil de errar) e o código confere. A legenda alias → sessão fica no apêndice, ou só na tela se a cliente não deve receber telefones.
 - **Limiares de voz por tema:** ±0,15 na valência (cerca de 0,3 desvio) e ±0,3 desvio na ativação. Ficaram depois da validação com a Smart Fit, que mudou a unidade da leitura: cada respondente pesa igual, e são precisos 5 respondentes com voz (§15).
@@ -551,22 +558,22 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   5. o corpo não tem seção de métricas acústicas, e a voz só aparece como qualificador;
   6. regenerar sem áudio novo devolve as mesmas tabelas e o mesmo Termômetro;
   7. na entrevista, nenhuma fala do entrevistador conta como menção;
-  8. na ABIHPEC, o cabeçalho sai como leitura exploratória (11 respondentes);
+  8. na ABIHPEC, o cabeçalho sai como leitura exploratória (6 respondentes, em 11 áudios);
   9. leitura humana: as recomendações são mais específicas que as dos relatórios atuais?
 - **Revisão:** Pedro revisa os dois relatórios antes do deploy.
-- **Resultado (16/10/2026).** Cópia de produção do mesmo dia, com gpt-4.1 no relatório. Smart Fit: 53 áudios, 51 respondentes. ABIHPEC: projeto 6, 11 áudios, locutores só como A e B. O relatório detalhado fica fora do repositório, porque traz falas e dados da cliente.
+- **Resultado (16/10/2026).** Cópia de produção do mesmo dia, com gpt-4.1 no relatório. Smart Fit: 53 áudios, 51 respondentes. ABIHPEC: projeto 6, 11 áudios de 6 gravações, locutores só como A e B. O relatório detalhado fica fora do repositório, porque traz falas e dados da cliente.
   - Os itens 1, 2, 3, 6, 7 e 8 passaram nos dois projetos, e a verificação das referências não apontou problema nas quatro gerações. Na ABIHPEC, a classificação acertou o entrevistado nos 11 áudios.
   - Mudou na validação:
     - a voz por tema passou a dar o mesmo peso a cada respondente, com mínimo de 5 respondentes com voz (§7). Na Smart Fit, a única voz "acima do habitual → reforça" (Equipamentos) e, na ABIHPEC, o "contradiz" de Renovação mudavam de direção ao tirar uma pessoa;
     - "atenua" com ativação média deixou de sustentar hipótese no prompt (§9);
-    - o apêndice deixou de mostrar a fala de destaque das perguntas, que trazia o nome completo de uma paciente.
-  - Ficou para depois:
-    - na ABIHPEC, 5 dos 11 áudios são cópias de outros (6 gravações), e a Entrevista conta cada áudio como respondente: um tema de 2 pessoas saiu como sinal. A decisão é entre limpar o projeto de demonstração e contar uma vez os áudios repetidos;
-    - um emergente cuja categoria é um subtema da taxonomia ("Sanitários sem papel higiênico" com categoria "Produto > Instalações") ainda não volta para o subtema.
+    - o apêndice deixou de mostrar a fala de destaque das perguntas, que trazia o nome completo de uma paciente;
+    - o emergente cuja categoria é um subtema passou a contar nesse subtema (§7). Na Smart Fit, "Sanitários sem papel higiênico" tinha a categoria "Produto > Instalações" e ficava fora de Instalações;
+    - o mesmo arquivo enviado de novo passou a contar uma vez (§7). Na ABIHPEC, 5 dos 11 áudios eram cópias de outros, e a Entrevista contava cada um como respondente. Recalculada pelo cache, sem chamar a IA, a tabela passou de 11 para 6 respondentes: Renovação foi de 7/11 (padrão) para 4/6 (sinal), Oferta de atividades de 6/11 (padrão) para 3/6 (sinal) e Interação com profissionais de 3/11 (sinal) para 1/6 (menção isolada). Nenhum tema chega mais a 5 respondentes com voz, então nenhum tem leitura de voz. A Smart Fit não tem cópias, e a tabela dela não mudou.
 - **Testes (pytest):**
   - parse e versão da taxonomia;
   - validação do JSON da classificação;
   - contagem por respondente (várias menções no mesmo áudio, ou do mesmo número, contam uma vez);
+  - o mesmo arquivo enviado de novo conta uma vez, e áudios diferentes do mesmo número continuam juntos na Opinião;
   - faixas nos limites (2/3, 4/5, e 5 com menos de 10%);
   - qualificador de voz nos limiares e com menos de 5 trechos;
   - Matriz (terços e mínimo de áudios);

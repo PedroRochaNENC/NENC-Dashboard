@@ -16,11 +16,13 @@ separação do texto dela nas seções, a montagem na ordem fixa e a verificaç�
 das referências (escrever_relatorio faz as quatro, com a IA injetada).
 """
 
+import hashlib
+import json
 import math
 import re
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Callable, Collection, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -218,6 +220,9 @@ class AudioDoProjeto:
     `criado_em` é audios.created_at, do mesmo relógio que
     project_analyses.created_at: é com ele que o Δ separa novos de
     anteriores. `qr` e `chegada` só aparecem na legenda dos aliases.
+    `conteudo` identifica o arquivo (assinatura_do_conteudo): áudios do
+    recorte com o mesmo conteúdo são o mesmo arquivo enviado de novo e contam
+    uma vez.
     """
 
     audio_id: int
@@ -227,6 +232,47 @@ class AudioDoProjeto:
     criado_em: Optional[datetime] = None
     qr: str = ""
     chegada: str = ""
+    conteudo: Optional[str] = None
+
+
+def assinatura_do_conteudo(prosodia_json: Optional[bytes]) -> Optional[str]:
+    """O que identifica o arquivo de áudio: o hash do prosodia_json, ou None.
+
+    O prosodia_json é a saída da API de prosódia para o arquivo (VAD, emoções,
+    prosódia e ASR de cada segmento), e o mesmo arquivo enviado de novo dá o
+    mesmo JSON, byte a byte. A transcrição e o Sincronizado não servem: o
+    Whisper os refaz a cada envio, e eles saem um pouco diferentes. JSON sem
+    nenhum segmento de VAD fica sem assinatura, porque dois áudios mudos
+    dariam o mesmo.
+    """
+    if not prosodia_json:
+        return None
+    try:
+        dados = json.loads(prosodia_json)
+    except (TypeError, ValueError):
+        return None
+    resultado = dados.get("result", dados) if isinstance(dados, dict) else None
+    if not isinstance(resultado, dict) or not resultado.get("vad"):
+        return None
+    return hashlib.sha256(prosodia_json).hexdigest()
+
+
+def _repetidos(audios: Iterable[AudioDoProjeto]) -> Dict[int, int]:
+    """Cópia → o áudio que conta por ela, entre os áudios com o mesmo conteúdo.
+
+    Conta o primeiro do grupo com classificação válida, ou o primeiro, se
+    nenhum tem: uma classificação por arquivo, para a variação da IA entre
+    cópias do mesmo depoimento não somar menções.
+    """
+    grupos: Dict[str, List[AudioDoProjeto]] = {}
+    for audio in sorted(audios, key=lambda a: a.audio_id):
+        if audio.conteudo:
+            grupos.setdefault(audio.conteudo, []).append(audio)
+    repetidos: Dict[int, int] = {}
+    for grupo in grupos.values():
+        fica = next((a for a in grupo if a.classificacao is not None), grupo[0])
+        repetidos.update((a.audio_id, fica.audio_id) for a in grupo if a is not fica)
+    return repetidos
 
 
 def chave_respondente(session_id: str, tipo_projeto: Optional[str]) -> str:
@@ -281,6 +327,45 @@ def classificacoes_validas(
         if salva and salva.get("chave") == chave_classificacao(taxonomia, tipo_projeto, linhas):
             validas[audio_id] = salva.get("temas") or {}
     return validas
+
+
+def _devolver_emergentes(classificacao: dict, subtemas: Dict[Tuple[str, str], str]) -> dict:
+    """A classificação com o emergente que é um subtema contado nele.
+
+    A IA às vezes cria um emergente e dá como categoria o rótulo inteiro de um
+    subtema, como "Produto > Instalações". A menção conta nesse subtema, com a
+    polaridade, a evidência e os trechos do emergente; se o áudio já citava o
+    subtema, as polaridades se juntam e os trechos se somam. A regra vale na
+    leitura, e as classificações gravadas não voltam à IA. `subtemas` vai da
+    chave (categoria, nome) ao rótulo da taxonomia.
+    """
+    temas = [dict(tema) for tema in _lista(classificacao.get("temas"))]
+    por_rotulo = {tema.get("subtema"): tema for tema in temas}
+    emergentes = []
+    for emergente in _lista(classificacao.get("emergentes")):
+        categoria, _, nome = str(emergente.get("categoria") or "").partition(">")
+        rotulo = subtemas.get((chave_rotulo(categoria), chave_rotulo(nome)))
+        if rotulo is None:
+            emergentes.append(emergente)
+            continue
+        polaridade = _polaridade(emergente.get("polaridade"))
+        tema = por_rotulo.get(rotulo)
+        if tema is None:
+            por_rotulo[rotulo] = {
+                "subtema": rotulo,
+                "polaridade": polaridade,
+                "evidencia": emergente.get("evidencia") or "",
+                "trechos": _lista(emergente.get("trechos")),
+            }
+            temas.append(por_rotulo[rotulo])
+            continue
+        citadas = {_inteiro(trecho.get("linha")) for trecho in _lista(tema.get("trechos"))}
+        tema["polaridade"] = juntar_polaridades(_polaridade(tema.get("polaridade")), polaridade)
+        tema["evidencia"] = tema.get("evidencia") or emergente.get("evidencia") or ""
+        tema["trechos"] = _lista(tema.get("trechos")) + [
+            trecho for trecho in _lista(emergente.get("trechos")) if _inteiro(trecho.get("linha")) not in citadas
+        ]
+    return dict(classificacao, temas=temas, emergentes=emergentes)
 
 
 def _nomes_curtos(taxonomia: Taxonomia) -> Dict[str, str]:
@@ -1086,6 +1171,8 @@ class Agregacao:
     matriz: Matriz
     reguas: Reguas
     delta: Optional[Delta] = None
+    # Cópia → o áudio que conta por ela: o mesmo arquivo enviado de novo.
+    repetidos: Dict[int, int] = field(default_factory=dict)
 
     @property
     def exploratoria(self) -> bool:
@@ -1107,15 +1194,25 @@ def agregar(
     aliases, a régua da voz e os terços da Matriz usam o projeto inteiro, e
     a contagem, só o recorte. Os dataframes são o Sincronizado normalizado e
     a transcrição de todos os áudios do projeto, com session_id. `anterior` é
-    a análise que escolher_analise_anterior devolveu.
+    a análise que escolher_analise_anterior devolveu. Áudios do recorte com o
+    mesmo conteúdo contam uma vez, pelo primeiro (_repetidos): as cópias
+    ficam fora da contagem, da voz, do Termômetro e da Matriz.
     """
     tipo = normalize_project_type(tipo_projeto)
     nomes = aliases(audios)
     ids = set(ids_recorte)
     recorte = tuple(sorted((a for a in audios if a.audio_id in ids), key=lambda a: a.audio_id))
     sem_fala = tuple(a.audio_id for a in recorte if not a.linhas)
-    sem_classificacao = tuple(a.audio_id for a in recorte if a.linhas and a.classificacao is None)
-    contados = [a for a in recorte if a.linhas and a.classificacao is not None]
+    repetidos = _repetidos(a for a in recorte if a.linhas)
+    sem_classificacao = tuple(
+        a.audio_id for a in recorte if a.linhas and a.classificacao is None and a.audio_id not in repetidos
+    )
+    subtemas = {(chave_rotulo(s.categoria), chave_rotulo(s.nome)): s.rotulo for s in taxonomia.subtemas}
+    contados = [
+        replace(a, classificacao=_devolver_emergentes(a.classificacao, subtemas))
+        for a in recorte
+        if a.linhas and a.classificacao is not None and a.audio_id not in repetidos
+    ]
     incertos = tuple(a.audio_id for a in contados if a.classificacao.get("respondente_incerto"))
 
     rotulos = [subtema.rotulo for subtema in taxonomia.subtemas]
@@ -1161,7 +1258,7 @@ def agregar(
     matriz = montar_matriz(
         sinais.indice_combinado_por_grupo(sinc_projeto, reguas.valencia, "session_id"),
         _ativacao_por_audio(sinc_projeto),
-        recorte,
+        tuple(a for a in recorte if a.audio_id not in repetidos),
         nomes,
         temas_por_audio,
     )
@@ -1187,6 +1284,7 @@ def agregar(
         matriz=matriz,
         reguas=reguas,
         delta=delta,
+        repetidos=repetidos,
     )
 
 
@@ -1779,6 +1877,23 @@ def _limitacoes(
         ))
     if fora:
         itens.append("Ficaram fora da contagem de temas: {}.".format(" e ".join(fora)))
+    if agregacao.repetidos:
+        grupos: Dict[int, List[int]] = {}
+        for copia, original in agregacao.repetidos.items():
+            grupos.setdefault(original, []).append(copia)
+        n = len(agregacao.repetidos)
+        itens.append(
+            "{} do recorte {} o mesmo arquivo de outro, enviado de novo (a análise de prosódia é idêntica), "
+            "e {} fora da contagem. Em cada grupo conta só o primeiro: {}.".format(
+                _plural(n, "áudio", "áudios"),
+                "é" if n == 1 else "são",
+                "ficou" if n == 1 else "ficaram",
+                "; ".join(
+                    " = ".join(agregacao.aliases[i] for i in [original] + sorted(copias))
+                    for original, copias in sorted(grupos.items())
+                ),
+            )
+        )
     if agregacao.respondente_incerto:
         itens.append(
             "Em {} não foi possível identificar o entrevistado, e todas as falas contaram.".format(

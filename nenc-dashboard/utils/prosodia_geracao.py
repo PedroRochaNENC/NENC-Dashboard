@@ -194,7 +194,10 @@ def legenda(audios_projeto: Sequence[dict], ids: Collection[int]) -> List[Tuple[
 # ---------------------------------------------------------------------------
 
 def _audio_do_projeto(
-    audio: dict, linhas: Dict[int, Tuple[temas.Linha, ...]], validas: Dict[int, dict]
+    audio: dict,
+    linhas: Dict[int, Tuple[temas.Linha, ...]],
+    validas: Dict[int, dict],
+    conteudos: Optional[Dict[int, Optional[str]]] = None,
 ) -> rel.AudioDoProjeto:
     audio_id = int(audio["id"])
     return rel.AudioDoProjeto(
@@ -205,7 +208,20 @@ def _audio_do_projeto(
         criado_em=rel.ler_data(audio.get("created_at")),
         qr=overview.qr_label(audio),
         chegada=overview.entry_text(audio),
+        conteudo=(conteudos or {}).get(audio_id),
     )
+
+
+def conteudos_do_projeto(project_id: int) -> Dict[int, Optional[str]]:
+    """A assinatura do arquivo de cada áudio do projeto, para juntar as cópias.
+
+    get_audios_for_interviews traz só metadado; o prosodia_json vem do banco
+    aqui, e só o hash dele segue para a agregação.
+    """
+    return {
+        audio_id: rel.assinatura_do_conteudo(blobs.get("prosodia_json"))
+        for audio_id, blobs in prosodia_db.get_audio_blobs_for_project(project_id).items()
+    }
 
 
 def gerar_analise_geral(
@@ -308,7 +324,8 @@ def gerar_analise_geral(
     )
 
     # 3. Agregação
-    audios = [_audio_do_projeto(audio, linhas, validas) for audio in audios_projeto]
+    conteudos = conteudos_do_projeto(project_id)
+    audios = [_audio_do_projeto(audio, linhas, validas, conteudos) for audio in audios_projeto]
     anterior = rel.escolher_analise_anterior(prosodia_db.get_project_analyses(project_id), recorte, audios, ids)
     agregacao = rel.agregar(audios, ids, taxonomia, tipo, sinc_projeto, transcricao_projeto, anterior)
     if not agregacao.n_respondentes and resumo.falhas:
@@ -322,6 +339,10 @@ def gerar_analise_geral(
         _plural(agregacao.n_respondentes, "respondente", "respondentes"),
         _plural(len(agregacao.contados), "áudio contado", "áudios contados"),
     )
+    if agregacao.repetidos:
+        leitura += " ({} de outro áudio, fora da contagem)".format(
+            _plural(len(agregacao.repetidos), "cópia", "cópias")
+        )
     if agregacao.exploratoria:
         leitura += ", leitura exploratória"
     if anterior is not None:
