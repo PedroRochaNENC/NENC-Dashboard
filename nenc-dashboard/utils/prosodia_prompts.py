@@ -614,7 +614,9 @@ Se os achados não sustentarem três, escreva menos: recomendação sem achado n
 
 ### Matriz de Destaques — leitura
 Para cada grupo da tabela recebida, um parágrafo que começa pelo nome do grupo em \
-negrito: **<grupo>** — *Perfil:* uma ou duas frases. *Ação:* uma frase.
+negrito: **<grupo>** — *Perfil:* uma ou duas frases. *Ação:* uma frase. Para falar da \
+voz do grupo, use só a linha "Voz no grupo", que conta todos os áudios dele; não \
+generalize a partir de alguns áudios da tabela.
 
 ### Termômetro — leitura
 Duas ou três frases sobre o que puxa o saldo, citando IDs. Não altere o número.

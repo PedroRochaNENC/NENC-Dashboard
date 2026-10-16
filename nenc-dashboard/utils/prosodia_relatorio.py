@@ -972,6 +972,12 @@ class GrupoMatriz:
     # Áudios do recorte no grupo; a tabela mostra até 15.
     total: int
     temas_mais_citados: Tuple[Tuple[str, int], ...]
+    # A voz de todos os áudios do grupo, com os limiares da voz por tema. A IA
+    # descreve a voz do grupo por aqui: na validação com a Smart Fit, ela
+    # disse "voz raramente acima do habitual" num grupo com 8 de 15 acima.
+    voz_media: Optional[float] = None
+    voz_acima: int = 0
+    voz_abaixo: int = 0
 
 
 @dataclass(frozen=True)
@@ -1001,7 +1007,15 @@ def _grupo(linhas: List[LinhaMatriz]) -> GrupoMatriz:
         ((tema, n) for tema, n in contagem.items() if n >= _MIN_AUDIOS_TEMA_NO_GRUPO),
         key=lambda item: (-item[1], chave_rotulo(item[0])),
     )
-    return GrupoMatriz(tuple(linhas[:_MAX_LINHAS_MATRIZ]), len(linhas), tuple(citados[:_MAX_TEMAS_NO_GRUPO]))
+    vozes = [linha.voz for linha in linhas]
+    return GrupoMatriz(
+        tuple(linhas[:_MAX_LINHAS_MATRIZ]),
+        len(linhas),
+        tuple(citados[:_MAX_TEMAS_NO_GRUPO]),
+        sum(vozes) / len(vozes) if vozes else None,
+        sum(1 for voz in vozes if _lado(voz, LIMIAR_VALENCIA) > 0),
+        sum(1 for voz in vozes if _lado(voz, LIMIAR_VALENCIA) < 0),
+    )
 
 
 def montar_matriz(
@@ -1495,6 +1509,16 @@ def _tabela_grupo(grupo: Optional[GrupoMatriz], cabecalho: Sequence[str], celula
         partes.append("Temas mais citados no grupo: {}.".format(", ".join(
             "{} ({})".format(tema, _fracao(n, grupo.total)) for tema, n in grupo.temas_mais_citados
         )))
+    if grupo.voz_media is not None:
+        partes.append(
+            "Voz no grupo: média {}; {} acima do habitual (a partir de {}) e {} abaixo (até {}).".format(
+                _decimal(grupo.voz_media),
+                _fracao(grupo.voz_acima, grupo.total),
+                _decimal(LIMIAR_VALENCIA),
+                _fracao(grupo.voz_abaixo, grupo.total),
+                _decimal(-LIMIAR_VALENCIA),
+            )
+        )
     return "\n\n".join(partes)
 
 

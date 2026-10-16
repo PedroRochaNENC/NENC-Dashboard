@@ -714,6 +714,22 @@ class MatrizTests(unittest.TestCase):
         self.assertEqual((matriz.vinculo.total, len(matriz.vinculo.linhas)), (16, 15))
         self.assertIsNone(matriz.corte_ativacao)
 
+    def test_group_voice_counts_every_audio_of_the_group(self):
+        # Na validação com a Smart Fit, a leitura disse "voz raramente acima do
+        # habitual" num grupo com 8 de 15 áudios acima: a contagem vem pronta.
+        vozes = [0.3] * 8 + [0.0] * 6 + [-0.2] + [0.15]
+        linhas = [
+            rel.LinhaMatriz(i, "Áudio {:02d}".format(i), 0.5, voz, 0.5, None, ())
+            for i, voz in enumerate(vozes, 1)
+        ]
+
+        grupo = rel._grupo(linhas)
+
+        self.assertEqual((len(grupo.linhas), grupo.total), (15, 16))
+        # O 16º áudio fica fora da tabela, mas conta na voz do grupo.
+        self.assertEqual((grupo.voz_acima, grupo.voz_abaixo), (9, 1))
+        self.assertAlmostEqual(grupo.voz_media, 2.35 / 16)
+
     def test_markdown(self):
         audios = self.audios
         agregacao = _agregar(audios)
@@ -724,6 +740,7 @@ class MatrizTests(unittest.TestCase):
         self.assertIn("**Vínculo forte** — índice combinado no terço superior do projeto (a partir de +0,73)", texto)
         self.assertIn("| Áudio 12 | +0,50 | +0,10 | +1,10 | Lotação |", texto)
         self.assertIn("Temas mais citados no grupo: Lotação (3/3).", texto)
+        self.assertIn("Voz no grupo: média +0,10; 0/3 acima do habitual (a partir de +0,15) e 0/3 abaixo (até -0,15).", texto)
         self.assertIn("| Áudio 01 | -0,50 | 0,00 | — |", texto)
 
         agregacao.matriz = rel.Matriz(8)

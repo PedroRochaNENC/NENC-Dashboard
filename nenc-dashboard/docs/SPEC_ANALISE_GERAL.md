@@ -166,6 +166,7 @@ Implementada na fase 3, em `utils/prosodia_relatorio.py`. As regras desta seçã
   - O terço superior começa no quantil 2/3 e o inferior vai até o quantil 1/3.
   - Cada grupo mostra até 15 áudios, do mais forte para o mais fraco.
   - "Temas mais citados no grupo" lista até 3 subtemas, só os que aparecem em pelo menos 2 áudios do grupo.
+  - "Voz no grupo" traz a média da voz de todos os áudios do grupo, inclusive os que ficam fora da tabela, e quantos estão acima e abaixo do habitual, com os limiares da voz por tema. O prompt manda descrever a voz do grupo só por essa linha. Entrou na validação (§15).
 - **Termômetro.**
   - Entram os respondentes da tabela de temas que têm nota do texto.
   - Na entrevista, contam só as falas do entrevistado que a classificação apontou.
@@ -569,6 +570,7 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   - Mudou na validação:
     - a voz por tema passou a dar o mesmo peso a cada respondente, com mínimo de 5 respondentes com voz (§7). Na Smart Fit, a única voz "acima do habitual → reforça" (Equipamentos) e, na ABIHPEC, o "contradiz" de Renovação mudavam de direção ao tirar uma pessoa;
     - "atenua" com ativação média deixou de sustentar hipótese no prompt (§9). A geração seguinte ainda o leu como "funcional e protocolar", e então o código deixou de escrever "atenua" com ativação média (§7);
+    - cada grupo da Matriz ganhou a linha "Voz no grupo" (§7). Nas três gerações da Smart Fit, a leitura do Vínculo forte dizia que a voz raramente passava do habitual, e 8 dos 15 áudios estavam a partir de +0,15;
     - passar do limiar de voz passou a exigir que a leitura se mantenha sem cada um dos respondentes (§7). Instalações virava "contradiz" por 0,0005, e o Resumo, a H2 e a R1 se apoiavam nisso;
     - o apêndice deixou de mostrar a fala de destaque das perguntas, que trazia o nome completo de uma paciente;
     - o emergente cuja categoria é um subtema passou a contar nesse subtema (§7). Na Smart Fit, "Sanitários sem papel higiênico" tinha a categoria "Produto > Instalações" e ficava fora de Instalações;
