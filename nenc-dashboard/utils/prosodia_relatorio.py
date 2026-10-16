@@ -110,10 +110,15 @@ ACIMA = "acima do habitual"
 NO_HABITUAL = "no habitual"
 ABAIXO = "abaixo do habitual"
 
+# Voz no habitual só "atenua" com ativação alta ou baixa. Com ativação média é
+# o estado da maioria dos temas e não diz nada sobre o texto: na validação com
+# a Smart Fit, a IA leu esse "atenua" como satisfação protocolar mesmo com o
+# prompt pedindo o contrário.
 _QUALIFICADORES = {
     POSITIVO: {ACIMA: "reforça", NO_HABITUAL: "atenua", ABAIXO: "contradiz"},
     NEGATIVO: {ACIMA: "contradiz", NO_HABITUAL: "atenua", ABAIXO: "reforça"},
 }
+_NIVEIS_QUE_ATENUAM = ("alta", "baixa")
 
 # Texto das análises sem snapshot que foram geradas com filtro (analise_geral.py).
 _MARCA_RECORTE = "Recorte analisado"
@@ -467,7 +472,9 @@ class LeituraVoz:
     """A voz de um tema, como entra na tabela de taxonomia.
 
     `respondentes` são os que têm voz em algum trecho do tema, e `trechos`,
-    os trechos com voz de todos eles.
+    os trechos com voz de todos eles. `instavel` marca a média que passou de
+    um limiar, mas voltaria para dentro sem algum respondente: a direção ou a
+    ativação ficou no habitual por isso.
     """
 
     respondentes: int
@@ -477,6 +484,7 @@ class LeituraVoz:
     nivel: str = ""
     qualificador: str = ""
     trechos: int = 0
+    instavel: bool = False
 
     @property
     def avaliavel(self) -> bool:
@@ -506,6 +514,30 @@ def _media_por_respondente(medias: Iterable[Optional[float]]) -> Optional[float]
     return sum(validas) / len(validas) if validas else None
 
 
+def _lado(valor: float, limiar: float) -> int:
+    # Arredondar antes de comparar: média de 0,15 não pode cair abaixo do
+    # limiar por resto de ponto flutuante.
+    valor = round(valor, 6)
+    return 1 if valor >= limiar else -1 if valor <= -limiar else 0
+
+
+def _lado_estavel(medias: Sequence[float], limiar: float) -> Tuple[int, bool]:
+    """(lado do limiar, instável): 1 acima, -1 abaixo, 0 dentro.
+
+    O lado só vale se a média sem cada um dos respondentes fica do mesmo
+    lado. Senão a leitura é decidida por uma pessoa, ou por milésimos em
+    volta do limiar, e fica dentro, marcada como instável.
+    """
+    lado = _lado(sum(medias) / len(medias), limiar)
+    if not lado:
+        return 0, False
+    total = sum(medias)
+    for media in medias:
+        if len(medias) < 2 or _lado((total - media) / (len(medias) - 1), limiar) != lado:
+            return 0, True
+    return lado, False
+
+
 def ler_voz(leituras: Iterable[Tuple[str, LeituraTrecho]], polaridade_predominante: str) -> LeituraVoz:
     """Leitura da voz de um tema, com o mesmo peso para cada respondente.
 
@@ -514,10 +546,12 @@ def ler_voz(leituras: Iterable[Tuple[str, LeituraTrecho]], polaridade_predominan
     a leitura é a média entre respondentes, como no Termômetro: quem fala
     muito sobre o tema não decide a leitura sozinho. Valência a partir de
     +0,15 é "acima do habitual" e até -0,15, "abaixo"; ativação a partir de
-    +0,3 desvio é "alta" e até -0,3, "baixa". O qualificador compara a direção
-    da voz com a polaridade predominante do texto no tema, e tema misto ou
-    neutro leva só a direção. Com menos de 5 respondentes com voz, não
-    avaliável.
+    +0,3 desvio é "alta" e até -0,3, "baixa". Passar do limiar só vale se a
+    média sem cada respondente também passa; senão fica no habitual (ou
+    média). O qualificador compara a direção da voz com a polaridade
+    predominante do texto no tema: voz no habitual só "atenua" com ativação
+    alta ou baixa, e tema misto ou neutro leva só a direção. Com menos de 5
+    respondentes com voz, não avaliável.
     """
     por_respondente: Dict[str, List[LeituraTrecho]] = {}
     for respondente, leitura in leituras:
@@ -526,22 +560,29 @@ def ler_voz(leituras: Iterable[Tuple[str, LeituraTrecho]], polaridade_predominan
     trechos = sum(len(lista) for lista in por_respondente.values())
     if len(por_respondente) < MIN_RESPONDENTES_VOZ:
         return LeituraVoz(len(por_respondente), trechos=trechos)
-    valencia = _media_por_respondente(
-        _media_ponderada((l.voz, l.peso) for l in lista) for lista in por_respondente.values()
-    )
-    ativacao = _media_por_respondente(
-        _media_ponderada((l.ativacao, l.peso) for l in lista) for lista in por_respondente.values()
-    )
-    # Arredondar antes de comparar: média de 0,15 não pode cair abaixo do
-    # limiar por resto de ponto flutuante.
-    v = round(valencia, 6)
-    direcao = ACIMA if v >= LIMIAR_VALENCIA else ABAIXO if v <= -LIMIAR_VALENCIA else NO_HABITUAL
+    valencias = [
+        media
+        for media in (_media_ponderada((l.voz, l.peso) for l in lista) for lista in por_respondente.values())
+        if media is not None
+    ]
+    ativacoes = [
+        media
+        for media in (_media_ponderada((l.ativacao, l.peso) for l in lista) for lista in por_respondente.values())
+        if media is not None
+    ]
+    valencia = _media_por_respondente(valencias)
+    ativacao = _media_por_respondente(ativacoes)
+    lado, instavel = _lado_estavel(valencias, LIMIAR_VALENCIA)
+    direcao = {1: ACIMA, -1: ABAIXO}.get(lado, NO_HABITUAL)
     nivel = ""
-    if ativacao is not None:
-        a = round(ativacao, 6)
-        nivel = "alta" if a >= LIMIAR_ATIVACAO else "baixa" if a <= -LIMIAR_ATIVACAO else "média"
+    if ativacoes:
+        lado_ativacao, ativacao_instavel = _lado_estavel(ativacoes, LIMIAR_ATIVACAO)
+        nivel = {1: "alta", -1: "baixa"}.get(lado_ativacao, "média")
+        instavel = instavel or ativacao_instavel
     qualificador = _QUALIFICADORES.get(polaridade_predominante, {}).get(direcao, "")
-    return LeituraVoz(len(por_respondente), valencia, ativacao, direcao, nivel, qualificador, trechos)
+    if direcao == NO_HABITUAL and nivel not in _NIVEIS_QUE_ATENUAM:
+        qualificador = ""
+    return LeituraVoz(len(por_respondente), valencia, ativacao, direcao, nivel, qualificador, trechos, instavel)
 
 
 def _por_sessao(df: Optional[pd.DataFrame]) -> Dict[str, pd.DataFrame]:
@@ -1761,7 +1802,7 @@ def _secao_voz_por_tema(agregacao: Agregacao) -> str:
                 str(tema.voz.trechos),
                 _decimal(tema.voz.valencia) if tema.voz.valencia is not None else "—",
                 _decimal(tema.voz.ativacao) if tema.voz.ativacao is not None else "—",
-                tema.voz.texto(),
+                tema.voz.texto() + (" (instável)" if tema.voz.instavel else ""),
             ]
             for tema in agregacao.temas
         ),
@@ -1909,8 +1950,11 @@ def _limitacoes(
             "a média entre os respondentes, com o mesmo peso para cada um. Valência é o z da valência "
             "em relação a {} linhas do VAD de {} do projeto, ÷ 2 e limitado a ±1 (a metade de voz do "
             "índice combinado): a partir de +0,15, acima do habitual; até -0,15, abaixo. Ativação é o z "
-            "da ativação em relação às mesmas linhas{}: a partir de +0,3, alta; até -0,3, baixa. Com menos de {} "
-            "respondentes com voz no tema, não avaliável. Os limiares são iniciais.".format(
+            "da ativação em relação às mesmas linhas{}: a partir de +0,3, alta; até -0,3, baixa. Passar do "
+            "limiar só vale se a média sem cada um dos respondentes também passa; senão a leitura fica no "
+            "habitual (ou média) e aparece como instável. Voz no habitual só atenua o texto com ativação "
+            "alta ou baixa. Com menos de {} respondentes com voz no tema, não avaliável. Os limiares são "
+            "iniciais.".format(
                 valencia.linhas,
                 _plural(valencia.audios, "áudio", "áudios"),
                 "" if ativacao is not None else " (sem dado de ativação no projeto)",

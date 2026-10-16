@@ -204,7 +204,8 @@ class SistemaTests(unittest.TestCase):
         leitura = prompts.sistema_analise_geral(PESQUISA_OPINIAO).split("## Leitura Multimodal", 1)[1]
         leitura = " ".join(leitura.split("## Referencial", 1)[0].split())
 
-        self.assertIn('"Atenua" com ativação média é a voz no habitual do próprio projeto', leitura)
+        self.assertIn('Voz "no habitual, ativação média", sem qualificador, é a voz do próprio projeto', leitura)
+        self.assertIn('"atenua" quando fica no habitual com ativação alta ou baixa', leitura)
         self.assertIn("não apoie hipótese nela", leitura)
         self.assertIn("Elogio que a voz atenua com ativação baixa, ou que a voz contradiz, sugere cortesia", leitura)
         self.assertNotIn("Elogio que a voz atenua ou contradiz", leitura)

@@ -388,17 +388,53 @@ class LerVozTests(unittest.TestCase):
 
     def test_qualifier_compares_the_voice_with_the_text(self):
         casos = [
-            (rel.POSITIVO, 0.4, "reforça"),
-            (rel.POSITIVO, 0.0, "atenua"),
-            (rel.POSITIVO, -0.4, "contradiz"),
-            (rel.NEGATIVO, 0.4, "contradiz"),
-            (rel.NEGATIVO, 0.0, "atenua"),
-            (rel.NEGATIVO, -0.4, "reforça"),
-            (rel.MISTO_OU_NEUTRO, 0.4, ""),
+            (rel.POSITIVO, 0.4, 0.0, "reforça"),
+            (rel.POSITIVO, 0.0, -0.5, "atenua"),
+            (rel.POSITIVO, -0.4, 0.0, "contradiz"),
+            (rel.NEGATIVO, 0.4, 0.0, "contradiz"),
+            (rel.NEGATIVO, 0.0, 0.5, "atenua"),
+            (rel.NEGATIVO, -0.4, 0.0, "reforça"),
+            (rel.MISTO_OU_NEUTRO, 0.4, 0.0, ""),
         ]
-        for predominante, voz, qualificador in casos:
-            with self.subTest(predominante=predominante, voz=voz):
-                self.assertEqual(rel.ler_voz(_leituras(voz), predominante).qualificador, qualificador)
+        for predominante, voz, ativacao, qualificador in casos:
+            with self.subTest(predominante=predominante, voz=voz, ativacao=ativacao):
+                self.assertEqual(rel.ler_voz(_leituras(voz, ativacao), predominante).qualificador, qualificador)
+
+    def test_voice_in_the_habitual_range_with_medium_activation_has_no_qualifier(self):
+        # Na validação com a Smart Fit, esse "atenua" virou "satisfação protocolar"
+        # mesmo com o prompt pedindo o contrário.
+        for predominante in (rel.POSITIVO, rel.NEGATIVO):
+            with self.subTest(predominante=predominante):
+                self.assertEqual(rel.ler_voz(_leituras(0.0, 0.1), predominante).texto(), "no habitual, ativação média")
+        sem_ativacao = _leituras(0.0, None)
+        self.assertEqual(rel.ler_voz(sem_ativacao, rel.POSITIVO).texto(), "no habitual")
+
+    def test_a_reading_that_depends_on_one_respondent_stays_in_the_habitual_range(self):
+        # Média 0,16, acima do limiar; sem o respondente de 0,4, cai para 0,10.
+        estreita = _leituras(0.1, n=4) + _leituras(0.4, n=1, respondente="unico")
+        # Média 0,30 e longe do limiar sem qualquer um.
+        firme = _leituras(0.3, n=5)
+
+        leitura = rel.ler_voz(estreita, rel.POSITIVO)
+
+        self.assertEqual((leitura.direcao, leitura.instavel), (rel.NO_HABITUAL, True))
+        self.assertAlmostEqual(leitura.valencia, 0.16)
+        self.assertEqual(rel.ler_voz(firme, rel.POSITIVO).direcao, rel.ACIMA)
+        self.assertFalse(rel.ler_voz(firme, rel.POSITIVO).instavel)
+        # Como Instalações na Smart Fit: média -0,1505, 0,0005 além do limiar, e
+        # sem o respondente de -0,30 ela volta para -0,11.
+        no_fio = [
+            ("r{}".format(i), LeituraTrecho(voz, 0.0, 1.0))
+            for i, voz in enumerate((-0.30, -0.25, -0.10, -0.05, -0.0525))
+        ]
+        self.assertEqual(rel.ler_voz(no_fio, rel.POSITIVO).texto(), "no habitual, ativação média")
+
+    def test_activation_also_needs_to_hold_without_each_respondent(self):
+        leituras = _leituras(0.0, 0.2, n=4) + _leituras(0.0, 0.8, n=1, respondente="unico")
+
+        leitura = rel.ler_voz(leituras, rel.NEGATIVO)
+
+        self.assertEqual((leitura.nivel, leitura.qualificador, leitura.instavel), ("média", "", True))
 
         self.assertEqual(
             rel.ler_voz(_leituras(-0.4, ativacao=0.5), rel.NEGATIVO).texto(),

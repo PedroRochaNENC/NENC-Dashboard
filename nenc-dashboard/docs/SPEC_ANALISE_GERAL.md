@@ -209,9 +209,12 @@ Com menos de 20 respondentes no recorte, o cabeçalho diz "Leitura exploratória
 
 | Texto do tema | Voz acima | Voz no habitual | Voz abaixo |
 |---|---|---|---|
-| Positivo | reforça | atenua | contradiz |
-| Negativo | contradiz | atenua | reforça |
+| Positivo | reforça | atenua, com ativação alta ou baixa | contradiz |
+| Negativo | contradiz | atenua, com ativação alta ou baixa | reforça |
 | Misto ou neutro | só a direção da voz | só a direção da voz | só a direção da voz |
+
+- **Sem qualificador no habitual com ativação média.** Voz no habitual com ativação média, ou sem dado de ativação, leva só a direção e o nível, sem "atenua". É o caso da maioria dos temas, porque a régua é o próprio projeto. Na validação, mesmo com o prompt pedindo para não ler esse "atenua" como cortesia protocolar, a IA o leu assim (§15).
+- **Estabilidade.** Passar de um limiar só vale se a média sem cada um dos respondentes também passa. Se a leitura depende de uma pessoa, ou de milésimos em volta do limiar, a direção fica "no habitual" (ou a ativação fica "média"), e a tabela "Voz por tema" do apêndice a marca como instável. Na validação, Instalações foi a −0,1505 e virava "contradiz" por 0,0005; subir o limiar só mudaria a fronteira de lugar.
 
 Com menos de 5 respondentes com voz no tema, a leitura é "não avaliável (n respondentes com voz)". Os limiares ±0,15 e ±0,3 continuaram depois da validação com a Smart Fit (§15).
 
@@ -371,7 +374,7 @@ Implementado na fase 4, em `utils/prosodia_prompts.py`: `sistema_analise_geral(t
   - recomendação é ação da empresa: ferramenta de análise, nova coleta ou ajuste da pesquisa vão para o "Como validar" de uma hipótese;
   - os exemplos dos achados saem dos trechos recebidos;
   - "texto", "voz" e "índice" da Matriz vêm explicados;
-  - "atenua" com ativação média é a voz no habitual do projeto, o caso da maioria dos temas, e não sustenta hipótese. A leitura de cortesia protocolar ou de insatisfação normalizada fica para "atenua" com ativação baixa ou para "contradiz". Entrou na validação (§15), em que a Smart Fit virou "satisfação protocolar" de ponta a ponta.
+  - voz "no habitual, ativação média", que o código passou a escrever sem qualificador (§7), é a voz do próprio projeto e não sustenta hipótese. A leitura de cortesia protocolar ou de insatisfação normalizada fica para "atenua" com ativação baixa ou para "contradiz". Entrou na validação (§15), em que a Smart Fit virou "satisfação protocolar" de ponta a ponta.
 - **Estrutura Obrigatória.** Três frases a mais: com menos achados, menos recomendações; cada leitura da Matriz começa pelo nome do grupo; Matriz ou Termômetro não avaliável vira "Não avaliável".
 - **Exemplo.** É o da §10, com o nome do grupo antes de cada leitura da Matriz.
 - **Tarefa.** Traz a linha de cada achado já com o ID, o subtema, a faixa, a fração e a voz; os grupos da Matriz com áudio; o que não é avaliável; e os avisos de leitura exploratória e de variação observada. Sem subtema em padrão ou sinal, hipóteses e recomendações viram uma frase.
@@ -537,7 +540,7 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   - Em qualquer tipo, o mesmo arquivo enviado de novo conta uma vez, pelo primeiro áudio com classificação válida (§7). Áudios diferentes do mesmo número continuam juntos na Opinião e separados na Entrevista.
   - A Matriz continua por áudio.
 - **Aliases:** o corpo cita "Áudio 07" em vez do `session_id`, que traz o telefone. O código numera os áudios, a IA copia o alias (curto e difícil de errar) e o código confere. A legenda alias → sessão fica no apêndice, ou só na tela se a cliente não deve receber telefones.
-- **Limiares de voz por tema:** ±0,15 na valência (cerca de 0,3 desvio) e ±0,3 desvio na ativação. Ficaram depois da validação com a Smart Fit, que mudou a unidade da leitura: cada respondente pesa igual, e são precisos 5 respondentes com voz (§15).
+- **Limiares de voz por tema:** ±0,15 na valência (cerca de 0,3 desvio) e ±0,3 desvio na ativação. Ficaram depois da validação com a Smart Fit, que mudou a unidade da leitura: cada respondente pesa igual, são precisos 5 respondentes com voz, e passar do limiar só vale se a leitura se mantém sem cada um deles (§7, §15).
 - **Matriz:** terços calculados sobre todos os áudios do projeto, com mínimo de 10 áudios com índice.
 - **Trechos para a IA:** até 6 por subtema, de respondentes diferentes.
 - **Emergentes:** contados pelo rótulo exato. O classificador recebe os rótulos já usados no projeto para repetir o nome.
@@ -565,7 +568,8 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   - Os itens 1, 2, 3, 6, 7 e 8 passaram nos dois projetos, e a verificação das referências não apontou problema nas quatro gerações. Na ABIHPEC, a classificação acertou o entrevistado nos 11 áudios.
   - Mudou na validação:
     - a voz por tema passou a dar o mesmo peso a cada respondente, com mínimo de 5 respondentes com voz (§7). Na Smart Fit, a única voz "acima do habitual → reforça" (Equipamentos) e, na ABIHPEC, o "contradiz" de Renovação mudavam de direção ao tirar uma pessoa;
-    - "atenua" com ativação média deixou de sustentar hipótese no prompt (§9);
+    - "atenua" com ativação média deixou de sustentar hipótese no prompt (§9). A geração seguinte ainda o leu como "funcional e protocolar", e então o código deixou de escrever "atenua" com ativação média (§7);
+    - passar do limiar de voz passou a exigir que a leitura se mantenha sem cada um dos respondentes (§7). Instalações virava "contradiz" por 0,0005, e o Resumo, a H2 e a R1 se apoiavam nisso;
     - o apêndice deixou de mostrar a fala de destaque das perguntas, que trazia o nome completo de uma paciente;
     - o emergente cuja categoria é um subtema passou a contar nesse subtema (§7). Na Smart Fit, "Sanitários sem papel higiênico" tinha a categoria "Produto > Instalações" e ficava fora de Instalações;
     - o mesmo arquivo enviado de novo passou a contar uma vez (§7). Na ABIHPEC, 5 dos 11 áudios eram cópias de outros, e a Entrevista contava cada um como respondente. Recalculada pelo cache, sem chamar a IA, a tabela passou de 11 para 6 respondentes: Renovação foi de 7/11 (padrão) para 4/6 (sinal), Oferta de atividades de 6/11 (padrão) para 3/6 (sinal) e Interação com profissionais de 3/11 (sinal) para 1/6 (menção isolada). Nenhum tema chega mais a 5 respondentes com voz, então nenhum tem leitura de voz. A Smart Fit não tem cópias, e a tabela dela não mudou.

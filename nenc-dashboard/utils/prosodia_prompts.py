@@ -488,14 +488,16 @@ vocal desses trechos, do desagradável ao agradável.
 alta indica mobilização, sem dizer se positiva ou negativa; quem dá o sinal é a direção.
 - **Qualificador:** compara a voz com a polaridade predominante do texto no tema. \
 "Reforça" quando a voz vai no mesmo sentido do texto, "atenua" quando fica no habitual \
-e "contradiz" quando vai no sentido oposto. Tema misto ou neutro leva só a direção.
+com ativação alta ou baixa, e "contradiz" quando vai no sentido oposto. Voz no habitual \
+com ativação média e tema misto ou neutro levam só a direção. A direção só sai acima ou \
+abaixo do habitual quando se mantém sem qualquer um dos respondentes.
 - **"Não avaliável (n respondentes com voz)":** menos de 5 respondentes com dado de voz \
 nos trechos do tema. Não comente a voz desse tema.
 
 Como ler as combinações:
-- "Atenua" com ativação média é a voz no habitual do próprio projeto, o caso da maioria \
-dos temas: ela não acrescenta nada ao texto. Não a leia como cortesia protocolar, \
-satisfação morna ou insatisfação normalizada, e não apoie hipótese nela.
+- Voz "no habitual, ativação média", sem qualificador, é a voz do próprio projeto, o caso \
+da maioria dos temas: ela não acrescenta nada ao texto. Não a leia como cortesia protocolar, \
+satisfação morna, entusiasmo contido ou insatisfação normalizada, e não apoie hipótese nela.
 - Crítica que a voz atenua com ativação baixa sugere insatisfação já normalizada: risco \
 maior de abandono silencioso do que uma reclamação exaltada.
 - Elogio que a voz atenua com ativação baixa, ou que a voz contradiz, sugere cortesia \
