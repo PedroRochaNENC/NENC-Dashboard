@@ -15,9 +15,7 @@ import pandas as pd
 
 from utils import prosodia_prompts
 from utils.prosodia_prompts import (
-    PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
     PROSODIA_SYSTEM_PROMPT_STATISTICAL,
-    build_project_user_prompt,
     build_prosodia_user_prompt,
 )
 from utils.prosodia_signals import (
@@ -129,14 +127,8 @@ class PromptAsksOnlyForWhatWeSendTests(unittest.TestCase):
     """O prompt nao pode pedir sinal que o pipeline nao sabe produzir."""
 
     def test_the_emotion_categories_the_prompt_names_are_the_ones_we_format(self):
-        rotulos = [rotulo for _, rotulo in EMOCOES]
-        for prompt in (
-            PROSODIA_SYSTEM_PROMPT_STATISTICAL,
-            PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
-        ):
-            with self.subTest(prompt=prompt[:40]):
-                for rotulo in rotulos:
-                    self.assertIn(rotulo, prompt)
+        for rotulo in (rotulo for _, rotulo in EMOCOES):
+            self.assertIn(rotulo, PROSODIA_SYSTEM_PROMPT_STATISTICAL)
 
     def test_the_categories_named_in_the_prompt_really_come_out(self):
         texto = emotion_distribution_text(frame())
@@ -144,12 +136,7 @@ class PromptAsksOnlyForWhatWeSendTests(unittest.TestCase):
             self.assertIn(rotulo, texto)
 
     def test_the_prompt_asks_for_dominance_and_we_deliver_it(self):
-        for prompt in (
-            PROSODIA_SYSTEM_PROMPT_STATISTICAL,
-            PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
-        ):
-            with self.subTest(prompt=prompt[:40]):
-                self.assertIn("dominância", prompt.lower())
+        self.assertIn("dominância", PROSODIA_SYSTEM_PROMPT_STATISTICAL.lower())
         self.assertIn("Dominância", signals_block(frame()))
 
 
@@ -161,31 +148,18 @@ class PromptAsksOnlyForWhatWeSendTests(unittest.TestCase):
         self.assertIn("<sentimento_texto>\nresumo\n</sentimento_texto>", prompt)
         self.assertIn("<divergencias>\ntabela\n</divergencias>", prompt)
 
-        projeto = build_project_user_prompt(
-            {}, "metricas", "", "", "", sentimento_texto="resumo", divergencias="tabela"
-        )
-        self.assertIn("<sentimento_texto>", projeto)
-        self.assertIn("<divergencias>", projeto)
-
     def test_without_sentiment_the_sections_disappear(self):
-        for prompt in (
-            build_prosodia_user_prompt("tabelas", {}, "amostra"),
-            build_project_user_prompt({}, "metricas", "palavras", "momentos", "analises"),
-        ):
-            self.assertNotIn("<sentimento_texto>", prompt)
-            self.assertNotIn("<divergencias>", prompt)
+        prompt = build_prosodia_user_prompt("tabelas", {}, "amostra")
+        self.assertNotIn("<sentimento_texto>", prompt)
+        self.assertNotIn("<divergencias>", prompt)
 
     def test_every_system_prompt_explains_the_sections_and_not_to_invent_them(self):
         for tipo in (None, "pesquisa_opiniao"):
             for modo in ("rapida", "estatistica", "estrategica"):
-                for obter in (
-                    prosodia_prompts.get_prosodia_system_prompt,
-                    prosodia_prompts.get_prosodia_project_system_prompt,
-                ):
-                    with self.subTest(tipo=tipo, modo=modo, obter=obter.__name__):
-                        prompt = obter(tipo, modo)
-                        self.assertIn("<divergencias>", prompt)
-                        self.assertIn("não as invente", prompt)
+                with self.subTest(tipo=tipo, modo=modo):
+                    prompt = prosodia_prompts.get_prosodia_system_prompt(tipo, modo)
+                    self.assertIn("<divergencias>", prompt)
+                    self.assertIn("não as invente", prompt)
 
 
 # ---------------------------------------------------------------------------

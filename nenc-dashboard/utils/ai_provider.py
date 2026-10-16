@@ -206,15 +206,20 @@ def chat_completion(
     messages: list[dict],
     temperature: float = 0.5,
     max_tokens: int = 4000,
+    client=None,
 ) -> str:
     """Uma chamada de chat em qualquer provedor, devolvendo so o texto.
 
     `messages` alterna "user" e "assistant", sem a mensagem de sistema: cada
     provedor a recebe do seu jeito. Nao consulta a base de conhecimento, que
     so existe na OpenAI (ver `create_analysis`).
+
+    `client` e para quem chama fora da thread da pagina, como a classificacao
+    em lote: os clientes vem de cache do Streamlit, que pede o contexto dela.
     """
 
-    client = get_provider_client(provider)
+    if client is None:
+        client = get_provider_client(provider)
     if client is None:
         env_name = PROVIDER_ENV_KEYS.get(provider, "")
         raise RuntimeError(
@@ -291,9 +296,18 @@ def generate_analysis(
     return {"text": text, "citations": [], "search": {"available": False}}
 
 
-# A cobertura de perguntas e uma classificacao simples e roda em lote: na
-# OpenAI ela sempre usou o modelo barato, qualquer que fosse o da analise.
+# A cobertura de perguntas e a classificacao de temas da Analise Geral sao
+# classificacoes simples e rodam em lote: na OpenAI elas usam o modelo
+# barato, qualquer que seja o da analise.
 _OPENAI_COVERAGE_MODEL = "gpt-4.1-mini"
+
+
+def classification_model(provider: str | None, model: str | None) -> str | None:
+    """O modelo das classificacoes em lote: o barato na OpenAI, o escolhido nos demais."""
+
+    if provider == PROVIDER_OPENAI:
+        return _OPENAI_COVERAGE_MODEL
+    return model
 
 
 def coverage_client(provider: str | None, model: str | None):
@@ -304,9 +318,7 @@ def coverage_client(provider: str | None, model: str | None):
     client = get_provider_client(provider)
     if client is None:
         return None, None
-    if provider == PROVIDER_OPENAI:
-        return client, _OPENAI_COVERAGE_MODEL
-    return client, model
+    return client, classification_model(provider, model)
 
 
 def get_vector_store_id() -> str | None:

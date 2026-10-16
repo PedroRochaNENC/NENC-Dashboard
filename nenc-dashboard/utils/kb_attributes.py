@@ -57,7 +57,11 @@ def project_document(
     return attributes
 
 
-def build_kb_filter(project_id: Optional[int], modulo: Optional[str] = None) -> Optional[dict]:
+def build_kb_filter(
+    project_id: Optional[int],
+    modulo: Optional[str] = None,
+    incluir_analises: bool = True,
+) -> Optional[dict]:
     """Filtro "literatura da organizacao, ou material deste projeto".
 
     Sem projeto aberto devolve None, e a busca segue alcancando a base inteira:
@@ -66,16 +70,23 @@ def build_kb_filter(project_id: Optional[int], modulo: Optional[str] = None) -> 
     Com `modulo`, o material de projeto tambem precisa ser daquele modulo: os
     ids de projeto da Prosodia e da Jornada vem de tabelas diferentes e podem
     coincidir, e uma base compartilhada por engano misturaria os dois.
+
+    Com `incluir_analises=False`, do projeto entra so o que nao e analise
+    (briefing, documentos, transcricoes). E o filtro da Analise Geral: as
+    analises anteriores e as individuais voltariam como evidencia da nova, e
+    a comparacao com a onda anterior ja vem do banco.
     """
 
     if not project_id:
         return None
-    project_clause: dict = {"type": "eq", "key": "project_id", "value": int(project_id)}
+    project_filters = [{"type": "eq", "key": "project_id", "value": int(project_id)}]
     if modulo:
-        project_clause = {
-            "type": "and",
-            "filters": [project_clause, {"type": "eq", "key": "modulo", "value": modulo}],
-        }
+        project_filters.append({"type": "eq", "key": "modulo", "value": modulo})
+    if not incluir_analises:
+        project_filters.append({"type": "ne", "key": "escopo", "value": ESCOPO_ANALISE})
+    project_clause: dict = (
+        project_filters[0] if len(project_filters) == 1 else {"type": "and", "filters": project_filters}
+    )
     return {
         "type": "or",
         "filters": [

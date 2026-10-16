@@ -28,7 +28,6 @@ from utils.prosodia_db import (
     attach_audio_blobs,
     get_latest_project_analysis,
     get_project_analyses,
-    save_project_analysis,
     delete_project_analyses,
 )
 from utils.prosodia_loader import (
@@ -38,15 +37,11 @@ from utils.prosodia_loader import (
 )
 from utils.prosodia_signals import (
     detectar_divergencias,
-    divergencias_texto,
-    emotion_distribution_text,
     formatar_tempo,
     indice_combinado_por_grupo,
-    indice_combinado_texto,
     referencia_valencia,
     selecionar_momentos_ativacao,
     tem_sentimento_texto,
-    texto_sentimento_resumo,
 )
 # from utils.prosodia_powerbi_export import export_project_to_powerbi_excel
 from utils.prosodia_charts import (
@@ -55,16 +50,11 @@ from utils.prosodia_charts import (
     create_project_word_ranking,
 )
 from utils.prosodia_project_types import ENTREVISTA_QUALITATIVA, normalize_project_type
-from utils.prosodia_prompts import (
-    get_prosodia_project_system_prompt,
-    build_project_user_prompt,
-    secoes_sentimento,
-)
+from utils import prosodia_geracao as geracao
 from utils.ai_provider import (
     PROVIDER_OPENAI,
     add_document_to_vector_store,
     chat_completion,
-    generate_analysis,
     get_openai_client,
     get_prosodia_vector_store_id,
     create_analysis as ai_create_analysis,
@@ -310,90 +300,6 @@ def _load_project_frames(
     return all_vad, all_tr, all_sinc
 
 
-def _build_transcript_sample(tr_df: pd.DataFrame, max_chars: int = 12000) -> str:
-    if tr_df.empty or "Text" not in tr_df.columns:
-        return ""
-
-    work = tr_df.copy()
-    sort_cols = [c for c in ["session_id", "seconds", "Timestamp"] if c in work.columns]
-    if sort_cols:
-        work = work.sort_values(sort_cols)
-
-    lines = []
-    for _, row in work.iterrows():
-        sid = str(row.get("session_id", ""))
-        ts = str(row.get("Timestamp", ""))
-        speaker = str(row.get("SpeakerName", "?"))
-        text = str(row.get("Text", "")).strip()
-        if not text:
-            continue
-        prefix = f"[{sid}]"
-        if ts:
-            prefix += f"[{ts}]"
-        lines.append(f"{prefix} {speaker}: {text}")
-
-    full = "\n".join(lines)
-    if len(full) > max_chars:
-        return full[:max_chars] + "\n...[transcricao truncada]"
-    return full
-
-
-def _safe_word_sum(df: pd.DataFrame) -> int:
-    if df.empty:
-        return 0
-    if "word_count" in df.columns:
-        return int(df["word_count"].fillna(0).sum())
-    if "Text" in df.columns:
-        return int(df["Text"].fillna("").astype(str).apply(lambda t: len(t.split())).sum())
-    return 0
-
-
-def _calculate_top_words_text(tr_df: pd.DataFrame, top_n: int = 30) -> str:
-    if tr_df.empty or "Text" not in tr_df.columns:
-        return "Nenhuma palavra encontrada."
-    import re
-    import unicodedata
-    from collections import Counter
-    
-    stopwords = {
-        "a", "o", "as", "os", "de", "do", "da", "dos", "das", "e", "ou", "no", "na",
-        "nos", "nas", "em", "para", "por", "com", "sem", "um", "uma", "uns", "umas",
-        "que", "qual", "quais", "como", "onde", "quando", "se", "seu", "sua", "seus", "suas",
-        "voce", "vocês", "voces", "ele", "ela", "eles", "elas", "isso", "isto", "aquele",
-        "mas", "tambem", "mais", "muito", "entao", "aqui", "la", "sim", "nao", "pra", "pro",
-        "este", "esta", "estes", "estas", "tudo", "todo", "toda", "todos", "todas", "ser",
-        "ter", "ir", "com", "por", "para", "uma", "um", "do", "da", "no", "na", "ao", "aos",
-        "pelo", "pela", "pelos", "pelas", "num", "numa", "neste", "nesta", "disso", "disto",
-        "dele", "dela", "deles", "delas", "mim", "me", "te", "se", "nos", "vos", "lhe", "lhes",
-        "meu", "minha", "meus", "minhas", "teu", "tua", "teus", "tuas", "nosso", "nossa",
-        "nossos", "nossas", "vosso", "vossa", "vossos", "vossas", "qualquer", "quaisquer",
-        "algum", "alguma", "alguns", "algumas", "nenhum", "nenhuma", "outro", "outra", "outros",
-        "outras", "mesmo", "mesma", "mesmos", "mesmas", "proprio", "propria", "proprios", "proprias",
-        "acho", "acha", "achar", "coisa", "coisas", "aqui", "dai", "tipo", "ne", "ta", "entao",
-        "porque", "porquê", "pois", "assim", "sobre", "outro", "outra", "outros", "outras",
-        "gente", "entao", "bem", "vou", "vai", "tao", "aqui", "tudo"
-    }
-    
-    words = []
-    for text in tr_df["Text"].fillna("").astype(str):
-        text_norm = "".join(
-            ch for ch in unicodedata.normalize("NFD", text.lower())
-            if unicodedata.category(ch) != "Mn"
-        )
-        for word in re.findall(r"\b[a-z]{3,}\b", text_norm):
-            if word not in stopwords:
-                words.append(word)
-                
-    counts = Counter(words).most_common(top_n)
-    if not counts:
-        return "Nenhuma palavra relevante encontrada."
-    
-    lines = ["| Palavra | Menções |", "|---|---|"]
-    for w, c in counts:
-        lines.append(f"| {w} | {c} |")
-    return "\n".join(lines)
-
-
 def _extract_high_activation_moments(sinc_df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     # Mesma regra da análise do áudio; o mesmo trecho de fala conta uma vez.
     return selecionar_momentos_ativacao(sinc_df, top_n=top_n, min_altos=5)
@@ -475,62 +381,6 @@ def _group_similar_topics(moments: list) -> list:
         
     grouped_results.sort(key=lambda x: (x["count"], x["avg_arousal"]), reverse=True)
     return grouped_results
-
-
-def _format_high_activation_text(top_moments: pd.DataFrame) -> str:
-    if top_moments.empty:
-        return "Nenhum momento de alta ativação encontrado."
-        
-    # Valência e dominância andam junto com a ativação: pico com valência
-    # negativa é fricção, com valência positiva é entusiasmo, e sem elas os
-    # dois chegam ao modelo como o mesmo número.
-    lines = [
-        "| Tópico | Áudio | Locutor | Tempo | Fala | Arousal | Valência | Dominância | Variação Pitch | Variação Volume |",
-        "|---|---|---|---|---|---|---|---|---|---|",
-    ]
-    moments_list = []
-    for _, row in top_moments.iterrows():
-        sid = row.get("session_id", "")
-        speaker = _limpo(row.get("SpeakerName", ""))
-        ts = _tempo_do_momento(row)
-        text = _limpo(row.get("Text", "")).replace("\n", " ")
-        topic = extract_topic_from_text(text)
-        arousal = f"{row.get('dim_arousal', 0.0):.2f}" if pd.notna(row.get('dim_arousal')) else "-"
-        valence = f"{row.get('dim_valence', 0.0):.2f}" if pd.notna(row.get('dim_valence')) else "-"
-        dominance = f"{row.get('dim_dominance', 0.0):.2f}" if pd.notna(row.get('dim_dominance')) else "-"
-        f0_var = f"{row.get('f0_variacao', 0.0):.2f}" if pd.notna(row.get('f0_variacao')) else "-"
-        ld_var = f"{row.get('loudness_variacao', 0.0):.2f}" if pd.notna(row.get('loudness_variacao')) else "-"
-        lines.append(
-            f"| {topic} | {sid} | {speaker} | {ts} | \"{text}\" | {arousal} | {valence} | "
-            f"{dominance} | {f0_var} | {ld_var} |"
-        )
-        
-        moments_list.append({
-            "session_id": sid,
-            "SpeakerName": speaker,
-            "Timestamp": ts,
-            "Text": text,
-            "dim_arousal": float(row.get("dim_arousal", 0.0)) if pd.notna(row.get("dim_arousal")) else 0.0,
-            "topic": topic,
-        })
-        
-    out = "\n".join(lines)
-    
-    # Add grouped topics to LLM prompt context
-    grouped = _group_similar_topics(moments_list)
-    if grouped:
-        group_lines = [
-            "\n### Tópicos Consolidados de Maior Ativação Prosódica (Agrupados):",
-            "| Tópico Consolidado | Ocorrências | Arousal Médio | Áudios Relacionados | Exemplo de Destaque |",
-            "|---|---|---|---|---|",
-        ]
-        for g in grouped:
-            group_lines.append(
-                f"| {g['topic_group']} | {g['count']} | {g['avg_arousal']:.2f} | {g['sessions']} | {g['example']} |"
-            )
-        out += "\n" + "\n".join(group_lines)
-        
-    return out
 
 
 def _calculate_questions_activation(audios: list, all_sinc: pd.DataFrame) -> list:
@@ -628,20 +478,6 @@ def _calculate_questions_activation(audios: list, all_sinc: pd.DataFrame) -> lis
         
     results.sort(key=lambda x: (x["avg_arousal"], x["count"]), reverse=True)
     return results
-
-
-def _load_individual_analyses(audios: list[dict]) -> str:
-    from utils.prosodia_db import get_latest_analysis
-    lines = []
-    for a in audios:
-        sid = a.get("session_id", "")
-        analysis = get_latest_analysis(a["id"])
-        if analysis and analysis.get("analysis_text"):
-            lines.append(f"### Áudio: {sid}")
-            lines.append(f"Modelo da Análise: {analysis.get('model', '-')}")
-            lines.append(analysis["analysis_text"])
-            lines.append("\n---\n")
-    return "\n".join(lines) if lines else "Nenhuma análise individual encontrada para os áudios."
 
 
 def _calculate_acoustic_summary_text(sinc_df: pd.DataFrame) -> str:
@@ -813,6 +649,9 @@ if not audios:
 # página do áudio. O filtro só escolhe quais áudios entram na página.
 all_vad, all_tr, all_sinc = _load_project_frames(project_id, audios_projeto)
 referencia_voz = referencia_valencia(all_sinc)
+# A Análise Geral também mede contra o projeto inteiro (aliases, régua da voz
+# e terços da Matriz) e conta só o recorte: ela recebe os dois.
+tr_projeto, sinc_projeto = all_tr, all_sinc
 if len(audios) < len(audios_projeto):
     _sessoes = {str(a.get("session_id") or "") for a in audios}
     all_vad, all_tr, all_sinc = (
@@ -824,11 +663,6 @@ if len(audios) < len(audios_projeto):
 # ------------------------------------------------------------------
 # Painel: números, distribuição, recortes e o que olhar de perto
 # ------------------------------------------------------------------
-
-
-def _run_ai(**kwargs) -> dict:
-    """Chama o modelo escolhido no cartão da análise (ver `generate_analysis`)."""
-    return generate_analysis(ai_provider_id, ai_model, **kwargs)
 
 
 def _linhas_escolhidas(evento) -> list:
@@ -872,15 +706,10 @@ def _abrir_na_timeline(linha, pergunta: str, origem: str, timestamp: str) -> Non
 
 
 n_interviews = len(audios)
-n_speakers = all_tr["SpeakerName"].nunique() if not all_tr.empty and "SpeakerName" in all_tr.columns else 0
 total_speech = float(all_vad["duration"].sum()) if not all_vad.empty and "duration" in all_vad.columns else 0.0
-n_messages = len(all_tr)
-n_words = _safe_word_sum(all_tr)
 cov_total = int(sum(int(a.get("coverage_total", 0)) for a in audios))
 ai_found = int(sum(int(a.get("coverage_ai_found", 0)) for a in audios))
-kw_found = int(sum(int(a.get("coverage_kw_found", 0)) for a in audios))
 
-fonte_sentimento = all_tr if tem_sentimento_texto(all_tr) else all_sinc
 project_divergences = detectar_divergencias(all_sinc)
 indice_por_audio = indice_combinado_por_grupo(all_sinc, referencia_voz, "session_id")
 indice_projeto = indice_combinado_por_grupo(all_sinc, referencia_voz, None)
@@ -1006,6 +835,9 @@ with c_temas:
         else:
             st.caption("Nenhum momento de alta ativação no filtro.")
 
+# Só a Entrevista tem roteiro: as perguntas aparecem aqui e no apêndice da
+# Análise Geral.
+q_activations = []
 if qualitativa:
     if not all_tr.empty and "SpeakerName" in all_tr.columns:
         with st.expander("Participação por locutor"):
@@ -1096,70 +928,78 @@ with st.expander("Momentos de maior ativação prosódica"):
             _abrir_na_timeline(momento, "Momento de Alta Ativação Geral", "Filtro de Ativação Consolidado",
                                _tempo_do_momento(momento))
 
-# ------------------------------------------------------------------
-# Construir contexto para IA
-# ------------------------------------------------------------------
-proj_ctx = {
-    "nome": project.get("name", ""),
-    "especialidade": project.get("especialidade", ""),
-    "historico": project.get("historico", ""),
-    "problemas": project.get("problemas", ""),
-    "briefing": project.get("briefing_text", ""),
-}
+proj_ctx = geracao.contexto_do_projeto(project)
 
-quality_counts = {"pass": 0, "warn": 0, "fail": 0, "pending": 0}
-for a in audios:
-    status = str(a.get("quality_status", "pending"))
-    quality_counts[status if status in quality_counts else "pending"] += 1
 
-tables_lines = [
-    f"Áudios totais: {n_interviews}",
-    f"Locutores totais: {n_speakers}",
-    f"Fala total (s): {total_speech:.1f}",
-    f"Mensagens totais: {n_messages}",
-    f"Palavras totais: {n_words}",
-    (
-        "Qualidade (OK/Atencao/Problema/Pendente): "
-        f"{quality_counts.get('pass', 0)}/{quality_counts.get('warn', 0)}/"
-        f"{quality_counts.get('fail', 0)}/{quality_counts.get('pending', 0)}"
-    ),
-    f"Cobertura IA: {ai_found}/{cov_total}",
-    f"Cobertura Keywords: {kw_found}/{cov_total}",
-]
+def _resumo_da_geracao(analise: dict) -> None:
+    """O que a última geração deixou para a tela: a verificação e os avisos.
 
-if not all_tr.empty and "SpeakerName" in all_tr.columns:
-    if "word_count" in all_tr.columns:
-        by_spk = (
-            all_tr.groupby("SpeakerName")
-            .agg(msgs=("Text", "count"), words=("word_count", "sum"))
-            .reset_index()
+    A página recarrega depois de salvar, e o banco guarda só a análise: o
+    resto fica na sessão, e só vale para a análise que esta geração salvou.
+    """
+    info = st.session_state.get(f"prj_geracao_{project_id}")
+    if not info or info.get("analise_id") != analise.get("id"):
+        return
+    if info["taxonomia_da_ia"]:
+        st.info(
+            "O projeto não tinha taxonomia: a IA propôs uma provisória, que ficou salva na "
+            "Preparação para revisar com a cliente."
         )
+    if info["falhas"] == 1:
+        st.warning(
+            "1 áudio ficou fora da contagem porque a classificação dele falhou. Ele volta a ser "
+            "classificado na próxima geração."
+        )
+    elif info["falhas"]:
+        st.warning(
+            "{} áudios ficaram fora da contagem porque a classificação deles falhou. Eles voltam a "
+            "ser classificados na próxima geração.".format(info["falhas"])
+        )
+    problemas = info["problemas"]
+    if problemas:
+        with st.expander(
+            "Verificação das referências: {} para revisar".format(
+                "1 ponto" if len(problemas) == 1 else "{} pontos".format(len(problemas))
+            ),
+            expanded=True,
+        ):
+            st.markdown("\n".join("- " + problema for problema in problemas))
+            st.caption(
+                "A verificação confere o texto da IA contra as tabelas calculadas e não impede "
+                "salvar: revise estes pontos antes de enviar o relatório."
+            )
     else:
-        by_spk = (
-            all_tr.assign(_words=all_tr["Text"].fillna("").astype(str).apply(lambda t: len(t.split())))
-            .groupby("SpeakerName")
-            .agg(msgs=("Text", "count"), words=("_words", "sum"))
-            .reset_index()
-        )
-    tables_lines.append("Participacao por locutor:\n" + by_spk.to_string(index=False))
+        st.caption("Verificação das referências: o texto da IA bate com as tabelas.")
+    kb_ok, kb_msg = info["kb"]
+    if kb_ok:
+        st.caption("Base de Conhecimento atualizada com: {}".format(kb_msg))
+    elif info["use_kb"]:
+        st.warning("A análise foi salva, mas não foi possível enviá-la para a base: {}".format(kb_msg))
 
-tables_text = "\n\n".join(tables_lines)
-transcript_sample = _build_transcript_sample(all_tr)
 
 # ------------------------------------------------------------------
 # Analise Geral por IA
 # ------------------------------------------------------------------
 st.markdown(overview.section_html("04", "Análise por IA"), unsafe_allow_html=True)
 with st.container(border=True):
-    c_modo, c_base, c_modelo = st.columns([1.3, 1.2, 2], vertical_alignment="top")
-    analysis_mode = c_modo.segmented_control(
-        "Modo", ["Rapida (1 chamada)", "Aprofundada (2 etapas)"],
-        format_func=lambda m: "Rápida" if m.startswith("Rapida") else "Aprofundada",
-        default="Rapida (1 chamada)", key="prj_ai_mode",
-    ) or "Rapida (1 chamada)"
+    c_base, c_legenda, c_modelo = st.columns([1.2, 1.2, 2], vertical_alignment="top")
     use_kb = c_base.toggle("Usar Base de Conhecimento", value=True, key="prj_ai_kb")
+    incluir_legenda = c_legenda.toggle(
+        "Telefones no relatório", value=False, key="prj_ai_legenda",
+        help="A legenda Áudio NN → sessão traz o telefone de quem mandou o áudio. "
+        "Desligada, ela fica só na tela, abaixo do relatório.",
+    )
     with c_modelo:
         ai_provider_id, ai_model = ui.ai_model_selector("prj_ai_model", use_kb=use_kb)
+    st.caption(
+        "A geração classifica nos temas da taxonomia os áudios do recorte que ainda não foram "
+        "classificados, faz as contas em código e pede à IA só o texto."
+        + (
+            " O projeto ainda não tem taxonomia: a IA propõe uma provisória, que fica salva na Preparação."
+            if not str(project.get("taxonomia") or "").strip()
+            else ""
+        )
+    )
     if recorte:
         st.caption(
             "A análise gerada agora considera só o recorte ({}) e ele fica registrado no texto "
@@ -1172,6 +1012,7 @@ if latest_analysis:
     st.caption(
         f"Ultima analise geral: {latest_analysis['created_at']} - Modelo: {latest_analysis.get('model', '-')}"
     )
+    _resumo_da_geracao(latest_analysis)
     st.markdown(latest_analysis.get("analysis_text", ""))
 
     analysis_md = _build_project_analysis_markdown(
@@ -1221,6 +1062,22 @@ if latest_analysis:
                 ),
             }
         )
+
+    # As análises da v2 citam "Áudio 07"; a legenda com a sessão, que traz o
+    # telefone, fica aqui quando não vai no relatório. O alias é o do projeto
+    # inteiro, o mesmo que o relatório usou.
+    _cobertos = (latest_analysis.get("temas") or {}).get("audios") or []
+    if _cobertos:
+        with st.expander("Legenda dos áudios (Áudio NN → sessão)"):
+            st.dataframe(
+                pd.DataFrame(
+                    geracao.legenda(audios_projeto, _cobertos),
+                    columns=["Áudio", "Sessão", "QR code", "Chegada"],
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+            st.caption("A sessão traz o telefone de quem mandou o áudio: não a repasse à cliente.")
 
     chat_key = f"prj_chat_history_{project_id}"
     confirm_key = f"prj_an_confirm_{project_id}"
@@ -1357,10 +1214,15 @@ if latest_analysis:
                     except Exception as e:
                         st.error(f"Erro ao obter resposta da IA: {e}")
 else:
-    st.info("Nenhuma analise geral disponivel. Clique em Gerar Analise Geral.")
+    st.info("Nenhuma análise geral disponível. Clique em Gerar Análise Geral.")
 
-btn_label = "Regenerar Analise Geral" if latest_analysis else "Gerar Analise Geral"
-if st.button(btn_label, type="primary"):
+btn_label = "Regenerar Análise Geral" if latest_analysis else "Gerar Análise Geral"
+if st.button(
+    btn_label,
+    type="primary",
+    disabled=not pode_editar,
+    help=None if pode_editar else "Seu perfil só consulta: gerar grava a taxonomia, a classificação e a análise.",
+):
     if not ai_provider_id:
         st.error(
             "Configure uma chave de API no .env (OPENAI_API_KEY, GROQ_API_KEY "
@@ -1369,167 +1231,74 @@ if st.button(btn_label, type="primary"):
         st.stop()
 
     vs_id = get_prosodia_vector_store_id() if use_kb else None
+    with st.status("Gerando a Análise Geral…", expanded=True) as painel:
+        _progresso = {}
 
-    with st.spinner("Gerando analise geral..."):
+        def _avisar(etapa: int, texto: str) -> None:
+            nome = geracao.ETAPAS[etapa - 1]
+            painel.update(label="{}/{} · {}".format(etapa, len(geracao.ETAPAS), nome))
+            st.markdown("**{}.** {}".format(nome, texto))
+
+        def _ao_classificar(feitos: int, total: int) -> None:
+            if not total:
+                return
+            texto = "{} de {} áudios classificados".format(feitos, total)
+            if "barra" not in _progresso:
+                _progresso["barra"] = st.progress(0.0, text=texto)
+            _progresso["barra"].progress(feitos / total, text=texto)
+
         try:
-            result = {"text": "", "citations": []}
-            
-            # Calcular os inputs da análise consolidada de projeto
-            acoustic_stats_text = _calculate_acoustic_summary_text(all_sinc)
-            
-            # Adicionar perguntas com maior ativação prosódica
-            q_activations = _calculate_questions_activation(audios, all_sinc)
-            if q_activations:
-                q_lines = [
-                    "\n### Perguntas com Maior Ativação Prosódica (Acumulado dos Áudios):",
-                    "| Pergunta | Respostas Cobertas | Arousal Médio | Pitch Var Média | Volume Var Média | Resposta Destaque |",
-                    "|---|---|---|---|---|---|",
-                ]
-                for qa in q_activations:
-                    q_lines.append(
-                        f"| {qa['question']} | {qa['count']} | {qa['avg_arousal']:.2f} | {qa['avg_f0_var']:.2f} | {qa['avg_ld_var']:.2f} | {qa['example']} |"
-                    )
-                acoustic_stats_text += "\n" + "\n".join(q_lines)
-
-            # As quatro categorias de emoção existem no CSV desde sempre e nunca
-            # chegavam ao prompt, que por sua vez as pedia.
-            acoustic_stats_text += (
-                "\n\n### Distribuição de Emoções por Áudio\n\n"
-                + emotion_distribution_text(all_sinc, "session_id", "Áudio")
+            responder, modelo_da_classificacao = geracao.responder_da_classificacao(ai_provider_id, ai_model)
+            resultado = geracao.gerar_analise_geral(
+                project,
+                audios_projeto,
+                [a["id"] for a in audios],
+                geracao.recorte_da_pagina(
+                    filtro_qr, overview.qr_options(audios_projeto), filtro_periodo, filtro_origem, recorte
+                ),
+                tr_projeto,
+                sinc_projeto,
+                responder,
+                modelo_da_classificacao,
+                geracao.gerador_do_relatorio(ai_provider_id, ai_model, project_id, vs_id),
+                ai_model,
+                perguntas_ativacao=q_activations,
+                incluir_legenda=incluir_legenda,
+                avisar=_avisar,
+                ao_classificar=_ao_classificar,
             )
-
-            top_words_text = _calculate_top_words_text(all_tr, top_n=30)
-            
-            top_moments = _extract_high_activation_moments(all_sinc, top_n=15)
-            high_activation_text = _format_high_activation_text(top_moments)
-            
-            individual_analyses_text = _load_individual_analyses(audios)
-
-            sentimento_texto = texto_sentimento_resumo(fonte_sentimento, "session_id", "Áudio")
-            indice_texto = indice_combinado_texto(all_sinc, referencia_voz, "session_id", "Áudio")
-            if sentimento_texto and indice_texto:
-                sentimento_texto += "\n\n" + indice_texto
-            divergencias = (
-                divergencias_texto(project_divergences, incluir_audio=True)
-                if tem_sentimento_texto(all_sinc)
-                else ""
-            )
-            secao_sentimento = secoes_sentimento(sentimento_texto, divergencias)
-
-            # Com filtro, a IA precisa saber que os dados são um recorte, senão
-            # descreve o subconjunto como se fosse o projeto inteiro.
-            aviso_recorte = (
-                "## Recorte analisado\n"
-                "Esta análise cobre só os áudios do recorte ({}): {} de {} áudios do projeto. "
-                "Descreva os achados como deste recorte, sem generalizar para o projeto inteiro.\n\n"
-                "---\n\n".format(recorte, n_interviews, len(audios_projeto))
-                if recorte
-                else ""
-            )
-            user_prompt = aviso_recorte + build_project_user_prompt(
-                project_context=proj_ctx,
-                acoustic_stats_text=acoustic_stats_text,
-                top_words_text=top_words_text,
-                high_activation_text=high_activation_text,
-                individual_analyses_text=individual_analyses_text,
-                sentimento_texto=sentimento_texto,
-                divergencias=divergencias,
-            )
-
-            tipo_projeto = project.get("tipo_projeto")
-            prj_sys_prompt = get_prosodia_project_system_prompt(tipo_projeto)
-            # Os limites vem de quando o relatorio tinha metade das secoes de
-            # hoje. Com as tres dimensoes, a distribuicao de emocoes, a matriz
-            # de destaques e o termometro, 2200 tokens cortam o texto no meio
-            # de uma secao — foi o que aconteceu com o relatorio de 30/09.
-            if analysis_mode == "Rapida (1 chamada)":
-                result = _run_ai(
-                    system_prompt=prj_sys_prompt,
-                    user_prompt=user_prompt,
-                    temperature=0.5,
-                    max_tokens=4500,
-                    vector_store_id=vs_id,
-                    kb_filter=build_kb_filter(project_id),
-                )
-            else:
-                stat_result = _run_ai(
-                    system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estatistica"),
-                    user_prompt=user_prompt,
-                    temperature=0.3,
-                    max_tokens=4000,
-                )
-                # A etapa estrategica tem de nomear os temas dos momentos de
-                # maior engajamento e separar entusiasmo de friccao pela
-                # valencia. Sem esta tabela ela so tinha o texto da etapa
-                # anterior para isso, e reinterpretava numeros em vez de
-                # rele-los da fonte — dai as divergencias entre as duas metades
-                # do relatorio.
-                strat_user = (
-                    aviso_recorte
-                    + f"Analise estatistica previa:\n{stat_result['text']}\n\n"
-                    f"Dados consolidados do projeto:\n{acoustic_stats_text}\n\n"
-                    f"Momentos de maior ativacao prosodica:\n{high_activation_text}\n\n"
-                    f"Ranking de palavras:\n{top_words_text}\n\n"
-                    + secao_sentimento
-                )
-                strat_result = _run_ai(
-                    system_prompt=get_prosodia_project_system_prompt(tipo_projeto, "estrategica"),
-                    user_prompt=strat_user,
-                    temperature=0.5,
-                    max_tokens=4000,
-                    vector_store_id=vs_id,
-                    kb_filter=build_kb_filter(project_id),
-                )
-                result = {
-                    "text": (
-                        "## Analise Estatistica\n\n"
-                        + stat_result["text"]
-                        + "\n\n---\n\n## Analise Estrategica\n\n"
-                        + strat_result["text"]
-                    ),
-                    "citations": strat_result.get("citations", []),
-                    "search": strat_result.get("search", {}),
-                }
-
-            used_model = ai_model
-            # O recorte vai no próprio texto: é ele que a tela, o PDF e a Base de
-            # Conhecimento mostram, e o banco não guarda o filtro à parte.
-            texto_salvo = result.get("text", "")
-            if recorte:
-                texto_salvo = "**Recorte analisado:** {} · {} de {} áudios do projeto.\n\n{}".format(
-                    recorte, n_interviews, len(audios_projeto), texto_salvo
-                )
-            save_project_analysis(project_id, used_model, texto_salvo, result.get("citations", []))
-            st.session_state[f"pr_kb_search_project_{project_id}"] = result.get(
-                "search", {}
-            )
-
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            kb_doc_name = (
-                f"analise_geral_{_slugify(project.get('name', 'projeto'))}_"
-                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            )
-            kb_doc = _build_project_analysis_markdown(
-                project_name=project.get("name", ""),
-                model=used_model,
-                created_at=now_str,
-                text=texto_salvo,
-                citations=result.get("citations", []),
-            )
-            # Devolver a analise para a base so faz sentido para quem esta
-            # usando a base: antes isto rodava ate com ela desligada.
-            if use_kb:
-                kb_ok, kb_msg = _append_result_to_kb(
-                    kb_doc_name, kb_doc, project_id
-                )
-            else:
-                kb_ok, kb_msg = False, "base de conhecimento desligada nesta analise"
-
-            st.success("Analise geral salva!")
-            if kb_ok:
-                st.caption(f"Base de conhecimento atualizada com: {kb_msg}")
-            else:
-                st.warning(f"Analise geral salva, mas nao foi possivel enviar para a base: {kb_msg}")
-            st.rerun()
         except Exception as e:
-            st.error(f"Erro ao gerar analise geral: {e}")
+            _LOGGER.exception("Falha ao gerar a Análise Geral do projeto %s", project_id)
+            painel.update(label="A Análise Geral não foi gerada", state="error")
+            st.error(f"Erro ao gerar a Análise Geral: {e}")
+            st.stop()
+        painel.update(label="Análise Geral salva", state="complete")
+
+    agora = datetime.now()
+    kb_doc_name = "analise_geral_{}_{}.md".format(
+        _slugify(project.get("name", "projeto")), agora.strftime("%Y%m%d_%H%M%S")
+    )
+    kb_doc = _build_project_analysis_markdown(
+        project_name=project.get("name", ""),
+        model=ai_model,
+        created_at=agora.strftime("%Y-%m-%d %H:%M:%S"),
+        text=resultado.relatorio.texto,
+        citations=resultado.relatorio.citacoes,
+    )
+    # A Análise Geral continua indo para a base, porque o chat e outras telas a
+    # usam; é a geração seguinte que a deixa de fora (§11 da spec). Devolver a
+    # análise só faz sentido para quem está usando a base.
+    if use_kb:
+        kb = _append_result_to_kb(kb_doc_name, kb_doc, project_id)
+    else:
+        kb = (False, "base de conhecimento desligada nesta análise")
+    st.session_state[f"pr_kb_search_project_{project_id}"] = resultado.relatorio.busca
+    st.session_state[f"prj_geracao_{project_id}"] = {
+        "analise_id": resultado.analise_id,
+        "problemas": list(resultado.relatorio.problemas),
+        "falhas": len(resultado.classificacao.falhas),
+        "taxonomia_da_ia": resultado.taxonomia_da_ia,
+        "kb": kb,
+        "use_kb": use_kb,
+    }
+    st.rerun()

@@ -76,6 +76,22 @@ class _Client:
         self.vector_stores = _VectorStores(files, missing_entries)
 
 
+def _casa(filtro, atributos):
+    """Avalia o filtro contra os atributos de um documento, nos tipos que usamos."""
+
+    tipo = filtro["type"]
+    if tipo == "or":
+        return any(_casa(f, atributos) for f in filtro["filters"])
+    if tipo == "and":
+        return all(_casa(f, atributos) for f in filtro["filters"])
+    valor = atributos.get(filtro["key"])
+    if tipo == "eq":
+        return valor == filtro["value"]
+    if tipo == "ne":
+        return valor != filtro["value"]
+    raise AssertionError("Filtro sem avaliador no teste: {}".format(tipo))
+
+
 class AttributeContractTests(unittest.TestCase):
     def test_the_filter_keeps_literature_and_the_project_itself(self):
         self.assertEqual(
@@ -106,6 +122,43 @@ class AttributeContractTests(unittest.TestCase):
     def test_without_a_project_there_is_nothing_to_isolate(self):
         self.assertIsNone(build_kb_filter(None))
         self.assertIsNone(build_kb_filter(0))
+        self.assertIsNone(build_kb_filter(None, incluir_analises=False))
+
+    def test_the_general_analysis_filter_leaves_the_analyses_out(self):
+        self.assertEqual(
+            build_kb_filter(7, incluir_analises=False),
+            {
+                "type": "or",
+                "filters": [
+                    {"type": "eq", "key": "escopo", "value": ESCOPO_REFERENCIA},
+                    {
+                        "type": "and",
+                        "filters": [
+                            {"type": "eq", "key": "project_id", "value": 7},
+                            {"type": "ne", "key": "escopo", "value": ESCOPO_ANALISE},
+                        ],
+                    },
+                ],
+            },
+        )
+
+    def test_without_analyses_literature_and_project_material_still_come_in(self):
+        """O que cada documento da base encontra no filtro da Analise Geral."""
+        kb_filter = build_kb_filter(7, modulo="prosodia", incluir_analises=False)
+        casos = {
+            "literatura": (reference_document("prosodia", tipo="artigo"), True),
+            "briefing do projeto": (project_document("prosodia", 7), True),
+            "analise individual": (
+                project_document("prosodia", 7, escopo=ESCOPO_ANALISE, session_id="s1"),
+                False,
+            ),
+            "analise geral anterior": (project_document("prosodia", 7, escopo=ESCOPO_ANALISE), False),
+            "material de outro projeto": (project_document("prosodia", 8), False),
+            "material da jornada": (project_document("jornada_compra", 7), False),
+        }
+        for nome, (atributos, entra) in casos.items():
+            with self.subTest(documento=nome):
+                self.assertEqual(_casa(kb_filter, atributos), entra)
 
     def test_project_material_carries_the_project_and_the_session(self):
         attributes = project_document(

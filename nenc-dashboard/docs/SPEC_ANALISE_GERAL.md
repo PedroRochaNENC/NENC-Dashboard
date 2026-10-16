@@ -93,6 +93,20 @@ Quem escreve o quê:
 | Apêndice técnico e limitações | ✔ | |
 | Verificação das referências | ✔ | |
 
+Implementado na fase 5. A ordem das etapas fica em `utils/prosodia_geracao.py` (`gerar_analise_geral`), que roda nos testes com IA simulada. A página monta as duas chamadas à IA, mostra o progresso e envia a análise para a base. O que o código decidiu além do pipeline acima:
+
+- **Taxonomia.** Só o campo vazio leva à proposta da IA. Campo com texto, mas sem nenhuma linha no formato, para a geração com erro, para a proposta não apagar o que a equipe escreveu. A proposta lê as falas de todos os áudios do projeto, e não só as do recorte.
+- **Classificação.**
+  - Vão à IA só os áudios do recorte com fala e sem classificação válida. Os rótulos emergentes já usados vêm de todas as classificações gravadas do projeto.
+  - A chamada usa o provedor da tela. Na OpenAI vai o `gpt-4.1-mini` (`classification_model`), com temperatura 0,2. O cliente é criado na thread da página e passado ao `chat_completion` das outras threads, que não têm o contexto do Streamlit.
+  - O áudio que falha fica fora da contagem e volta na geração seguinte. Se nenhum áudio do recorte sair classificado, a geração para antes do relatório.
+- **Etapas na tela.** Um `st.status` mostra cinco etapas: taxonomia, classificação (com barra de progresso), agregação, relatório e gravação. O texto da IA, a montagem e a verificação são uma etapa só, porque acontecem dentro de `escrever_relatorio`.
+- **Depois de salvar.** A página recarrega. A verificação das referências, as falhas da classificação e o resultado do envio para a base ficam na sessão e aparecem junto da análise que a geração salvou.
+- **Telefones.** O interruptor "Telefones no relatório" decide `incluir_legenda` e começa desligado. Nas análises com snapshot, a legenda Áudio NN → sessão aparece abaixo do relatório, num expansor.
+- **Recorte gravado.** Marcar todos os QR codes ou todas as origens grava o recorte vazio, como na descrição. O período fica gravado sempre, em ISO.
+- **Permissão.** O botão de gerar fica desligado para quem só consulta, porque a geração grava taxonomia, classificação e análise.
+- **O que saiu.** O seletor Rápida/Aprofundada, os prompts de projeto antigos e `build_project_user_prompt`. Da página saíram as funções que só serviam ao prompt antigo: amostra da transcrição, ranking de palavras, tabela de momentos e análises individuais inteiras.
+
 ## 5. Taxonomia
 
 - Colunas novas: `projects.taxonomia` (texto) e `projects.taxonomia_status` (`provisoria` ou `validada`).
@@ -132,7 +146,7 @@ Implementada na fase 2, em `utils/prosodia_temas.py` e na tabela `audio_temas`.
 - **O que fica gravado** por tema: subtema, polaridade, evidência e trechos (linha, `segmento_idx`, `inicio_s`, `fim_s`), para a fase 3 ler a voz de cada trecho.
 - **Cache.** Uma linha por áudio em `audio_temas` (organization_id, audio_id, chave, versão da taxonomia, modelo, JSON, data). A chave muda com a taxonomia, o tipo do projeto, a transcrição ou a versão da classificação (`VERSAO_CLASSIFICACAO`, que sobe quando o prompt muda). Com a chave igual, o áudio não volta à IA, e regenerar sem áudio novo devolve as mesmas tabelas.
 - **Lote.** Até 4 chamadas simultâneas. O áudio que falha fica sem classificação nova e volta na geração seguinte.
-- **Taxonomia provisória.** `propor_taxonomia` lê até 800 palavras por áudio e 40 mil no total, e a resposta passa pelo mesmo parse do campo. A gravação (`set_project_taxonomy`, com status `provisoria`) acontece no fluxo da página, na fase 5.
+- **Taxonomia provisória.** `propor_taxonomia` lê até 800 palavras por áudio e 40 mil no total, e a resposta passa pelo mesmo parse do campo. A gravação (`set_project_taxonomy`, com status `provisoria`) acontece na geração, desde a fase 5 (§4).
 
 ## 7. Agregação em código
 
@@ -166,9 +180,9 @@ Implementada na fase 3, em `utils/prosodia_relatorio.py`. As regras desta seçã
   - O sumário vai até o título seguinte do mesmo tipo ou até uma linha horizontal.
   - É cortado em 1.200 caracteres.
 
-Ficam para a fase 5:
+Feitos na fase 5, em `gerar_analise_geral` (§4):
 
-- montar na página a lista de `AudioDoProjeto`, com a transcrição numerada, a classificação válida e o `created_at`;
+- montar a lista de `AudioDoProjeto`, com a transcrição numerada, a classificação válida e o `created_at`;
 - gravar o snapshot com `save_project_analysis(..., temas=snapshot(...))`.
 
 **Faixas.** A unidade de contagem é o respondente (ver §14).
@@ -345,7 +359,7 @@ Duas ou três frases sobre o que puxa o saldo, citando IDs. Não altere o númer
 
 Implementado na fase 4, em `utils/prosodia_prompts.py`: `sistema_analise_geral(tipo)` e `mensagem_analise_geral`, que fecha com a tarefa de `tarefa_analise_geral`. Quem monta a mensagem com as tabelas é `mensagem_para_ia`, em `prosodia_relatorio`. O que o código decidiu além do que está escrito acima:
 
-- **Nomes.** O prompt novo tem nomes próprios. Os prompts de projeto antigos (rápido, estatístico e estratégico) e o `build_project_user_prompt` ficam até a fase 5, porque a página ainda os usa.
+- **Nomes.** O prompt novo tem nomes próprios. Os prompts de projeto antigos (rápido, estatístico e estratégico) e o `build_project_user_prompt` saíram na fase 5, quando a página passou a usar o novo.
 - **Ordem.** O adendo do tipo vem logo depois do papel.
 - **Texto.** Entraram instruções que não estão na lista acima:
   - recomendação é ação da empresa: ferramenta de análise, nova coleta ou ajuste da pesquisa vão para o "Como validar" de uma hipótese;
@@ -459,6 +473,8 @@ Inclui médias acústicas por respondente, distribuição de emoções, momentos
 
 ## 11. Base de conhecimento
 
+Implementado na fase 5: a chamada que escreve o relatório sai de `gerador_do_relatorio` (`utils/prosodia_geracao.py`), que já leva o filtro sem análises.
+
 - `build_kb_filter` ganha o parâmetro `incluir_analises=True`, e a Análise Geral passa `False`. A cláusula do projeto vira "documento do projeto com `escopo` diferente de `analise`". Literatura (`referencia`) e material do projeto (briefing, documentos) continuam entrando.
 - Como os relatórios individuais também têm `escopo="analise"` (`audio.py:519`), eles saem da busca da Análise Geral. O Sumário Executivo de cada um entra pelo banco (§9).
 - A Análise Geral continua sendo enviada para a base, porque o chat e outras telas podem usá-la. Ela só deixa de voltar como evidência da próxima.
@@ -471,10 +487,12 @@ Inclui médias acústicas por respondente, distribuição de emoções, momentos
 | `modules/prosodia/preparacao.py` | Seção "Taxonomia de temas" depois de "Entidades prioritárias". |
 | `utils/prosodia_temas.py` (novo) | Taxonomia (parse e versão), proposta provisória, classificação por áudio e validação do JSON. |
 | `utils/prosodia_relatorio.py` (novo) | Agregação (contagem, faixas, voz por tema, Matriz, Termômetro, Δ e aliases), extração dos Sumários Executivos das análises individuais, tabelas em markdown, apêndice, montagem e verificação do relatório. |
-| `utils/prosodia_prompts.py` | Prompt único da Análise Geral, com adendo por tipo. Saem os prompts estatístico e estratégico de projeto, e entra um `build_project_user_prompt` novo. Os prompts individuais ficam com o texto atual. |
+| `utils/prosodia_prompts.py` | Prompt único da Análise Geral (`sistema_analise_geral`), com adendo por tipo, e a mensagem (`mensagem_analise_geral`). Saem os prompts rápido, estatístico e estratégico de projeto e o `build_project_user_prompt`. Os prompts individuais ficam com o texto atual. |
+| `utils/prosodia_geracao.py` (novo) | As etapas da geração (§4), da taxonomia à gravação, e as duas chamadas à IA montadas a partir do provedor da tela. |
+| `utils/ai_provider.py` | `classification_model`, e o parâmetro `client` em `chat_completion` para a classificação rodar fora da thread da página. |
 | `utils/kb_attributes.py` | `build_kb_filter(..., incluir_analises=True)`. |
-| `modules/prosodia/analise_geral.py` | Sai o seletor de modo (`:1155`). Novo fluxo de geração (`:1363`) com as etapas visíveis na tela, e gravação do snapshot. |
-| `tests/` | Testes novos (§15) e ajuste de `test_project_type.py`. |
+| `modules/prosodia/analise_geral.py` | Sai o seletor de modo. A geração chama `gerar_analise_geral`, com as etapas visíveis na tela, e a verificação e a legenda aparecem junto da análise salva. |
+| `tests/` | Testes novos (§15) e ajuste de `test_project_type.py`, `test_prosodia_signals.py` e `test_prosodia_pages.py`, que testavam os prompts e a etapa estratégica antigos. |
 
 Ordem de implementação:
 
@@ -482,7 +500,7 @@ Ordem de implementação:
 2. Classificação por áudio, com cache, e a proposta de taxonomia provisória. **Feita.**
 3. Agregação e apêndice, com testes, mais a coluna `project_analyses.temas_json` e a extração do Sumário Executivo. **Feita.** A montagem do relatório e a verificação das referências ficaram para a fase 4.
 4. Prompt e montagem do relatório, com a verificação das referências. **Feita.** Ficam para a fase 5: chamar `escrever_relatorio` na página, com `generate_analysis` como `gerar` e o filtro novo da base; mostrar na tela os problemas da verificação; salvar o texto, as citações e o snapshot; tirar o seletor de modo e os prompts antigos de projeto; e ajustar `tests/test_project_type.py`.
-5. Fluxo na página e filtro da base.
+5. Fluxo na página e filtro da base. **Feita.**
 6. Validação com a Smart Fit e com uma Entrevista.
 
 ## 13. Pontos resolvidos em 15/10/2026

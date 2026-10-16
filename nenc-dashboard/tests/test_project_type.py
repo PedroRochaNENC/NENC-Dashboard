@@ -22,14 +22,10 @@ from utils.prosodia_prompts import (
     ADENDO_PESQUISA_OPINIAO,
     PROMPT_ENTREVISTA,
     PROMPT_PESQUISA_OPINIAO,
-    PROSODIA_PROJECT_SYSTEM_PROMPT_ENTREVISTA,
-    PROSODIA_PROJECT_SYSTEM_PROMPT_PESQUISA_OPINIAO,
-    PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
-    PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC,
     PROSODIA_SYSTEM_PROMPT_STATISTICAL,
     PROSODIA_SYSTEM_PROMPT_STRATEGIC,
-    get_prosodia_project_system_prompt,
     get_prosodia_system_prompt,
+    sistema_analise_geral,
 )
 from utils.prosodia_quality import (
     DEFAULT_THRESHOLDS,
@@ -267,26 +263,23 @@ class PromptByTypeTests(unittest.TestCase):
                     get_prosodia_system_prompt(project_type, "estrategica"),
                     PROSODIA_SYSTEM_PROMPT_STRATEGIC,
                 )
-                self.assertIs(
-                    get_prosodia_project_system_prompt(project_type),
-                    PROSODIA_PROJECT_SYSTEM_PROMPT_ENTREVISTA,
-                )
-                self.assertIs(
-                    get_prosodia_project_system_prompt(project_type, "estatistica"),
-                    PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL,
-                )
-                self.assertIs(
-                    get_prosodia_project_system_prompt(project_type, "estrategica"),
-                    PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC,
+                self.assertEqual(
+                    sistema_analise_geral(project_type),
+                    sistema_analise_geral(ENTREVISTA_QUALITATIVA),
                 )
 
     def test_opinion_survey_has_its_own_quick_prompts(self):
         self.assertIs(get_prosodia_system_prompt(PESQUISA_OPINIAO), PROMPT_PESQUISA_OPINIAO)
-        self.assertIs(
-            get_prosodia_project_system_prompt(PESQUISA_OPINIAO),
-            PROSODIA_PROJECT_SYSTEM_PROMPT_PESQUISA_OPINIAO,
-        )
         self.assertNotIn("Neutralize o entrevistador", PROMPT_PESQUISA_OPINIAO)
+
+    def test_the_general_analysis_prompt_follows_the_type(self):
+        """Um prompt só para a Análise Geral, com o adendo do tipo do projeto."""
+        opiniao = sistema_analise_geral(PESQUISA_OPINIAO)
+        entrevista = sistema_analise_geral(ENTREVISTA_QUALITATIVA)
+
+        self.assertIn("## Tipo de Material: Pesquisa de Opinião", opiniao)
+        self.assertNotIn("## Tipo de Material: Entrevista", opiniao)
+        self.assertIn("## Tipo de Material: Entrevista", entrevista)
 
     def test_two_step_modes_get_the_opinion_survey_addendum(self):
         self.assertEqual(
@@ -294,8 +287,8 @@ class PromptByTypeTests(unittest.TestCase):
             PROSODIA_SYSTEM_PROMPT_STATISTICAL + ADENDO_PESQUISA_OPINIAO,
         )
         self.assertEqual(
-            get_prosodia_project_system_prompt(PESQUISA_OPINIAO, "estrategica"),
-            PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC + ADENDO_PESQUISA_OPINIAO,
+            get_prosodia_system_prompt(PESQUISA_OPINIAO, "estrategica"),
+            PROSODIA_SYSTEM_PROMPT_STRATEGIC + ADENDO_PESQUISA_OPINIAO,
         )
 
     def test_unknown_mode_is_refused(self):
@@ -314,15 +307,18 @@ class PagesResolvePromptByTypeTests(unittest.TestCase):
 
     A varredura e por diretorio, nao por lista: pagina nova entra sozinha, e
     pagina removida nao deixa o teste apontando para um arquivo que sumiu.
+
+    A Analise Geral nao importa prompt nenhum: escrever_relatorio pede
+    sistema_analise_geral com o tipo do projeto, que a pagina entrega em
+    gerar_analise_geral (ver test_prosodia_geracao).
     """
 
     _CONSTANTES_FIXAS = (
         "PROSODIA_SYSTEM_PROMPT",
         "PROSODIA_SYSTEM_PROMPT_STATISTICAL",
         "PROSODIA_SYSTEM_PROMPT_STRATEGIC",
-        "PROSODIA_PROJECT_SYSTEM_PROMPT",
-        "PROSODIA_PROJECT_SYSTEM_PROMPT_STATISTICAL",
-        "PROSODIA_PROJECT_SYSTEM_PROMPT_STRATEGIC",
+        "ESTRUTURA_ANALISE_GERAL",
+        "EXEMPLO_ANALISE_GERAL",
     )
 
     def _paginas(self):
@@ -358,7 +354,7 @@ class PagesResolvePromptByTypeTests(unittest.TestCase):
                 )
 
     def test_pages_that_analyse_ask_for_the_prompt_by_type(self):
-        resolvedores = {"get_prosodia_system_prompt", "get_prosodia_project_system_prompt"}
+        resolvedores = {"get_prosodia_system_prompt", "sistema_analise_geral"}
         for pagina in self._paginas():
             with self.subTest(pagina=pagina.name):
                 importados = self._imports_de_prompts(pagina)

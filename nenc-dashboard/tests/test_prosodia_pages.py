@@ -9,9 +9,11 @@ rastro, e o relatório concluía que o áudio "não tem dados acústicos". Foi a
 que 15 análises individuais do Smart Fit nasceram afirmando uma lacuna
 inexistente.
 
-A segunda: a etapa estratégica da Análise Geral recebe um prompt montado à mão,
-que ficou para trás dos sinais acrescentados depois. Ela tinha de nomear os
-temas dos momentos de maior engajamento sem receber a tabela deles.
+A segunda: a etapa estratégica da antiga Análise Geral recebia um prompt
+montado à mão, que ficou para trás dos sinais acrescentados depois. A v2
+calcula os números em código, a partir dos dataframes do projeto inteiro; o
+que sobrou de risco é a página entregar os do recorte, e aí o alias de um
+áudio, a régua da voz e os terços da Matriz mudariam com o filtro.
 
 As páginas são scripts Streamlit e não rodam num teste de unidade; o que dá
 para garantir sem executá-las é o contrato lido do código-fonte.
@@ -120,49 +122,57 @@ class PaginaUnicaDoAudioTests(unittest.TestCase):
         self.assertIn('st.session_state["en_filtered_ids"]', fonte)
 
 
-class EtapaEstrategicaRecebeOsSinaisTests(unittest.TestCase):
-    """A segunda etapa nao pode interpretar sem os dados da primeira.
+class AnaliseGeralRecebeOProjetoInteiroTests(unittest.TestCase):
+    """A Análise Geral mede contra o projeto inteiro e conta só o recorte.
 
-    `strat_user` e montado a mao, fora de build_project_user_prompt, e por isso
-    nao acompanha sozinho os sinais que entram no prompt principal. O prompt
-    estrategico pede os temas dos momentos de maior engajamento e a separacao
-    entre entusiasmo e friccao pela valencia: as duas coisas saem da tabela de
-    ativacao.
+    A página filtra os dataframes para os painéis. A geração precisa também
+    dos do projeto inteiro, guardados antes do filtro. E o relatório tem de
+    sair da chamada de gerador_do_relatorio, a que deixa as análises do
+    projeto fora da base de conhecimento.
     """
 
-    _ESPERADOS = (
-        "stat_result",           # o texto da etapa estatistica
-        "acoustic_stats_text",   # medias, dimensoes e distribuicao de emocoes
-        "high_activation_text",  # os momentos de maior ativacao
-        "top_words_text",        # ranking de assuntos
-        "secao_sentimento",      # sentimento do texto e divergencias voz x texto
-    )
+    def setUp(self):
+        self.arvore = ast.parse((PAGES_DIR / "analise_geral.py").read_text(encoding="utf-8"))
 
-    def _fonte_do_strat_user(self) -> str:
-        fonte = (PAGES_DIR / "analise_geral.py").read_text(encoding="utf-8")
-        for no in ast.walk(ast.parse(fonte)):
-            if not isinstance(no, ast.Assign):
-                continue
-            alvos = [a.id for a in no.targets if isinstance(a, ast.Name)]
-            if "strat_user" in alvos:
-                return ast.get_source_segment(fonte, no.value) or ""
-        self.fail("strat_user nao encontrado em analise_geral.py")
+    def _nos(self, tipo):
+        return [no for no in ast.walk(self.arvore) if isinstance(no, tipo)]
 
-    def test_the_glue_prompt_exists(self):
-        """Se o nome mudar, o teste abaixo passa sem verificar nada."""
-        self.assertTrue(self._fonte_do_strat_user().strip())
+    def _chamada(self, nome):
+        for no in self._nos(ast.Call):
+            if isinstance(no.func, ast.Attribute) and no.func.attr == nome:
+                return no
+        self.fail("{} não é chamada em analise_geral.py".format(nome))
 
-    def test_the_strategic_step_gets_every_signal(self):
-        trecho = self._fonte_do_strat_user()
+    def test_the_whole_project_frames_are_kept_before_the_filter(self):
+        guarda = [
+            no for no in self._nos(ast.Assign)
+            if ast.unparse(no.targets[0]) == "(tr_projeto, sinc_projeto)"
+            and ast.unparse(no.value) == "(all_tr, all_sinc)"
+        ]
+        filtro = [no for no in self._nos(ast.If) if ast.unparse(no.test) == "len(audios) < len(audios_projeto)"]
 
-        for nome in self._ESPERADOS:
-            with self.subTest(sinal=nome):
-                self.assertIn(
-                    nome,
-                    trecho,
-                    "a etapa estrategica nao recebe {}; ela vai interpretar "
-                    "sem esse sinal.".format(nome),
-                )
+        self.assertEqual((len(guarda), len(filtro)), (1, 1))
+        self.assertLess(guarda[0].lineno, filtro[0].lineno)
+
+    def test_the_generation_gets_the_whole_project_and_the_cut(self):
+        chamada = self._chamada("gerar_analise_geral")
+        argumentos = [ast.unparse(a) for a in chamada.args]
+
+        for esperado in ("audios_projeto", "[a['id'] for a in audios]", "tr_projeto", "sinc_projeto"):
+            with self.subTest(argumento=esperado):
+                self.assertIn(esperado, argumentos)
+        self.assertLessEqual(
+            {"perguntas_ativacao", "incluir_legenda", "avisar", "ao_classificar"},
+            {palavra.arg for palavra in chamada.keywords},
+        )
+
+    def test_the_report_comes_from_the_call_without_the_project_analyses(self):
+        chamada = self._chamada("gerar_analise_geral")
+
+        self.assertTrue(any(
+            isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute) and a.func.attr == "gerador_do_relatorio"
+            for a in chamada.args
+        ))
 
 
 if __name__ == "__main__":
