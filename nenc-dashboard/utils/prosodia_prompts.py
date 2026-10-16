@@ -478,9 +478,9 @@ ao descrever o perfil de cada grupo.
 
 _ANALISE_GERAL_VOZ = """
 ## Leitura Multimodal: o que foi dito × como foi dito
-A voz chega pronta, como qualificador de cada tema, na coluna "Voz nos trechos": a média \
-da voz dos trechos em que os respondentes trataram do tema, comparada com o habitual do \
-próprio projeto.
+A voz chega pronta, como qualificador de cada tema, na coluna "Voz nos trechos": a voz \
+de cada respondente nos trechos em que tratou do tema, com o mesmo peso para cada um, \
+comparada com o habitual do próprio projeto.
 
 - **Direção:** "acima do habitual", "no habitual" ou "abaixo do habitual" é a valência \
 vocal desses trechos, do desagradável ao agradável.
@@ -489,15 +489,19 @@ alta indica mobilização, sem dizer se positiva ou negativa; quem dá o sinal �
 - **Qualificador:** compara a voz com a polaridade predominante do texto no tema. \
 "Reforça" quando a voz vai no mesmo sentido do texto, "atenua" quando fica no habitual \
 e "contradiz" quando vai no sentido oposto. Tema misto ou neutro leva só a direção.
-- **"Não avaliável (n trechos)":** menos de 5 trechos com dado de voz. Não comente a voz \
-desse tema.
+- **"Não avaliável (n respondentes com voz)":** menos de 5 respondentes com dado de voz \
+nos trechos do tema. Não comente a voz desse tema.
 
 Como ler as combinações:
-- Crítica que a voz atenua, sobretudo com ativação baixa, sugere insatisfação já \
-normalizada: risco maior de abandono silencioso do que uma reclamação exaltada.
+- "Atenua" com ativação média é a voz no habitual do próprio projeto, o caso da maioria \
+dos temas: ela não acrescenta nada ao texto. Não a leia como cortesia protocolar, \
+satisfação morna ou insatisfação normalizada, e não apoie hipótese nela.
+- Crítica que a voz atenua com ativação baixa sugere insatisfação já normalizada: risco \
+maior de abandono silencioso do que uma reclamação exaltada.
+- Elogio que a voz atenua com ativação baixa, ou que a voz contradiz, sugere cortesia \
+protocolar, não satisfação real.
 - Crítica que a voz reforça, com ativação alta, indica irritação mobilizada, candidata a \
 reclamação ativa ou pública.
-- Elogio que a voz atenua ou contradiz sugere cortesia protocolar, não satisfação real.
 - Elogio que a voz reforça, com ativação alta, marca entusiasmo genuíno e é candidato a \
 ponto de lealdade.
 
@@ -630,8 +634,8 @@ Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dor dita c
 - **A3** · Pagamento > Falha no app de pagamento · padrão, 11/64 — as 11 menções são negativas: cobrança que não libera a máquina e estorno demorado (Áudio 08, 00:11; Áudio 45, 00:17). Voz: no habitual, com ativação baixa — atenua. O tema aparece em 5 dos 12 respondentes novos e em 6 dos 52 anteriores, o que é variação observada, não tendência.
 - **A4** · Ambiente > Limpeza da loja · padrão, 9/64 — 8 dos 9 elogiam a limpeza em frases curtas, sem detalhe (Áudio 22, 00:03). Voz: no habitual, com ativação baixa — atenua.
 - **A5** · Ambiente > Espera por máquina livre · sinal, 6/64 (menos de 10% dos respondentes) — as 6 menções são negativas, e os trechos citam sábado e domingo (Áudio 19, 00:08; Áudio 52, 00:12). Voz: abaixo do habitual — reforça.
-- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Leitura de voz não avaliável (4 trechos).
-- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Leitura de voz não avaliável (3 trechos).
+- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Leitura de voz não avaliável (4 respondentes com voz).
+- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Leitura de voz não avaliável (3 respondentes com voz).
 - Menções isoladas, sem hipótese própria: Secagem incompleta (2/64) e os emergentes Estacionamento (2/64) e Cheiro do sabão (1/64).
 
 ### Hipóteses

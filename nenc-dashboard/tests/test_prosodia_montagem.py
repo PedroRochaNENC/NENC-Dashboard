@@ -198,6 +198,18 @@ class SistemaTests(unittest.TestCase):
 
         self.assertEqual(sem_adendo(opiniao), sem_adendo(entrevista))
 
+    def test_voice_in_the_habitual_range_does_not_support_a_hypothesis(self):
+        # Na validação com a Smart Fit, "atenua" com ativação média, o caso da
+        # maioria dos temas, virou "cortesia protocolar" no relatório inteiro.
+        leitura = prompts.sistema_analise_geral(PESQUISA_OPINIAO).split("## Leitura Multimodal", 1)[1]
+        leitura = " ".join(leitura.split("## Referencial", 1)[0].split())
+
+        self.assertIn('"Atenua" com ativação média é a voz no habitual do próprio projeto', leitura)
+        self.assertIn("não apoie hipótese nela", leitura)
+        self.assertIn("Elogio que a voz atenua com ativação baixa, ou que a voz contradiz, sugere cortesia", leitura)
+        self.assertNotIn("Elogio que a voz atenua ou contradiz", leitura)
+        self.assertIn('"Não avaliável (n respondentes com voz)": menos de 5 respondentes', leitura.replace("**", ""))
+
     def test_own_versions_of_the_shared_blocks(self):
         sistema = prompts.sistema_analise_geral(PESQUISA_OPINIAO)
 
@@ -248,9 +260,9 @@ A ação prioritária é a manutenção preventiva (R1).
 
 ### Achados
 - **A1** · Equipamentos > Máquina fora de serviço · padrão, 6/12 — os seis falam da máquina parada (Áudio 01, \
-00:00). Voz: não avaliável (0 trechos).
+00:00). Voz: não avaliável (0 respondentes com voz).
 - **A2** · Atendimento > Atendente da unidade · sinal, 3/12 — elogios ao atendente (Áudio 07, 00:00). Voz: não \
-avaliável (0 trechos).
+avaliável (0 respondentes com voz).
 - Menção isolada, sem hipótese própria: Lotação (1/12).
 
 ### Hipóteses
@@ -299,7 +311,7 @@ class MensagemTests(unittest.TestCase):
             "Voz: abaixo do habitual, ativação alta → reforça.",
             tarefa,
         )
-        self.assertIn("   - A7 · Atendimento > Suporte pelo WhatsApp · sinal, 3/64. Voz: não avaliável (3 trechos).",
+        self.assertIn("   - A7 · Atendimento > Suporte pelo WhatsApp · sinal, 3/64. Voz: não avaliável (3 respondentes com voz).",
                       tarefa)
         self.assertNotIn("Secagem incompleta", tarefa)
         self.assertIn("Feche com uma linha, sem ID, para as menções isoladas e os temas emergentes.", tarefa)
@@ -503,7 +515,7 @@ class MontagemTests(unittest.TestCase):
         for linha in (
             "| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 neg · 2 mistas | abaixo do "
             "habitual, ativação alta → reforça | 13/52 → 6/12 |",
-            "| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 neg · 1 pos | não avaliável (4 trechos) | 4/52 → 0/12 |",
+            "| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 neg · 1 pos | não avaliável (4 respondentes com voz) | 4/52 → 0/12 |",
             "| Equipamentos > Secagem incompleta | 2/64 (3%) | Menção isolada | 2 neg | — | 2/52 → 0/12 |",
             "Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 neg · Cheiro do sabão "
             "(Produtos), 1/64, 1 pos.",
@@ -666,13 +678,13 @@ class VerificacaoTests(unittest.TestCase):
         texto = (
             _trocar("Voz: no habitual, com ativação baixa — atenua. O tema",
                     "Voz: acima do habitual, com ativação alta — reforça. O tema")
-            .replace("Leitura de voz não avaliável (4 trechos).", "Voz: abaixo do habitual — reforça.")
+            .replace("Leitura de voz não avaliável (4 respondentes com voz).", "Voz: abaixo do habitual — reforça.")
         )
 
         self.assertEqual(_verificar(texto), [
             'A3: a tabela traz a voz "no habitual, ativação baixa → atenua", e o achado diz "reforça", '
             '"acima do habitual" e "ativação alta".',
-            'A6: a tabela traz a voz "não avaliável (4 trechos)", e o achado diz "reforça" e "abaixo do habitual".',
+            'A6: a tabela traz a voz "não avaliável (4 respondentes com voz)", e o achado diz "reforça" e "abaixo do habitual".',
         ])
 
     def test_fractions_must_match_the_table(self):

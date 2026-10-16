@@ -193,18 +193,33 @@ class PolaridadesTests(unittest.TestCase):
         self.assertEqual(rel.predominante({}), rel.MISTO_OU_NEUTRO)
 
 
-def _leituras(voz, ativacao=0.0, n=5, peso=1.0):
-    return [LeituraTrecho(voz, ativacao, peso) for _ in range(n)]
+def _leituras(voz, ativacao=0.0, n=5, peso=1.0, respondente=None):
+    """n trechos, cada um de um respondente diferente, ou todos de `respondente`."""
+    return [
+        (respondente or "resp{}".format(i), LeituraTrecho(voz, ativacao, peso)) for i in range(n)
+    ]
 
 
 class LerVozTests(unittest.TestCase):
-    def test_fewer_than_five_trechos_with_voice_is_not_assessable(self):
-        leitura = rel.ler_voz(_leituras(0.5, n=4) + [LeituraTrecho()], rel.POSITIVO)
+    def test_fewer_than_five_respondents_with_voice_is_not_assessable(self):
+        # Quatro respondentes, um deles com muitos trechos, e um trecho sem voz.
+        leituras = _leituras(0.5, n=3) + _leituras(0.5, n=8, respondente="falante") + [("outro", LeituraTrecho())]
+
+        leitura = rel.ler_voz(leituras, rel.POSITIVO)
 
         self.assertFalse(leitura.avaliavel)
-        self.assertEqual(leitura.texto(), "não avaliável (4 trechos)")
-        self.assertEqual(rel.ler_voz([], rel.NEGATIVO).texto(), "não avaliável (0 trechos)")
-        self.assertEqual(rel.ler_voz(_leituras(0.5, n=1), rel.NEGATIVO).texto(), "não avaliável (1 trecho)")
+        self.assertEqual((leitura.respondentes, leitura.trechos), (4, 11))
+        self.assertEqual(leitura.texto(), "não avaliável (4 respondentes com voz)")
+        self.assertEqual(rel.ler_voz([], rel.NEGATIVO).texto(), "não avaliável (0 respondentes com voz)")
+        self.assertEqual(
+            rel.ler_voz(_leituras(0.5, n=1), rel.NEGATIVO).texto(), "não avaliável (1 respondente com voz)"
+        )
+
+    def test_five_respondents_with_voice_are_assessable(self):
+        leitura = rel.ler_voz(_leituras(0.5, n=5), rel.POSITIVO)
+
+        self.assertTrue(leitura.avaliavel)
+        self.assertEqual((leitura.respondentes, leitura.trechos), (5, 5))
 
     def test_valence_limits(self):
         casos = [(0.15, rel.ACIMA), (0.149, rel.NO_HABITUAL), (-0.149, rel.NO_HABITUAL), (-0.15, rel.ABAIXO)]
@@ -240,10 +255,27 @@ class LerVozTests(unittest.TestCase):
             rel.ler_voz(_leituras(0.4), rel.MISTO_OU_NEUTRO).texto(), "acima do habitual, ativação média"
         )
 
-    def test_mean_is_weighted_by_duration(self):
-        leituras = _leituras(0.0, n=4) + [LeituraTrecho(1.0, 0.0, 4.0)]
+    def test_each_respondent_is_weighted_by_duration_within_their_trechos(self):
+        # Um respondente com um trecho de 1 s em 0,0 e um de 3 s em 1,0.
+        leituras = [("duas falas", LeituraTrecho(0.0, 0.0, 1.0)), ("duas falas", LeituraTrecho(1.0, 0.0, 3.0))]
+        leituras += _leituras(0.0, n=4)
 
-        self.assertAlmostEqual(rel.ler_voz(leituras, rel.POSITIVO).valencia, 0.5)
+        self.assertAlmostEqual(rel.ler_voz(leituras, rel.POSITIVO).valencia, 0.75 / 5)
+
+    def test_a_respondent_who_talks_a_lot_does_not_decide_the_reading(self):
+        # Quatro respondentes e um com dez trechos longos: pela média dos trechos
+        # a valência daria 50/54 e a ativação, 73/54.
+        leituras = _leituras(0.0, -0.5, n=4) + _leituras(1.0, 1.5, n=10, peso=5.0, respondente="falante")
+
+        leitura = rel.ler_voz(leituras, rel.POSITIVO)
+
+        self.assertAlmostEqual(leitura.valencia, 0.2)
+        self.assertAlmostEqual(leitura.ativacao, -0.1)
+        # Pela média dos trechos, 5/14: acima do habitual.
+        self.assertEqual(
+            rel.ler_voz(_leituras(0.0, n=4) + _leituras(0.5, n=10, respondente="falante"), rel.POSITIVO).direcao,
+            rel.NO_HABITUAL,
+        )
 
 
 class ContagemTests(unittest.TestCase):
@@ -692,7 +724,7 @@ class TabelaDeTemasTests(unittest.TestCase):
 
         self.assertIn(
             "| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 neg · 2 mistas | "
-            "não avaliável (0 trechos) |",
+            "não avaliável (0 respondentes com voz) |",
             tabela,
         )
         self.assertIn("| Ambiente > Lotação | 2/64 (3%) | Menção isolada | 2 neg | — |", tabela)
@@ -822,7 +854,19 @@ class ApendiceTests(unittest.TestCase):
         texto = rel.apendice_markdown(agregacao, self.sinc, None, perguntas_ativacao=perguntas)
 
         self.assertIn("#### Perguntas com maior ativação", texto)
-        self.assertIn("| Como foi o atendimento? | 3 | +0,45 |", texto)
+        self.assertIn("| Como foi o atendimento? | 3 | +0,45 | +0,20 | +0,10 |\n", texto)
+
+    def test_interview_questions_leave_out_the_highlighted_answer(self):
+        # A resposta mais ativada a "Qual seu nome?" é o nome do entrevistado.
+        perguntas = [{"question": "Qual seu nome?", "count": 3, "avg_arousal": 0.1, "avg_f0_var": 0.2,
+                      "avg_ld_var": 0.1, "example": "\"meu nome é Maria da Silva\" (B, 00:00:02)"}]
+        agregacao = _agregar(self.audios, tipo=ENTREVISTA_QUALITATIVA, sinc_projeto=self.sinc)
+
+        texto = rel.apendice_markdown(agregacao, self.sinc, None, perguntas_ativacao=perguntas)
+
+        self.assertIn("| Qual seu nome? | 3 |", texto)
+        self.assertNotIn("Maria da Silva", texto)
+        self.assertNotIn("Destaque", texto)
 
     def test_quoted_speech_keeps_its_dots(self):
         self.assertEqual(

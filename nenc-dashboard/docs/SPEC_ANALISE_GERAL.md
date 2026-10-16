@@ -49,7 +49,7 @@ Duas causas no código:
 | 5 | Contagem | Classificação por áudio em JSON, guardada no banco, com a contagem feita em código. |
 | 6 | Base de conhecimento | Não traz mais análises anteriores. A comparação com a onda anterior vem do banco. |
 | 7 | Onda anterior | Snapshot salvo com cada análise (tabela de temas e lista de áudios). A coluna Δ compara os respondentes novos com os da análise anterior. |
-| 8 | Amostra | 1–2 respondentes: menção isolada. 3–4: sinal. 5 ou mais e pelo menos 10%: padrão. Voz por tema a partir de 5 trechos. Abaixo de 20 respondentes, relatório exploratório. |
+| 8 | Amostra | 1–2 respondentes: menção isolada. 3–4: sinal. 5 ou mais e pelo menos 10%: padrão. Voz por tema a partir de 5 respondentes com voz (eram 5 trechos até a validação, §15). Abaixo de 20 respondentes, relatório exploratório. |
 | 9 | Voz | Qualificador em cada tema. Números prosódicos no apêndice. |
 | 10 | Seções extras | Ficam Resumo Executivo, Matriz de Destaques e Termômetro. O Δ vira coluna da taxonomia e as limitações vão para o apêndice. |
 | 11 | Termômetro | Sentimento médio do texto × 5, calculado em código. A IA só explica, e a voz entra pelos qualificadores dos temas. |
@@ -153,7 +153,7 @@ Implementada na fase 2, em `utils/prosodia_temas.py` e na tabela `audio_temas`.
 Implementada na fase 3, em `utils/prosodia_relatorio.py`. As regras desta seção valem como estão escritas. O que o código decidiu além delas:
 
 - **Quem entra no N.** Os respondentes com pelo menos um áudio com fala e com classificação válida, isto é, com a chave de agora (`classificacoes_validas`). Áudio sem fala, ou com classificação vencida ou que falhou, fica fora da contagem e aparece nas limitações. Quem falou e não tratou de tema nenhum entra no N.
-- **Voz por tema.** É a média, ponderada pela duração, dos trechos do tema que têm voz. Cada trecho é casado com o VAD pelo segmento do Whisper. Arquivo sem segmento casa pelo tempo, do início da fala até o início da fala seguinte. A régua da ativação é a mesma conta da valência, feita sobre `dim_arousal`: média e desvio de todas as linhas do VAD do projeto.
+- **Voz por tema.** É a média de cada respondente nos trechos do tema que têm voz, ponderada pela duração, e depois a média entre respondentes, com o mesmo peso para cada um, como no Termômetro. Até a validação (§15) era a média dos trechos, e quem falava muito decidia a leitura sozinho. Cada trecho é casado com o VAD pelo segmento do Whisper. Arquivo sem segmento casa pelo tempo, do início da fala até o início da fala seguinte. A régua da ativação é a mesma conta da valência, feita sobre `dim_arousal`: média e desvio de todas as linhas do VAD do projeto.
 - **Polaridade predominante.** É a polaridade com mais respondentes no tema. Empate no topo, ou mista ou neutra no topo, conta como "misto ou neutro".
 - **Matriz.**
   - Usa o índice do áudio inteiro, o mesmo do Resumo e da página do áudio. Na entrevista, esse índice inclui as falas do entrevistador.
@@ -207,7 +207,7 @@ Com menos de 20 respondentes no recorte, o cabeçalho diz "Leitura exploratória
 | Negativo | contradiz | atenua | reforça |
 | Misto ou neutro | só a direção da voz | só a direção da voz | só a direção da voz |
 
-Com menos de 5 trechos com voz, a leitura é "não avaliável (n trechos)". Os limiares ±0,15 e ±0,3 são iniciais e serão calibrados na validação com a Smart Fit.
+Com menos de 5 respondentes com voz no tema, a leitura é "não avaliável (n respondentes com voz)". Os limiares ±0,15 e ±0,3 continuaram depois da validação com a Smart Fit (§15).
 
 **Matriz de Destaques.** É montada por áudio. Os terços são calculados sobre todos os áudios do projeto (a mesma régua do índice combinado), e a tabela lista só os do recorte.
 
@@ -236,7 +236,7 @@ Com menos de 5 trechos com voz, a leitura é "não avaliável (n trechos)". Os l
 - médias acústicas por áudio;
 - distribuição de emoções;
 - momentos de maior ativação;
-- perguntas com maior ativação (entrevista);
+- perguntas com maior ativação (entrevista), sem a fala de destaque que a tela mostra: a resposta a "Qual seu nome?" é o nome do entrevistado;
 - ranking de palavras;
 - sentimento do texto;
 - índice combinado;
@@ -364,7 +364,8 @@ Implementado na fase 4, em `utils/prosodia_prompts.py`: `sistema_analise_geral(t
 - **Texto.** Entraram instruções que não estão na lista acima:
   - recomendação é ação da empresa: ferramenta de análise, nova coleta ou ajuste da pesquisa vão para o "Como validar" de uma hipótese;
   - os exemplos dos achados saem dos trechos recebidos;
-  - "texto", "voz" e "índice" da Matriz vêm explicados.
+  - "texto", "voz" e "índice" da Matriz vêm explicados;
+  - "atenua" com ativação média é a voz no habitual do projeto, o caso da maioria dos temas, e não sustenta hipótese. A leitura de cortesia protocolar ou de insatisfação normalizada fica para "atenua" com ativação baixa ou para "contradiz". Entrou na validação (§15), em que a Smart Fit virou "satisfação protocolar" de ponta a ponta.
 - **Estrutura Obrigatória.** Três frases a mais: com menos achados, menos recomendações; cada leitura da Matriz começa pelo nome do grupo; Matriz ou Termômetro não avaliável vira "Não avaliável".
 - **Exemplo.** É o da §10, com o nome do grupo antes de cada leitura da Matriz.
 - **Tarefa.** Traz a linha de cada achado já com o ID, o subtema, a faixa, a fração e a voz; os grupos da Matriz com áudio; o que não é avaliável; e os avisos de leitura exploratória e de variação observada. Sem subtema em padrão ou sinal, hipóteses e recomendações viram uma frase.
@@ -398,8 +399,8 @@ Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dor dita c
 | Pagamento > Falha no app de pagamento | 11/64 (17%) | Padrão | 11 neg | no habitual, ativação baixa → atenua | 6/52 → 5/12 |
 | Ambiente > Limpeza da loja | 9/64 (14%) | Padrão | 8 pos · 1 neg | no habitual, ativação baixa → atenua | 8/52 → 1/12 |
 | Ambiente > Espera por máquina livre | 6/64 (9%) | Sinal | 6 neg | abaixo do habitual, ativação média → reforça | 5/52 → 1/12 |
-| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 neg · 1 pos | não avaliável (4 trechos) | 4/52 → 0/12 |
-| Atendimento > Suporte pelo WhatsApp | 3/64 (5%) | Sinal | 2 neg · 1 pos | não avaliável (3 trechos) | 2/52 → 1/12 |
+| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 neg · 1 pos | não avaliável (4 respondentes com voz) | 4/52 → 0/12 |
+| Atendimento > Suporte pelo WhatsApp | 3/64 (5%) | Sinal | 2 neg · 1 pos | não avaliável (3 respondentes com voz) | 2/52 → 1/12 |
 | Equipamentos > Secagem incompleta | 2/64 (3%) | Menção isolada | 2 neg | — | 2/52 → 0/12 |
 
 Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 neg · Cheiro do sabão (Produtos), 1/64, 1 pos.
@@ -413,8 +414,8 @@ _Faixas: 1–2 respondentes, menção isolada; 3–4, sinal; 5 ou mais e pelo me
 - **A3** · Pagamento > Falha no app de pagamento · padrão, 11/64 — as 11 menções são negativas: cobrança que não libera a máquina e estorno demorado (Áudio 08, 00:11; Áudio 45, 00:17). Voz: no habitual, com ativação baixa — atenua. O tema aparece em 5 dos 12 respondentes novos e em 6 dos 52 anteriores, o que é variação observada, não tendência.
 - **A4** · Ambiente > Limpeza da loja · padrão, 9/64 — 8 dos 9 elogiam a limpeza em frases curtas, sem detalhe (Áudio 22, 00:03). Voz: no habitual, com ativação baixa — atenua.
 - **A5** · Ambiente > Espera por máquina livre · sinal, 6/64 (menos de 10% dos respondentes) — as 6 menções são negativas, e os trechos citam sábado e domingo (Áudio 19, 00:08; Áudio 52, 00:12). Voz: abaixo do habitual — reforça.
-- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Leitura de voz não avaliável (4 trechos).
-- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Leitura de voz não avaliável (3 trechos).
+- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Leitura de voz não avaliável (4 respondentes com voz).
+- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Leitura de voz não avaliável (3 respondentes com voz).
 - Menções isoladas, sem hipótese própria: Secagem incompleta (2/64) e os emergentes Estacionamento (2/64) e Cheiro do sabão (1/64).
 
 ### 3. Hipóteses **[IA]**
@@ -501,7 +502,7 @@ Ordem de implementação:
 3. Agregação e apêndice, com testes, mais a coluna `project_analyses.temas_json` e a extração do Sumário Executivo. **Feita.** A montagem do relatório e a verificação das referências ficaram para a fase 4.
 4. Prompt e montagem do relatório, com a verificação das referências. **Feita.** Ficam para a fase 5: chamar `escrever_relatorio` na página, com `generate_analysis` como `gerar` e o filtro novo da base; mostrar na tela os problemas da verificação; salvar o texto, as citações e o snapshot; tirar o seletor de modo e os prompts antigos de projeto; e ajustar `tests/test_project_type.py`.
 5. Fluxo na página e filtro da base. **Feita.**
-6. Validação com a Smart Fit e com uma Entrevista.
+6. Validação com a Smart Fit e com uma Entrevista. **Feita em 16/10/2026** (§15).
 
 ## 13. Pontos resolvidos em 15/10/2026
 
@@ -529,7 +530,7 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   - Nas demais origens, cada áudio é um respondente.
   - A Matriz continua por áudio.
 - **Aliases:** o corpo cita "Áudio 07" em vez do `session_id`, que traz o telefone. O código numera os áudios, a IA copia o alias (curto e difícil de errar) e o código confere. A legenda alias → sessão fica no apêndice, ou só na tela se a cliente não deve receber telefones.
-- **Limiares de voz por tema:** ±0,15 na valência (cerca de 0,3 desvio) e ±0,3 desvio na ativação. São iniciais e serão calibrados com a Smart Fit.
+- **Limiares de voz por tema:** ±0,15 na valência (cerca de 0,3 desvio) e ±0,3 desvio na ativação. Ficaram depois da validação com a Smart Fit, que mudou a unidade da leitura: cada respondente pesa igual, e são precisos 5 respondentes com voz (§15).
 - **Matriz:** terços calculados sobre todos os áudios do projeto, com mínimo de 10 áudios com índice.
 - **Trechos para a IA:** até 6 por subtema, de respondentes diferentes.
 - **Emergentes:** contados pelo rótulo exato. O classificador recebe os rótulos já usados no projeto para repetir o nome.
@@ -553,6 +554,15 @@ A primeira versão deixou quatro pontos em aberto. O registro fica aqui porque e
   8. na ABIHPEC, o cabeçalho sai como leitura exploratória (11 respondentes);
   9. leitura humana: as recomendações são mais específicas que as dos relatórios atuais?
 - **Revisão:** Pedro revisa os dois relatórios antes do deploy.
+- **Resultado (16/10/2026).** Cópia de produção do mesmo dia, com gpt-4.1 no relatório. Smart Fit: 53 áudios, 51 respondentes. ABIHPEC: projeto 6, 11 áudios, locutores só como A e B. O relatório detalhado fica fora do repositório, porque traz falas e dados da cliente.
+  - Os itens 1, 2, 3, 6, 7 e 8 passaram nos dois projetos, e a verificação das referências não apontou problema nas quatro gerações. Na ABIHPEC, a classificação acertou o entrevistado nos 11 áudios.
+  - Mudou na validação:
+    - a voz por tema passou a dar o mesmo peso a cada respondente, com mínimo de 5 respondentes com voz (§7). Na Smart Fit, a única voz "acima do habitual → reforça" (Equipamentos) e, na ABIHPEC, o "contradiz" de Renovação mudavam de direção ao tirar uma pessoa;
+    - "atenua" com ativação média deixou de sustentar hipótese no prompt (§9);
+    - o apêndice deixou de mostrar a fala de destaque das perguntas, que trazia o nome completo de uma paciente.
+  - Ficou para depois:
+    - na ABIHPEC, 5 dos 11 áudios são cópias de outros (6 gravações), e a Entrevista conta cada áudio como respondente: um tema de 2 pessoas saiu como sinal. A decisão é entre limpar o projeto de demonstração e contar uma vez os áudios repetidos;
+    - um emergente cuja categoria é um subtema da taxonomia ("Sanitários sem papel higiênico" com categoria "Produto > Instalações") ainda não volta para o subtema.
 - **Testes (pytest):**
   - parse e versão da taxonomia;
   - validação do JSON da classificação;

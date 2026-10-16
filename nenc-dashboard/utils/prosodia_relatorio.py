@@ -63,10 +63,12 @@ _PERCENTUAL_PADRAO = 10
 # Abaixo disto o relatório sai como leitura exploratória.
 MIN_RESPONDENTES = 20
 
-# Voz por tema: valência é a metade de voz do índice (±1), ativação é z.
+# Voz por tema: valência é a metade de voz do índice (±1), ativação é z. A
+# leitura pede 5 respondentes com voz no tema: na validação com a Smart Fit, a
+# média dos trechos mudava de direção ao tirar uma só pessoa que falou muito.
 LIMIAR_VALENCIA = 0.15
 LIMIAR_ATIVACAO = 0.3
-MIN_TRECHOS_VOZ = 5
+MIN_RESPONDENTES_VOZ = 5
 
 # O mesmo corte de ±0,2 do sentimento do texto no resto do NencBoost.
 LIMIAR_TEXTO = 0.2
@@ -377,14 +379,19 @@ class LeituraTrecho:
 
 @dataclass(frozen=True)
 class LeituraVoz:
-    """A voz de um tema, como entra na tabela de taxonomia."""
+    """A voz de um tema, como entra na tabela de taxonomia.
 
-    trechos: int
+    `respondentes` são os que têm voz em algum trecho do tema, e `trechos`,
+    os trechos com voz de todos eles.
+    """
+
+    respondentes: int
     valencia: Optional[float] = None
     ativacao: Optional[float] = None
     direcao: str = ""
     nivel: str = ""
     qualificador: str = ""
+    trechos: int = 0
 
     @property
     def avaliavel(self) -> bool:
@@ -392,7 +399,9 @@ class LeituraVoz:
 
     def texto(self) -> str:
         if not self.avaliavel:
-            return "não avaliável ({})".format(_plural(self.trechos, "trecho", "trechos"))
+            return "não avaliável ({} com voz)".format(
+                _plural(self.respondentes, "respondente", "respondentes")
+            )
         leitura = self.direcao + (", ativação " + self.nivel if self.nivel else "")
         return leitura + (" → " + self.qualificador if self.qualificador else "")
 
@@ -407,20 +416,37 @@ def _media_ponderada(pares: Iterable[Tuple[Optional[float], float]]) -> Optional
     return sum(valor * peso for valor, peso in pares) / total
 
 
-def ler_voz(leituras: Iterable[LeituraTrecho], polaridade_predominante: str) -> LeituraVoz:
-    """Leitura da voz de um tema sobre os trechos dele que têm dado de voz.
+def _media_por_respondente(medias: Iterable[Optional[float]]) -> Optional[float]:
+    validas = [media for media in medias if media is not None]
+    return sum(validas) / len(validas) if validas else None
 
-    Valência a partir de +0,15 é "acima do habitual" e até -0,15, "abaixo";
-    ativação a partir de +0,3 desvio é "alta" e até -0,3, "baixa". O
-    qualificador compara a direção da voz com a polaridade predominante do
-    texto no tema, e tema misto ou neutro leva só a direção. Com menos de 5
-    trechos com voz, não avaliável.
+
+def ler_voz(leituras: Iterable[Tuple[str, LeituraTrecho]], polaridade_predominante: str) -> LeituraVoz:
+    """Leitura da voz de um tema, com o mesmo peso para cada respondente.
+
+    `leituras` são pares (respondente, leitura do trecho). Cada respondente
+    entra com a média dos trechos dele que têm voz, ponderada pela duração, e
+    a leitura é a média entre respondentes, como no Termômetro: quem fala
+    muito sobre o tema não decide a leitura sozinho. Valência a partir de
+    +0,15 é "acima do habitual" e até -0,15, "abaixo"; ativação a partir de
+    +0,3 desvio é "alta" e até -0,3, "baixa". O qualificador compara a direção
+    da voz com a polaridade predominante do texto no tema, e tema misto ou
+    neutro leva só a direção. Com menos de 5 respondentes com voz, não
+    avaliável.
     """
-    com_voz = [leitura for leitura in leituras if leitura.voz is not None]
-    if len(com_voz) < MIN_TRECHOS_VOZ:
-        return LeituraVoz(len(com_voz))
-    valencia = _media_ponderada((l.voz, l.peso) for l in com_voz)
-    ativacao = _media_ponderada((l.ativacao, l.peso) for l in com_voz)
+    por_respondente: Dict[str, List[LeituraTrecho]] = {}
+    for respondente, leitura in leituras:
+        if leitura.voz is not None:
+            por_respondente.setdefault(respondente, []).append(leitura)
+    trechos = sum(len(lista) for lista in por_respondente.values())
+    if len(por_respondente) < MIN_RESPONDENTES_VOZ:
+        return LeituraVoz(len(por_respondente), trechos=trechos)
+    valencia = _media_por_respondente(
+        _media_ponderada((l.voz, l.peso) for l in lista) for lista in por_respondente.values()
+    )
+    ativacao = _media_por_respondente(
+        _media_ponderada((l.ativacao, l.peso) for l in lista) for lista in por_respondente.values()
+    )
     # Arredondar antes de comparar: média de 0,15 não pode cair abaixo do
     # limiar por resto de ponto flutuante.
     v = round(valencia, 6)
@@ -430,7 +456,7 @@ def ler_voz(leituras: Iterable[LeituraTrecho], polaridade_predominante: str) -> 
         a = round(ativacao, 6)
         nivel = "alta" if a >= LIMIAR_ATIVACAO else "baixa" if a <= -LIMIAR_ATIVACAO else "média"
     qualificador = _QUALIFICADORES.get(polaridade_predominante, {}).get(direcao, "")
-    return LeituraVoz(len(com_voz), valencia, ativacao, direcao, nivel, qualificador)
+    return LeituraVoz(len(por_respondente), valencia, ativacao, direcao, nivel, qualificador, trechos)
 
 
 def _por_sessao(df: Optional[pd.DataFrame]) -> Dict[str, pd.DataFrame]:
@@ -1106,7 +1132,10 @@ def agregar(
         n = sum(polaridades.values())
         if not n:
             continue
-        voz = ler_voz((leitura for _, _, leitura in ocorrencias.get(rotulo, [])), predominante(polaridades))
+        voz = ler_voz(
+            ((respondente, leitura) for respondente, _, leitura in ocorrencias.get(rotulo, [])),
+            predominante(polaridades),
+        )
         temas.append(LinhaTema(rotulo, curtos[rotulo], n, faixa(n, total), dict(polaridades), voz))
     ordem = {rotulo: i for i, rotulo in enumerate(rotulos)}
     temas.sort(key=lambda t: (-t.respondentes, ordem[t.subtema]))
@@ -1625,11 +1654,12 @@ def _secao_voz_por_tema(agregacao: Agregacao) -> str:
     if not agregacao.temas:
         return "Nenhum subtema citado."
     return _tabela(
-        ["Subtema", "Respondentes", "Trechos com voz", "Valência (voz)", "Ativação (z)", "Leitura"],
+        ["Subtema", "Respondentes", "Com voz", "Trechos com voz", "Valência (voz)", "Ativação (z)", "Leitura"],
         (
             [
                 tema.subtema,
                 str(tema.respondentes),
+                str(tema.voz.respondentes),
                 str(tema.voz.trechos),
                 _decimal(tema.voz.valencia) if tema.voz.valencia is not None else "—",
                 _decimal(tema.voz.ativacao) if tema.voz.ativacao is not None else "—",
@@ -1706,8 +1736,13 @@ def _secao_indice(sinc: pd.DataFrame, regua: Optional[sinais.ReferenciaVoz], ses
 
 
 def _secao_perguntas(perguntas: Sequence[dict]) -> str:
+    """As perguntas do roteiro, sem a fala de destaque que a tela mostra.
+
+    O destaque é a resposta mais ativada à pergunta, e a de "Qual seu nome?"
+    é o nome completo do entrevistado: o relatório vai para a cliente.
+    """
     return _tabela(
-        ["Pergunta", "Respostas cobertas", "Ativação média", "Variação de pitch", "Variação de volume", "Destaque"],
+        ["Pergunta", "Respostas cobertas", "Ativação média", "Variação de pitch", "Variação de volume"],
         (
             [
                 p.get("question", ""),
@@ -1715,7 +1750,6 @@ def _secao_perguntas(perguntas: Sequence[dict]) -> str:
                 _decimal(float(p.get("avg_arousal") or 0.0)),
                 _decimal(float(p.get("avg_f0_var") or 0.0)),
                 _decimal(float(p.get("avg_ld_var") or 0.0)),
-                _fala(p.get("example", "")),
             ]
             for p in perguntas
         ),
@@ -1756,15 +1790,16 @@ def _limitacoes(
         itens.append("Voz por tema não avaliável: o projeto não tem valência vocal suficiente para a régua.")
     else:
         itens.append(
-            "Voz por tema: média, ponderada pela duração, dos trechos do tema. Valência é o z da valência "
+            "Voz por tema: média de cada respondente nos trechos do tema, ponderada pela duração, e depois "
+            "a média entre os respondentes, com o mesmo peso para cada um. Valência é o z da valência "
             "em relação a {} linhas do VAD de {} do projeto, ÷ 2 e limitado a ±1 (a metade de voz do "
             "índice combinado): a partir de +0,15, acima do habitual; até -0,15, abaixo. Ativação é o z "
             "da ativação em relação às mesmas linhas{}: a partir de +0,3, alta; até -0,3, baixa. Com menos de {} "
-            "trechos com voz, não avaliável. Os limiares são iniciais.".format(
+            "respondentes com voz no tema, não avaliável. Os limiares são iniciais.".format(
                 valencia.linhas,
                 _plural(valencia.audios, "áudio", "áudios"),
                 "" if ativacao is not None else " (sem dado de ativação no projeto)",
-                MIN_TRECHOS_VOZ,
+                MIN_RESPONDENTES_VOZ,
             )
         )
     matriz = agregacao.matriz
