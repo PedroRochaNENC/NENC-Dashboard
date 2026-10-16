@@ -174,6 +174,24 @@ class AnaliseGeralRecebeOProjetoInteiroTests(unittest.TestCase):
             for a in chamada.args
         ))
 
+    def test_the_pdf_carries_only_the_saved_analysis(self):
+        # A seção de métricas acústicas do PDF listava cada áudio pela sessão,
+        # que traz o telefone; o apêndice da v2 já tem as médias pelo alias.
+        funcoes = {no.name: no for no in self._nos(ast.FunctionDef)}
+        self.assertNotIn("_calculate_acoustic_summary_text", funcoes)
+
+        pdf = funcoes["_build_project_analysis_pdf"]
+        self.assertEqual(
+            [a.arg for a in pdf.args.args + pdf.args.kwonlyargs],
+            ["project_name", "project_info", "model", "created_at", "text", "citations"],
+        )
+        chamadas = [
+            no for no in self._nos(ast.Call)
+            if isinstance(no.func, ast.Name) and no.func.id == "_build_project_analysis_pdf"
+        ]
+        self.assertEqual(len(chamadas), 1)
+        self.assertNotIn("sinc", ast.unparse(chamadas[0]))
+
 
 if __name__ == "__main__":
     unittest.main()

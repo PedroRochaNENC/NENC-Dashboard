@@ -110,7 +110,6 @@ def _build_project_analysis_pdf(
     created_at: str,
     text: str,
     citations: list,
-    acoustic_summary: str = "",
 ) -> bytes:
     """PDF da análise geral, no mesmo desenho dos demais relatórios.
 
@@ -118,6 +117,10 @@ def _build_project_analysis_pdf(
     renderizar títulos, negrito e tabelas em vez de sair com `**` e barras
     verticais cruas, o rodapé numera as páginas, e a sanitização preserva
     travessões e aspas curvas que a codificação antiga virava `?`.
+
+    Leva só o texto salvo e as referências. A seção de métricas acústicas
+    que vinha depois listava cada áudio pela sessão, que traz o telefone; o
+    apêndice técnico da v2 já tem as médias por áudio, pelo alias.
     """
     pdf = pdf_report.ReportPDF("Análise Geral · {}".format(project_name or "Projeto"))
     pdf.add_page()
@@ -171,13 +174,6 @@ def _build_project_analysis_pdf(
     if text:
         pdf_report.heading(pdf, "Resultado da Análise", level=2)
         pdf_report.render_markdown_lite(pdf, text)
-
-    # -- Métricas acústicas -----------------------------------------------
-    # Vem em markdown do mesmo gerador que alimenta o prompt; renderizar como
-    # tabela e nao como texto monoespacado cortado em 120 colunas.
-    if acoustic_summary:
-        pdf_report.heading(pdf, "Métricas Acústicas Consolidadas", level=2)
-        pdf_report.render_markdown_lite(pdf, acoustic_summary, size=8.5)
 
     # -- Referências -------------------------------------------------------
     if citations:
@@ -478,44 +474,6 @@ def _calculate_questions_activation(audios: list, all_sinc: pd.DataFrame) -> lis
         
     results.sort(key=lambda x: (x["avg_arousal"], x["count"]), reverse=True)
     return results
-
-
-def _calculate_acoustic_summary_text(sinc_df: pd.DataFrame) -> str:
-    if sinc_df.empty:
-        return "Nenhuma métrica acústica disponível."
-        
-    # Dominância entra junto com ativação e valência: é o trio VAD completo, e
-    # sem ela não se separa uma crítica firme de um desabafo hesitante.
-    metrics = ["f0_media", "f0_variacao", "loudness_media", "loudness_variacao", "speaking_rate", "dim_arousal", "dim_valence", "dim_dominance"]
-    available = [m for m in metrics if m in sinc_df.columns]
-    
-    if not available:
-        return "Nenhuma métrica compatível disponível."
-        
-    agg_sess = sinc_df.groupby("session_id")[available].mean().reset_index()
-    lines = ["### Médias por Áudio", ""]
-    cols_header = "| Áudio | " + " | ".join(available) + " |"
-    cols_sep = "|---| " + " | ".join(["---"] * len(available)) + " |"
-    lines.append(cols_header)
-    lines.append(cols_sep)
-    for _, row in agg_sess.iterrows():
-        row_str = f"| {row['session_id']} | " + " | ".join(f"{row[m]:.3f}" if pd.notna(row[m]) else "-" for m in available) + " |"
-        lines.append(row_str)
-        
-    lines.append("")
-    
-    if "SpeakerName" in sinc_df.columns:
-        agg_spk = sinc_df.groupby("SpeakerName")[available].mean().reset_index()
-        lines.append("### Médias por Locutor")
-        lines.append("")
-        cols_header = "| Locutor | " + " | ".join(available) + " |"
-        lines.append(cols_header)
-        lines.append(cols_sep)
-        for _, row in agg_spk.iterrows():
-            row_str = f"| {row['SpeakerName']} | " + " | ".join(f"{row[m]:.3f}" if pd.notna(row[m]) else "-" for m in available) + " |"
-            lines.append(row_str)
-            
-    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------
@@ -1040,7 +998,6 @@ if latest_analysis:
             created_at=latest_analysis.get("created_at", ""),
             text=latest_analysis.get("analysis_text", ""),
             citations=latest_analysis.get("citations", []),
-            acoustic_summary=_calculate_acoustic_summary_text(all_sinc) if not all_sinc.empty else "",
         )
         st.download_button(
             "Download Analise Geral (.pdf)",
