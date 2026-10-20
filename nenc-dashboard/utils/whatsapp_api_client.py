@@ -1742,22 +1742,75 @@ def _paste_qr_logo(img):
     return img
 
 
-def generate_qr_code_bytes(data_url: str) -> bytes:
-    """Gera a imagem PNG em bytes a partir de uma URL/texto para exibição ou download."""
+QR_FONT_PATH = Path(__file__).resolve().parent.parent / "static" / "fonts" / "Rubik.ttf"
+QR_BORDER_MODULES = 4
+QR_BOX_SIZE = 10
+
+
+def _qr_font(size: int, weight: str):
+    """Rubik (fonte do dashboard) no peso pedido; o arquivo e variavel."""
+    from PIL import ImageFont
+
+    font = ImageFont.truetype(str(QR_FONT_PATH), size)
+    font.set_variation_by_name(weight)
+    return font
+
+
+def _add_qr_footer(img, name: str, code: str):
+    """Rodape branco fino abaixo do QR: nome a esquerda e codigo a direita.
+
+    Fica fora da borda silenciosa, entao nao interfere na leitura. Nome que
+    nao cabe numa linha e cortado com reticencias antes de encostar no codigo.
+    """
+    from PIL import Image, ImageDraw
+
+    # Proporcoes calibradas num QR de 970px; acompanham o tamanho do QR.
+    scale = img.width / 970
+    height = round(70 * scale)
+    margin = QR_BORDER_MODULES * QR_BOX_SIZE
+    code_font = _qr_font(round(36 * scale), "Bold")
+    name_font = _qr_font(round(32 * scale), "Regular")
+
+    out = Image.new("RGB", (img.width, img.height + height), "white")
+    out.paste(img, (0, 0))
+    draw = ImageDraw.Draw(out)
+    # Um pouco acima do centro da faixa, para o texto ficar perto do QR.
+    y = img.height + height / 2 - round(12 * scale)
+
+    code = (code or "").strip()
+    draw.text((img.width - margin, y), code, font=code_font, fill=(51, 51, 51), anchor="rm")
+    max_width = img.width - 2 * margin - draw.textlength(code, font=code_font) - round(40 * scale)
+    text = (name or "").strip()
+    if draw.textlength(text, font=name_font) > max_width:
+        while text and draw.textlength(text + "…", font=name_font) > max_width:
+            text = text[:-1]
+        text = text.rstrip() + "…"
+    draw.text((margin, y), text, font=name_font, fill=(110, 110, 110), anchor="lm")
+    return out
+
+
+def generate_qr_code_bytes(data_url: str, name: str = "", code: str = "") -> bytes:
+    """Gera a imagem PNG em bytes a partir de uma URL/texto para exibição ou download.
+
+    Com ``name`` ou ``code``, acrescenta o rodapé de identificação usado no
+    arquivo baixado.
+    """
     try:
         import qrcode
         qr = qrcode.QRCode(
             version=1,
             # Correcao H porque o logo no centro esconde parte dos modulos.
             error_correction=qrcode.constants.ERROR_CORRECT_H,
-            box_size=10,
-            border=4,
+            box_size=QR_BOX_SIZE,
+            border=QR_BORDER_MODULES,
         )
         qr.add_data(data_url)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
         if QR_LOGO_PATH.exists():
             img = _paste_qr_logo(img)
+        if (name or code) and QR_FONT_PATH.exists():
+            img = _add_qr_footer(img, name, code)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()

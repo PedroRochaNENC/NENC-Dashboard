@@ -302,6 +302,16 @@ def _detail_panel(qr: dict) -> None:
                 unsafe_allow_html=True,
             )
 
+        # O rodape identifica o material impresso; na tela nome e codigo ja
+        # aparecem no cabecalho, entao so o arquivo baixado pode leva-lo.
+        with_footer = st.checkbox("Incluir nome e código no PNG", value=True,
+                                  key="pros_qr_footer_{}".format(qr["id"]))
+        if png is not None and with_footer:
+            try:
+                png = generate_qr_code_bytes(link, name=str(qr.get("name") or ""),
+                                             code=str(qr.get("code") or ""))
+            except Exception as error:
+                st.error(str(error))
         c_download, c_audios = st.columns(2)
         c_download.download_button(
             "Baixar PNG", data=png or b"", file_name="qrcode_{}.png".format(qr.get("code", "")),

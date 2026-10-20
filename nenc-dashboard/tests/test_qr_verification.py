@@ -108,6 +108,20 @@ class TestQRVerificationText(unittest.TestCase):
         self.assertIsInstance(img_bytes, bytes)
         self.assertGreater(len(img_bytes), 0)
         # Check PNG magic header \x89PNG
+
+    def test_generate_qr_code_bytes_with_footer(self):
+        import io
+        from PIL import Image
+
+        url = "https://wa.me/5511999999999?text=teste"
+        plain = Image.open(io.BytesIO(generate_qr_code_bytes(url)))
+        long_name = "Cartaz Recepção - Unidade Central Zona Norte " * 3
+        footer = Image.open(io.BytesIO(generate_qr_code_bytes(url, name=long_name, code="09-02")))
+        # O rodape so acrescenta altura: o QR em si fica igual.
+        self.assertEqual(footer.width, plain.width)
+        self.assertGreater(footer.height, plain.height)
+        self.assertEqual(footer.crop((0, 0) + plain.size).tobytes(), plain.convert("RGB").tobytes())
+
     def test_organization_whatsapp_numbers(self):
         auth.update_organization(
             self.platform_admin,
