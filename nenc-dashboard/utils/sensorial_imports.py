@@ -230,7 +230,15 @@ def _apply(project_id: int, batch: Dict, fixes: Dict[int, Dict], selected, send_
             reasons = "; ".join(issue["message"] for issue in parsed.issues if issue["level"] == "error")
             skipped.append("{}: {}".format(name, reasons))
             continue
-        result = sensorial_db.add_files(project_id, [file_item(entry, path, parsed)])
+        doc_type = fix.get("doc_type") or entry["meta"].get("doc_type")
+        item = file_item(entry, path, parsed)
+        if role == "documento" and doc_type and doc_type != "relatorio":
+            item["meta"] = dict(item["meta"], doc_type=doc_type)
+        result = sensorial_db.add_files(project_id, [item])
+        if role == "documento" and doc_type == "relatorio":
+            # A marca vem depois, para desmarcar o relatório anterior do projeto.
+            for file_id, _ in result["added"]:
+                sensorial_db.set_document_type(project_id, file_id, "relatorio")
         codes |= participant_codes(parsed)
         report["files"] += len(result["added"])
         report["duplicates"] += len(result["duplicates"])

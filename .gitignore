@@ -23,3 +23,6 @@ static/audio_*.wav
 
 # Planilhas internas de custo — repositorio publico, nao versionar
 custos_sistema_prosodia.xlsx
+
+# Saidas de validacao de analises com dados de estudo — nao versionar
+analise_1055_alcaraz/

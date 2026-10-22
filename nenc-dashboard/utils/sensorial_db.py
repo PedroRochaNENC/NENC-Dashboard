@@ -42,10 +42,20 @@ PROJECT_FIELDS = (
     "briefing_text",
     "settings_json",
     "quality_thresholds",
+    "taxonomia",
+    "taxonomia_status",
+    "nomes_amostras",
 )
 # Campos que mudam o resultado da análise: alterar qualquer um envelhece as
 # análises de IA e o cache do modelo.
 _DATA_FIELDS = {"settings_json", "quality_thresholds"}
+# Colunas que entraram depois da tabela: init_db as acrescenta num banco antigo.
+_ADDED_PROJECT_COLUMNS = ("taxonomia", "taxonomia_status", "nomes_amostras")
+
+# Tipo de um arquivo de papel "documento" (meta["doc_type"]). Só um relatório
+# do estudo fica marcado por projeto: é o texto que a Análise Geral não pode
+# contradizer.
+DOC_TYPES = {"relatorio": "Relatório do estudo", "briefing": "Briefing", "": "Outro documento"}
 
 SESSION_STATUSES = ("auto", "incluida", "excluida")
 SESSION_LAYERS = ("todas", "eeg", "fc", "gsr", "associacao")
@@ -193,6 +203,9 @@ def init_db() -> None:
                 briefing_text TEXT,
                 settings_json TEXT,
                 quality_thresholds TEXT,
+                taxonomia TEXT,
+                taxonomia_status TEXT,
+                nomes_amostras TEXT,
                 created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 data_version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -309,6 +322,10 @@ def init_db() -> None:
         )
         for table_name in _CHILD_TABLES:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_{t}_project ON {t}(project_id)".format(t=table_name))
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(sens_projects)")}
+        for column in _ADDED_PROJECT_COLUMNS:
+            if column not in existing:
+                conn.execute("ALTER TABLE sens_projects ADD COLUMN {} TEXT".format(column))
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +356,12 @@ def _check_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in fields.items():
         if key == "settings_json" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False)
+        if key == "nomes_amostras" and isinstance(value, dict):
+            value = json.dumps({str(k): str(v).strip() for k, v in value.items() if str(v or "").strip()},
+                               ensure_ascii=False, sort_keys=True)
         if key == "quality_thresholds" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-        if isinstance(value, str) and key not in ("settings_json", "quality_thresholds"):
+        if isinstance(value, str) and key not in ("settings_json", "quality_thresholds", "nomes_amostras"):
             value = value.strip()
         clean[key] = value
     if "name" in clean and not clean["name"]:
@@ -397,6 +417,12 @@ def project_settings(project: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         return {}
     settings = _json_or(project.get("settings_json"), {})
     return settings if isinstance(settings, dict) else {}
+
+
+def sample_names(project: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Nome comercial confirmado de cada amostra, pelo código da condição; vazio sem nenhum."""
+    names = _json_or((project or {}).get("nomes_amostras"), {})
+    return {str(k): str(v) for k, v in names.items() if v} if isinstance(names, dict) else {}
 
 
 def update_project(project_id: int, **changes) -> bool:
@@ -634,6 +660,45 @@ def set_file_active(project_id: int, file_id: int, active: bool) -> bool:
     if result.rowcount:
         _audit("sensorial.file.update", "sens_file", file_id, project_org, write=True)
     return bool(result.rowcount)
+
+
+def set_document_type(project_id: int, file_id: int, doc_type: str) -> bool:
+    """Marca o tipo de um documento; marcar um relatório desmarca o anterior do projeto."""
+    if doc_type not in DOC_TYPES:
+        raise ValueError("Tipo de documento desconhecido: {!r}".format(doc_type))
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        project_org = _project_org(conn, project_id, organization_id)
+        row = conn.execute("SELECT meta_json FROM sens_files WHERE id = ? AND project_id = ? AND role = 'documento'",
+                           (file_id, project_id)).fetchone()
+        if row is None:
+            return False
+        meta = _json_or(row["meta_json"], {})
+        if (meta.get("doc_type") or "") == doc_type:
+            return False
+        if doc_type == "relatorio":
+            for other in conn.execute("SELECT id, meta_json FROM sens_files WHERE project_id = ? AND id != ? "
+                                      "AND role = 'documento'", (project_id, file_id)).fetchall():
+                other_meta = _json_or(other["meta_json"], {})
+                if other_meta.get("doc_type") == "relatorio":
+                    other_meta["doc_type"] = ""
+                    conn.execute("UPDATE sens_files SET meta_json = ? WHERE id = ?",
+                                 (json.dumps(other_meta, ensure_ascii=False), other["id"]))
+        meta["doc_type"] = doc_type
+        conn.execute("UPDATE sens_files SET meta_json = ? WHERE id = ?",
+                     (json.dumps(meta, ensure_ascii=False), file_id))
+        _bump_version(conn, project_id)
+    _audit("sensorial.file.update", "sens_file", file_id, project_org, write=True)
+    return True
+
+
+def study_report(project_id: int) -> Optional[Dict[str, Any]]:
+    """O relatório do estudo marcado e ativo (metadados), ou None."""
+    for item in list_files(project_id):
+        if item["is_active"] and item["role"] == "documento" and item["meta"].get("doc_type") == "relatorio":
+            return item
+    return None
 
 
 def delete_file(project_id: int, file_id: int) -> bool:

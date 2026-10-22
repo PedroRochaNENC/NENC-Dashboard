@@ -37,7 +37,8 @@ from utils import sensorial_charts as charts
 from utils import sensorial_db, sensorial_design, sensorial_quality
 from utils.ai_provider import get_openai_client, get_sensorial_vector_store_id
 from utils.project_ui import active_project
-from utils.sensorial_ai import AI_MODELS, MODE_LABELS, chat_answer, filters_text, generate_analysis, send_analysis_to_kb
+from utils.sensorial_ai import (AI_MODELS, MODE_LABELS, chat_answer, confirmed_sample_names, filters_text,
+                                generate_analysis, load_study_report, send_analysis_to_kb)
 from utils.sensorial_cache import get_image, get_project_metrics, get_project_model
 from utils.sensorial_export import build_excel, report_topomaps
 from utils.sensorial_model import LAYER_LABELS
@@ -314,9 +315,23 @@ elif section == "IA":
     kb_store = get_sensorial_vector_store_id() if auth.active_organization_id(user) else None
     recorte = filters_text(filters)
     st.subheader("Análise por IA")
-    st.caption("A IA recebe o contexto do projeto e as métricas do recorte — médias, comparações com o p de Holm, o "
-               "teste de associação e a síntese —, nunca os dados brutos nem o nome de ninguém. As contas são do "
-               "app; a leitura é da IA.")
+    st.caption("A IA recebe o contexto do projeto, o relatório do estudo marcado em Uploads, os temas de Dados do "
+               "Projeto e as métricas do recorte — médias, comparações com o p de Holm, o teste de associação e a "
+               "síntese —, nunca os dados brutos nem o nome de ninguém. O texto é para o marketing: organizado por "
+               "tema, sem contradizer o relatório do estudo, com os números num apêndice.")
+    study_report, report_warning = load_study_report(project_id)
+    if study_report:
+        st.caption("Relatório do estudo: {}.".format(study_report[0]))
+    else:
+        st.caption(report_warning or "Nenhum documento marcado como relatório do estudo em Uploads: a análise sai "
+                                     "só das métricas do app.")
+    confirmed_names = confirmed_sample_names(project, model)
+    if confirmed_names:
+        st.caption("Nomes das amostras: {}.".format("; ".join("{} = {}".format(k, v)
+                                                              for k, v in confirmed_names.items())))
+    else:
+        st.caption("Os nomes comerciais das amostras não foram confirmados: o texto usa os nomes dos gráficos. "
+                   "Confirme em Dados do Projeto → Desenho.")
     use_kb = False
     if pode_editar:
         with st.container(border=True):
@@ -342,8 +357,18 @@ elif section == "IA":
                     mode = "rapida" if mode_label == "Rápida" else "aprofundada"
                     try:
                         with st.spinner("Gerando a análise {}…".format(mode_label.lower())):
-                            result = generate_analysis(project, model, metrics, mode=mode, ai_model=ai_model,
-                                                       recorte=recorte, vector_store_id=kb_store if use_kb else None)
+                            result = generate_analysis(
+                                project, model, metrics, mode=mode, ai_model=ai_model, recorte=recorte,
+                                vector_store_id=kb_store if use_kb else None, report=study_report,
+                                save_taxonomy=lambda texto, status: sensorial_db.update_project(
+                                    project_id, taxonomia=texto, taxonomia_status=status))
+                        taxonomia = result["taxonomia"]
+                        if taxonomia["proposta"] and not taxonomia["aviso"]:
+                            st.session_state["ts_ai_notice"] = (
+                                "A IA propôs os temas e eles ficaram salvos como provisórios em Dados do Projeto → "
+                                "Temas, para a equipe revisar.")
+                        elif taxonomia["aviso"]:
+                            st.session_state["ts_ai_notice"] = taxonomia["aviso"]
                         if not result["text"].strip():
                             st.error("A IA não devolveu texto. Tente de novo.")
                         else:
@@ -356,6 +381,9 @@ elif section == "IA":
                     except Exception as error:
                         st.error("Não foi possível gerar a análise: {}".format(error))
 
+    notice = st.session_state.pop("ts_ai_notice", None)
+    if notice:
+        st.info(notice)
     if not analyses:
         st.info("Nenhuma análise gerada ainda." + (" Escolha o modo e clique em **Gerar análise**." if pode_editar
                                                    else ""))
