@@ -7,15 +7,20 @@ define a análise, em abas:
 - Contexto: objetivo, perguntas e briefing (que também vai para a base de
   conhecimento, marcado como material deste projeto);
 - Desenho: o que cada sessão é (basal, controle, amostra) e as etapas que
-  entram, deduzidos dos dados e corrigíveis aqui;
+  entram, deduzidos dos dados e corrigíveis aqui; e o nome comercial de cada
+  amostra para a Análise Geral por IA, sugerido pelo relatório do estudo e
+  confirmado pela equipe;
 - Índices: nome de negócio de cada índice e o modo do PPI;
 - Limpeza: BASE LIMPA, regra de outliers do SPSS e qualidade dos periféricos;
 - Claims: o que confirma cada claim no cérebro e no corpo, e as faixas do
   teste de associação;
+- Temas: a taxonomia de benefício e experiência que organiza a Análise Geral
+  por IA (utils/sensorial_taxonomia.py);
 - Estatística: mínimo de pares e alfa.
 
-Toda mudança aqui sobe a versão dos dados: a análise é recalculada e as
-análises de IA anteriores ficam marcadas como de dados antigos.
+Toda mudança de Desenho a Estatística, menos Temas e os nomes comerciais, sobe a versão dos dados:
+a análise é recalculada e as análises de IA anteriores ficam marcadas como de
+dados antigos.
 """
 
 from datetime import datetime
@@ -29,8 +34,10 @@ from utils.icons import page_title
 user = auth.require_module("teste_sensorial")
 pode_editar = auth.can_write(user)
 
-from utils import sensorial_db, sensorial_design
+from utils import sensorial_db, sensorial_design, sensorial_taxonomia
 from utils.ai_provider import add_document_to_vector_store, get_openai_client, get_sensorial_vector_store_id
+from utils.sensorial_ai import load_study_report, suggest_sample_names
+from utils.sensorial_cache import get_project_metrics
 from utils.briefing import BRIEFING_EXTENSIONS, cap_text, extract_briefing_text
 from utils.kb_attributes import project_document
 
@@ -40,6 +47,7 @@ ROLE_LABELS = {"basal": "Basal", "controle": "Controle", "amostra": "Amostra", "
 STAGE_ROLE_LABELS = {"referencia": "Referência", "exposicao": "Exposição", "pos": "Pós-exposição",
                      "ignorar": "Fora da análise"}
 OUT = "(fora da análise)"
+NAMES_AI_MODEL = "gpt-4.1"
 
 
 def _slugify(text: str) -> str:
@@ -428,6 +436,108 @@ def _render_claims(model: dict) -> None:
         st.rerun()
 
 
+def _render_sample_names(model: dict) -> None:
+    samples = [c for c in model["design"].get("condicoes") or [] if c.get("papel") == "amostra"]
+    if not samples:
+        return
+    st.divider()
+    st.markdown("**Nome comercial de cada amostra** — como a Análise Geral por IA chama cada uma. Só os nomes "
+                "confirmados aqui vão para a IA; sem eles, o texto usa o nome nos gráficos.")
+    saved = sensorial_db.sample_names(project)
+    state_key = "ts_names_suggestion_{}".format(project["id"])
+    suggestion = st.session_state.get(state_key) or {}
+    has_report = sensorial_db.study_report(project["id"]) is not None
+    if pode_editar and st.button(
+            "Sugerir pelo relatório do estudo", key="ts_suggest_names", disabled=not has_report,
+            help="A IA lista os números que o relatório atribui a cada amostra e o app os procura nas métricas. "
+                 "É só uma sugestão: os números do relatório podem vir de outra escala e bater por acaso."
+            if has_report else "Marque o relatório do estudo em Uploads."):
+        report, warning = load_study_report(project["id"])
+        if not report:
+            st.error(warning)
+        elif get_openai_client() is None:
+            st.error("A OpenAI não está configurada: defina OPENAI_API_KEY no .env e reinicie o app.")
+        else:
+            try:
+                with st.spinner("Lendo o relatório do estudo…"):
+                    st.session_state[state_key] = suggest_sample_names(
+                        model, get_project_metrics(project), ai_model=NAMES_AI_MODEL, report=report)
+            except Exception as error:
+                st.error("Não foi possível sugerir os nomes: {}".format(error))
+            else:
+                st.rerun()
+    suggested = suggestion.get("nomes") or {}
+    table = pd.DataFrame([{
+        "codigo": c["codigo"], "rotulo": c["rotulo"], "sugestao": suggested.get(c["codigo"], ""),
+        "nome": saved.get(c["codigo"]) or suggested.get(c["codigo"], ""),
+    } for c in samples])
+    edited = st.data_editor(
+        table, hide_index=True, width="stretch", disabled=True if not pode_editar else ["codigo", "rotulo", "sugestao"],
+        column_config={"codigo": st.column_config.TextColumn("Código"),
+                       "rotulo": st.column_config.TextColumn("Nome nos gráficos"),
+                       "sugestao": st.column_config.TextColumn("Sugestão"),
+                       "nome": st.column_config.TextColumn("Nome comercial")},
+        key="ts_sample_names_{}_{}".format(project["id"], len(suggested)))
+    if suggestion:
+        unmatched = [name for name in suggestion.get("lidos") or [] if name not in suggested.values()]
+        st.caption("Sugestão pronta: confira e confirme." + (
+            " Nomes do relatório sem amostra casada pelos números: {}.".format("; ".join(unmatched))
+            if unmatched else ""))
+    if pode_editar and st.button("Confirmar nomes", type="primary", key="ts_save_names"):
+        names = {row["codigo"]: str(row["nome"] or "").strip() for _, row in edited.iterrows()}
+        try:
+            sensorial_db.update_project(project["id"], nomes_amostras=names)
+        except (auth.AuthorizationError, ValueError) as error:
+            st.error(str(error))
+        else:
+            st.session_state.pop(state_key, None)
+            st.toast("Nomes confirmados.")
+            st.rerun()
+
+
+def _render_design_and_names(model: dict) -> None:
+    _render_design(model)
+    _render_sample_names(model)
+
+
+def _render_themes(model: dict) -> None:
+    st.markdown("Os temas organizam a Análise Geral por IA. **Benefício** agrupa os claims em territórios de "
+                "comunicação; **Experiência**, as etapas em momentos do consumidor. Uma linha por tema, no formato "
+                "`Benefício > Tema: claim; claim` ou `Experiência > Momento: etapa; etapa`. Sem temas, a próxima "
+                "análise pede uma proposta à IA, que fica aqui como provisória.")
+    text = st.text_area("Temas", value=project.get("taxonomia") or "", height=220, disabled=not pode_editar,
+                        placeholder="Benefício > Energia física: Energia; Aumenta sua energia\n"
+                                    "Benefício > Mente e foco: Recarrega sua mente; Te deixa mais focado\n"
+                                    "Experiência > Primeira impressão: Olfação\n"
+                                    "Experiência > Efeito que fica: Pós-olfação",
+                        key="ts_taxonomia_{}".format(project["id"]))
+    statuses = list(sensorial_taxonomia.STATUS_LABELS)
+    current = project.get("taxonomia_status") or sensorial_taxonomia.PROVISORIA
+    status = st.radio("Situação", statuses, index=statuses.index(current) if current in statuses else 0,
+                      format_func=sensorial_taxonomia.STATUS_LABELS.get, horizontal=True, disabled=not pode_editar,
+                      key="ts_taxonomia_status_{}".format(project["id"]))
+    parsed = sensorial_taxonomia.parse(text)
+    if parsed.ignoradas:
+        st.warning("Linhas fora do formato, que a análise ignora: " + " · ".join(parsed.ignoradas))
+    if text.strip():
+        missing = sensorial_taxonomia.claims_sem_tema(parsed, [c["palavra"] for c in model["claims"]])
+        if missing:
+            st.caption("Claims sem tema de benefício: " + "; ".join(missing))
+    if not (pode_editar and st.button("Salvar temas", type="primary", key="ts_save_taxonomia")):
+        return
+    if text.strip() and parsed.vazia:
+        st.error("Nenhuma linha `Benefício > Tema: claims` no texto. Corrija ou apague tudo para a IA propor.")
+        return
+    try:
+        sensorial_db.update_project(project["id"], taxonomia=sensorial_taxonomia.formatar(parsed) if text.strip()
+                                    else "", taxonomia_status=status if text.strip() else "")
+    except (auth.AuthorizationError, ValueError) as error:
+        st.error(str(error))
+    else:
+        st.toast("Temas salvos.")
+        st.rerun()
+
+
 def _render_statistics(model: dict) -> None:
     stats = model["settings"]["estatistica"]
     st.markdown("As comparações são pareadas por participante (Wilcoxon), com o p de cada família (índice × "
@@ -447,11 +557,11 @@ if not editing:
 else:
     from utils.sensorial_cache import get_project_model
 
-    tabs = st.tabs(["Contexto", "Desenho", "Índices", "Limpeza", "Claims", "Estatística"])
+    tabs = st.tabs(["Contexto", "Desenho", "Índices", "Limpeza", "Claims", "Temas", "Estatística"])
     with tabs[0]:
         _render_context()
     project_model = get_project_model(project)
-    for tab, render in zip(tabs[1:], (_render_design, _render_indices, _render_cleaning, _render_claims,
-                                      _render_statistics)):
+    for tab, render in zip(tabs[1:], (_render_design_and_names, _render_indices, _render_cleaning, _render_claims,
+                                      _render_themes, _render_statistics)):
         with tab:
             render(project_model)

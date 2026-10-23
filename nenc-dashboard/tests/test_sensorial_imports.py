@@ -122,6 +122,18 @@ class FlowTests(_ImportBase):
         self.assertEqual(report["participants"], 1)
         self.assertEqual(sensorial_db.list_files(self.project_id)[0]["role"], "perfil")
 
+    def test_an_imported_study_report_becomes_the_marked_one(self):
+        for version in (b"v1", b"v2"):
+            batch_id = self._ready_batch([("5.RELATORIO/5.2/Relatorio {}.txt".format(version.decode()),
+                                           b"Conclusoes " + version, "documento")])
+            [entry] = sensorial_imports.batch_files(self.project_id, batch_id)
+            with self._as(self.first_admin):
+                sensorial_imports.apply_batch(self.project_id, batch_id, {entry["id"]: {"doc_type": "relatorio"}})
+        report = sensorial_db.study_report(self.project_id)
+        self.assertEqual(report["filename"], "Relatorio v2.txt")
+        types = [f["meta"].get("doc_type") for f in sensorial_db.list_files(self.project_id)]
+        self.assertEqual(types, ["", "relatorio"])
+
     def test_a_denied_review_keeps_the_batch_ready(self):
         batch_id = self._ready_batch([(RUN_A + "manifest.json", MANIFEST, "manifesto")])
         with patch.object(sensorial_db, "_require_write", side_effect=auth.AuthorizationError("x")):

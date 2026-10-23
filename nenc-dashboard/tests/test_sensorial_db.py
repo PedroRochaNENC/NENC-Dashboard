@@ -110,6 +110,7 @@ class WriteGuardTests(_Base):
             ("delete_project", (project_id,), {}),
             ("add_files", (project_id, [{"filename": "a.png", "role": "imagem", "content": b"x"}]), {}),
             ("set_file_active", (project_id, 1, False), {}),
+            ("set_document_type", (project_id, 1, "relatorio"), {}),
             ("delete_file", (project_id, 1), {}),
             ("upsert_participants", (project_id, [{"code": "P01"}]), {}),
             ("set_session_status", (project_id, "S1"), {"status": "excluida", "reason": "x"}),
@@ -337,6 +338,80 @@ class FileTests(_Base):
             sensorial_store.resolve("../fora.txt")
         with self.assertRaises(ValueError):
             sensorial_store.save_original(1, 1, "nao-e-hash", ".csv", b"x")
+
+
+class StudyReportTests(_Base):
+    def _documents(self, project_id, *names):
+        with self._as(self.first_admin):
+            added = sensorial_db.add_files(project_id, [
+                {"filename": name, "role": "documento", "content": name.encode(), "meta": {"extensao": ".pptx"}}
+                for name in names])["added"]
+        return [file_id for file_id, _ in added]
+
+    def test_only_one_document_is_the_study_report(self):
+        project_id = self._project()
+        first, second = self._documents(project_id, "Relatorio v1.pptx", "Relatorio v2.pptx")
+        self.assertIsNone(sensorial_db.study_report(project_id))
+        before = self._version(project_id)
+        with self._as(self.first_admin):
+            self.assertTrue(sensorial_db.set_document_type(project_id, first, "relatorio"))
+            self.assertFalse(sensorial_db.set_document_type(project_id, first, "relatorio"))
+            self.assertTrue(sensorial_db.set_document_type(project_id, second, "relatorio"))
+        self.assertEqual(sensorial_db.study_report(project_id)["id"], second)
+        types = {item["id"]: item["meta"].get("doc_type") for item in sensorial_db.list_files(project_id)}
+        self.assertEqual(types, {first: "", second: "relatorio"})
+        self.assertEqual(sensorial_db.list_files(project_id)[0]["meta"]["extensao"], ".pptx")
+        self.assertGreater(self._version(project_id), before)
+
+    def test_an_inactive_report_does_not_count_and_only_documents_take_a_type(self):
+        project_id = self._project()
+        (report,) = self._documents(project_id, "Relatorio.pptx")
+        with self._as(self.first_admin):
+            sensorial_db.set_document_type(project_id, report, "relatorio")
+            sensorial_db.set_file_active(project_id, report, False)
+            image = sensorial_db.add_files(project_id, [{"filename": "a.png", "role": "estimulo",
+                                                         "content": b"png"}])["added"][0][0]
+            self.assertFalse(sensorial_db.set_document_type(project_id, image, "relatorio"))
+            with self.assertRaises(ValueError):
+                sensorial_db.set_document_type(project_id, report, "outro")
+        self.assertIsNone(sensorial_db.study_report(project_id))
+
+    def test_the_taxonomy_is_a_project_field_that_keeps_the_data_version(self):
+        project_id = self._project()
+        before = self._version(project_id)
+        with self._as(self.first_admin):
+            sensorial_db.update_project(project_id, taxonomia="Benefício > Energia: Energia",
+                                        taxonomia_status="aprovada")
+        project = sensorial_db.get_project(project_id)
+        self.assertEqual((project["taxonomia"], project["taxonomia_status"]),
+                         ("Benefício > Energia: Energia", "aprovada"))
+        self.assertEqual(self._version(project_id), before)
+
+    def test_sample_names_are_stored_by_condition_code_without_blanks(self):
+        project_id = self._project()
+        self.assertEqual(sensorial_db.sample_names(sensorial_db.get_project(project_id)), {})
+        before = self._version(project_id)
+        with self._as(self.first_admin):
+            sensorial_db.update_project(project_id, nomes_amostras={"B1": " Clash MOD 8 ", "B2": "", "A": None})
+        project = sensorial_db.get_project(project_id)
+        self.assertEqual(sensorial_db.sample_names(project), {"B1": "Clash MOD 8"})
+        self.assertEqual(self._version(project_id), before)
+
+
+class SchemaMigrationTests(unittest.TestCase):
+    def test_an_old_projects_table_gains_the_taxonomy_columns(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database_path = Path(folder) / "nenc-insights.db"
+            _identity(database_path)
+            with closing(sqlite3.connect(database_path)) as database, database:
+                database.execute("CREATE TABLE sens_projects (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                                 "organization_id INTEGER NOT NULL, name TEXT NOT NULL, settings_json TEXT)")
+            with patch.dict(os.environ, {"NENC_DB_PATH": str(database_path)}):
+                sensorial_db.init_db()
+                sensorial_db.init_db()
+            with closing(sqlite3.connect(database_path)) as database:
+                columns = {row[1] for row in database.execute("PRAGMA table_info(sens_projects)")}
+        self.assertTrue({"taxonomia", "taxonomia_status", "nomes_amostras"} <= columns)
 
 
 class DataTests(_Base):

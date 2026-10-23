@@ -140,6 +140,8 @@ else:
         "id": item["id"],
         "arquivo": PurePosixPath(item["rel_path"] or item["filename"]).name,
         "papel": ROLE_LABELS.get(item["role"], item["role"]),
+        "tipo": sensorial_db.DOC_TYPES.get(item["meta"].get("doc_type") or "", "")
+        if item["role"] == "documento" else "",
         "rodada": item.get("run_id") or "",
         "ativo": item["is_active"],
         "MB": round(item["size_bytes"] / 1024 ** 2, 1),
@@ -155,6 +157,17 @@ else:
                           key="ts_files_choice")
     if chosen:
         current = next(item for item in files if item["id"] == chosen)
+        if current["role"] == "documento":
+            doc_types = list(sensorial_db.DOC_TYPES)
+            doc_type = st.selectbox(
+                "Tipo do documento", doc_types, index=doc_types.index(current["meta"].get("doc_type") or ""),
+                format_func=sensorial_db.DOC_TYPES.get, key="ts_file_doc_type_{}".format(chosen),
+                help="O relatório do estudo entra inteiro no prompt da Análise Geral, que não pode contradizê-lo. "
+                     "Só um fica marcado por projeto; a IA lê .pptx, .docx e texto, não PDF.")
+            if doc_type != (current["meta"].get("doc_type") or "") and st.button("Salvar tipo",
+                                                                                   key="ts_file_doc_type_save"):
+                sensorial_db.set_document_type(project_id, chosen, doc_type)
+                st.rerun()
         toggle, remove = st.columns(2)
         if toggle.button("Desativar" if current["is_active"] else "Ativar", key="ts_file_toggle", width="stretch"):
             sensorial_db.set_file_active(project_id, chosen, not current["is_active"])
