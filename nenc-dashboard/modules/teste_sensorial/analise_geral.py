@@ -37,8 +37,9 @@ from utils import sensorial_charts as charts
 from utils import sensorial_db, sensorial_design, sensorial_quality
 from utils.ai_provider import get_openai_client, get_sensorial_vector_store_id
 from utils.project_ui import active_project
-from utils.sensorial_ai import (AI_MODELS, MODE_LABELS, chat_answer, confirmed_sample_names, filters_text,
-                                generate_analysis, load_study_report, send_analysis_to_kb)
+from utils.sensorial_ai import (AI_MODELS, MODE_LABELS, chat_answer, confirmed_report_claims,
+                                confirmed_sample_names, filters_text, generate_analysis, load_study_report,
+                                send_analysis_to_kb)
 from utils.sensorial_cache import get_image, get_project_metrics, get_project_model
 from utils.sensorial_export import build_excel, report_topomaps
 from utils.sensorial_model import LAYER_LABELS
@@ -332,6 +333,9 @@ elif section == "IA":
     else:
         st.caption("Os nomes comerciais das amostras não foram confirmados: o texto usa os nomes dos gráficos. "
                    "Confirme em Dados do Projeto → Desenho.")
+    if not confirmed_report_claims(project, model):
+        st.caption("A conclusão do relatório por claim não foi confirmada: a IA a procura no relatório e pode "
+                   "errar. Confirme em Dados do Projeto → Claims.")
     use_kb = False
     if pode_editar:
         with st.container(border=True):

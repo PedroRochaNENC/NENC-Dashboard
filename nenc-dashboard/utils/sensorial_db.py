@@ -45,12 +45,15 @@ PROJECT_FIELDS = (
     "taxonomia",
     "taxonomia_status",
     "nomes_amostras",
+    "claims_relatorio",
 )
 # Campos que mudam o resultado da análise: alterar qualquer um envelhece as
 # análises de IA e o cache do modelo.
 _DATA_FIELDS = {"settings_json", "quality_thresholds"}
 # Colunas que entraram depois da tabela: init_db as acrescenta num banco antigo.
-_ADDED_PROJECT_COLUMNS = ("taxonomia", "taxonomia_status", "nomes_amostras")
+_ADDED_PROJECT_COLUMNS = ("taxonomia", "taxonomia_status", "nomes_amostras", "claims_relatorio")
+# Conclusão do relatório do estudo sobre cada claim de cada amostra.
+REPORT_CLAIM_STATUSES = ("validado", "parcial", "não validado")
 
 # Tipo de um arquivo de papel "documento" (meta["doc_type"]). Só um relatório
 # do estudo fica marcado por projeto: é o texto que a Análise Geral não pode
@@ -206,6 +209,7 @@ def init_db() -> None:
                 taxonomia TEXT,
                 taxonomia_status TEXT,
                 nomes_amostras TEXT,
+                claims_relatorio TEXT,
                 created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 data_version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -359,9 +363,14 @@ def _check_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
         if key == "nomes_amostras" and isinstance(value, dict):
             value = json.dumps({str(k): str(v).strip() for k, v in value.items() if str(v or "").strip()},
                                ensure_ascii=False, sort_keys=True)
+        if key == "claims_relatorio" and isinstance(value, dict):
+            value = json.dumps({str(code): {str(claim): status for claim, status in (claims or {}).items()
+                                            if status in REPORT_CLAIM_STATUSES}
+                                for code, claims in value.items() if claims}, ensure_ascii=False, sort_keys=True)
         if key == "quality_thresholds" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-        if isinstance(value, str) and key not in ("settings_json", "quality_thresholds", "nomes_amostras"):
+        if isinstance(value, str) and key not in ("settings_json", "quality_thresholds", "nomes_amostras",
+                                                  "claims_relatorio"):
             value = value.strip()
         clean[key] = value
     if "name" in clean and not clean["name"]:
@@ -423,6 +432,15 @@ def sample_names(project: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """Nome comercial confirmado de cada amostra, pelo código da condição; vazio sem nenhum."""
     names = _json_or((project or {}).get("nomes_amostras"), {})
     return {str(k): str(v) for k, v in names.items() if v} if isinstance(names, dict) else {}
+
+
+def report_claims(project: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """Conclusão confirmada do relatório por amostra (código da condição) e claim; vazio sem nenhuma."""
+    saved = _json_or((project or {}).get("claims_relatorio"), {})
+    if not isinstance(saved, dict):
+        return {}
+    return {str(code): {str(claim): status for claim, status in claims.items() if status in REPORT_CLAIM_STATUSES}
+            for code, claims in saved.items() if isinstance(claims, dict) and claims}
 
 
 def update_project(project_id: int, **changes) -> bool:

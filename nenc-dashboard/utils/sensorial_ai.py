@@ -5,24 +5,30 @@ O núcleo de conversa e de envio à base é o mesmo da Jornada
 (`utils/project_ai.py`); aqui ficam os prompts do módulo, o texto do recorte,
 o relatório do estudo e a taxonomia de temas. A geração tem seus próprios
 modos, porque o relatório para o marketing é mais longo e, no aprofundado, a
-leitura estatística vira o apêndice. `create` e `add` são injetáveis, para
+leitura estatística vira o Anexo C. `create` e `add` são injetáveis, para
 testar sem a OpenAI, e a base só entra quando a tela passa o vector store do
 Teste Sensorial da organização.
 """
 
+import re
 from typing import Callable, Dict, List, Optional, Tuple
 
 from utils import project_ai, sensorial_design, sensorial_taxonomia
 from utils.kb_attributes import build_kb_filter
 from utils.project_ai import AI_MODELS, MODE_LABELS  # noqa: F401 (nomes que a página usa daqui)
+from utils.jornada_taxonomy import fold
 from utils.sensorial_prompts import (
+    REPORT_CLAIMS_SYSTEM_PROMPT,
     SAMPLE_NUMBERS_SYSTEM_PROMPT,
     build_chat_system_prompt,
+    build_report_claims_prompt,
     build_sample_numbers_prompt,
     build_sensorial_project_user_prompt,
     build_strategic_user_prompt,
     get_sensorial_project_system_prompt,
     normalize_areas,
+    numbers_annex,
+    parse_report_claims,
     parse_sample_numbers,
 )
 
@@ -32,6 +38,9 @@ KB_PREFIX = "analise_geral_ts_"
 # O relatório por temas, com três blocos em cada um, não cabe nos 4 mil tokens
 # da Jornada.
 REPORT_MAX_TOKENS = 7000
+# Baixa: com o texto corrido, mais variação levava a IA a estender claims e
+# camadas além do que o relatório do estudo diz.
+REPORT_TEMPERATURE = 0.25
 APPENDIX_MAX_TOKENS = 3000
 
 
@@ -216,6 +225,98 @@ def suggest_sample_names(model: Dict, metrics: Dict, *, ai_model: str, report: T
     return {"nomes": match_sample_names(numbers, model, metrics), "lidos": list(numbers)}
 
 
+def claims_by_sample_code(model: Dict, metrics: Dict) -> Dict[str, List[str]]:
+    """Os claims testados em cada amostra, pelo código da condição (todos os claims, sem teste de associação)."""
+    codes = sample_codes(model)
+    table = (metrics.get("associacao") or {}).get("por_condicao")
+    claims: Dict[str, List[str]] = {code: [] for code in codes}
+    if table is not None and not getattr(table, "empty", True):
+        for row in table.itertuples():
+            if row.condicao in claims and row.palavra not in claims[row.condicao]:
+                claims[row.condicao].append(row.palavra)
+    every = [item["palavra"] for item in model.get("claims") or []]
+    return {code: words or list(every) for code, words in claims.items()}
+
+
+def _tokens(text: str) -> set:
+    return set(re.findall(r"[0-9a-z%,]+", fold(text))) - {",", "%"}
+
+
+def _match_sample(name: str, candidates: Dict[str, List[str]]) -> Optional[str]:
+    """O código cuja descrição (nome comercial, rótulo, código) melhor cobre o nome lido no relatório.
+
+    Vale quando uma das duas descrições está toda contida na outra; entre as
+    que valem, ganha a que mais se parece ("Zinger 0,001%" não casa com a
+    Clash, que também tem "Zinger 0,001%", porque a Clash tem mais palavras).
+    """
+    read = _tokens(name)
+    scores = []
+    for code, texts in candidates.items():
+        for text in texts:
+            known = _tokens(text)
+            common = read & known
+            if read and known and common:
+                ratios = (len(common) / len(known), len(common) / len(read))
+                scores.append((max(ratios), min(ratios), len(common), code))
+    scores = sorted((s for s in scores if s[0] == 1), reverse=True)
+    if not scores or (len(scores) > 1 and scores[0][:3] == scores[1][:3] and scores[0][3] != scores[1][3]):
+        return None
+    return scores[0][3]
+
+
+def suggest_report_claims(project: Dict, model: Dict, metrics: Dict, *, ai_model: str, report: Tuple[str, str],
+                          create: Callable = project_ai.default_create) -> Dict:
+    """Sugestão da conclusão do relatório por amostra e claim, para a equipe confirmar em Dados do Projeto.
+
+    A IA lê só o relatório do estudo; o código casa o nome da amostra que ela
+    leu com os nomes confirmados no Desenho e o claim com os testados na
+    amostra. Devolve {"status": {código: {claim: status}}, "conflitos":
+    [(código, claim)], "amostras_sem_par": [nomes lidos]}: quando a IA dá dois
+    status ao mesmo claim (o relatório se contradiz entre slides), não há
+    sugestão e a equipe decide.
+    """
+    from utils import sensorial_db
+
+    result = create(system_prompt=REPORT_CLAIMS_SYSTEM_PROMPT, user_prompt=build_report_claims_prompt(report),
+                    model=ai_model, vector_store_id=None, temperature=0.0, max_tokens=3000)
+    names = sensorial_db.sample_names(project)
+    labels = sensorial_design.condition_labels(model["design"])
+    candidates = {code: [t for t in (names.get(code), labels.get(code), code) if t] for code in sample_codes(model)}
+    tested = {code: {fold(claim): claim for claim in claims}
+              for code, claims in claims_by_sample_code(model, metrics).items()}
+    found: Dict[str, Dict[str, set]] = {}
+    unmatched: List[str] = []
+    for sample, claim, status in parse_report_claims(result.get("text") or ""):
+        code = _match_sample(sample, candidates)
+        if code is None:
+            if sample not in unmatched:
+                unmatched.append(sample)
+            continue
+        known = tested.get(code, {}).get(fold(claim))
+        if known:
+            found.setdefault(code, {}).setdefault(known, set()).add(status)
+    statuses = {code: {claim: next(iter(seen)) for claim, seen in claims.items() if len(seen) == 1}
+                for code, claims in found.items()}
+    conflicts = [(code, claim) for code, claims in found.items() for claim, seen in claims.items() if len(seen) > 1]
+    return {"status": {code: claims for code, claims in statuses.items() if claims}, "conflitos": conflicts,
+            "amostras_sem_par": unmatched}
+
+
+def confirmed_report_claims(project: Dict, model: Dict) -> Dict[str, Dict[str, List[str]]]:
+    """{amostra: {status: [claims]}} confirmados pela equipe, com o nome comercial confirmado da amostra."""
+    from utils import sensorial_db
+
+    saved = sensorial_db.report_claims(project)
+    names = sensorial_db.sample_names(project)
+    labels = sensorial_design.condition_labels(model["design"])
+    grouped: Dict[str, Dict[str, List[str]]] = {}
+    for code in sample_codes(model):
+        for claim, status in (saved.get(code) or {}).items():
+            sample = names.get(code) or labels.get(code, code)
+            grouped.setdefault(sample, {}).setdefault(status, []).append(claim)
+    return grouped
+
+
 def generate_analysis(
     project: Dict,
     model: Dict,
@@ -229,12 +330,13 @@ def generate_analysis(
     save_taxonomy: Optional[Callable[[str, str], None]] = None,
     create: Callable = project_ai.default_create,
 ) -> Dict:
-    """Roda o modo pedido; devolve {"text", "citations", "search", "taxonomia", "amostras"}.
+    """Roda o modo pedido; devolve {"text", "citations", "search", "taxonomia", "amostras", "claims"}.
 
-    Antes do relatório, a taxonomia (só sem uma no projeto); os nomes
-    comerciais das amostras são os confirmados em Dados do Projeto, e sem eles
-    o texto usa os rótulos técnicos. Rápida: uma chamada. Aprofundada:
-    a leitura estatística sem a base, que vira o apêndice, e o relatório com a
+    Antes do relatório, a taxonomia (só sem uma no projeto). Os nomes
+    comerciais das amostras e a conclusão do relatório por claim são os
+    confirmados em Dados do Projeto: sem nomes, o texto usa os rótulos
+    técnicos; sem a conclusão, a IA a busca no relatório. Rápida: uma chamada. Aprofundada:
+    a leitura estatística sem a base, que vira o Anexo C, e o relatório com a
     base, que recebe a leitura e o mesmo prompt-base.
     """
     if mode not in ("rapida", "aprofundada"):
@@ -242,16 +344,20 @@ def generate_analysis(
     taxonomia = resolve_taxonomy(project, model, metrics, ai_model=ai_model, report=report, create=create,
                                  save=save_taxonomy)
     sample_names = confirmed_sample_names(project, model)
+    report_claims = confirmed_report_claims(project, model)
     base = build_sensorial_project_user_prompt(project, model, metrics, recorte=recorte, report=report,
                                                taxonomia=taxonomia["texto"], taxonomia_status=taxonomia["status"],
-                                               sample_names=sample_names)
+                                               sample_names=sample_names, report_claims=report_claims)
     names = model.get("index_names") or {}
-    kb_filter = build_kb_filter(project.get("id"), modulo=MODULE_KEY) if vector_store_id else None
+    # Sem as análises anteriores do projeto, como na Análise Geral do NencBoost: no 1055 a busca devolvia a
+    # análise 5, enviada à base, e a IA copiava dela os erros que a confirmação dos claims devia corrigir.
+    kb_filter = (build_kb_filter(project.get("id"), modulo=MODULE_KEY, incluir_analises=False)
+                 if vector_store_id else None)
+    appendix = ""
     if mode == "rapida":
         result = create(system_prompt=get_sensorial_project_system_prompt("rapida", names), user_prompt=base,
-                        model=ai_model, vector_store_id=vector_store_id, kb_filter=kb_filter, temperature=0.4,
-                        max_tokens=REPORT_MAX_TOKENS)
-        text = normalize_areas((result.get("text") or "").strip())
+                        model=ai_model, vector_store_id=vector_store_id, kb_filter=kb_filter,
+                        temperature=REPORT_TEMPERATURE, max_tokens=REPORT_MAX_TOKENS)
     else:
         statistical = create(system_prompt=get_sensorial_project_system_prompt("estatistica", names),
                              user_prompt=base, model=ai_model, vector_store_id=None, temperature=0.2,
@@ -259,13 +365,22 @@ def generate_analysis(
         appendix = (statistical.get("text") or "").strip()
         result = create(system_prompt=get_sensorial_project_system_prompt("estrategica", names),
                         user_prompt=build_strategic_user_prompt(base, appendix), model=ai_model,
-                        vector_store_id=vector_store_id, kb_filter=kb_filter, temperature=0.4,
+                        vector_store_id=vector_store_id, kb_filter=kb_filter, temperature=REPORT_TEMPERATURE,
                         max_tokens=REPORT_MAX_TOKENS)
-        text = normalize_areas((result.get("text") or "").strip())
-        if text and appendix:
-            text += "\n\n---\n\n## Apêndice técnico\n\n" + appendix
+    text = normalize_areas((result.get("text") or "").strip())
+    # A IA escreve o texto e o Anexo A; os números (B) e a leitura estatística (C) o app acrescenta.
+    from utils import sensorial_db
+
+    numbers = numbers_annex(model, metrics, sensorial_db.sample_names(project), sensorial_db.report_claims(project))
+    if text and (numbers or appendix):
+        if not re.search(r"^##\s+Anexos\s*$", text, re.MULTILINE):
+            text += "\n\n---\n\n## Anexos"
+        if numbers:
+            text += "\n\n### Anexo B — Números do estudo (calculados pelo app)\n\n" + numbers
+        if appendix:
+            text += "\n\n### Anexo C — Leitura estatística\n\n" + appendix
     return {"text": text, "citations": result.get("citations") or [], "search": result.get("search") or {},
-            "taxonomia": taxonomia, "amostras": sample_names}
+            "taxonomia": taxonomia, "amostras": sample_names, "claims": report_claims}
 
 
 def send_analysis_to_kb(project: Dict, analysis: Dict, recorte: str, vector_store_id: str, *,

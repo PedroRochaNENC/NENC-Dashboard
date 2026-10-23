@@ -1,10 +1,12 @@
 """
 Apresentação PPTX da Análise Geral do Teste Sensorial (python-pptx, 16:9).
 
-Os mesmos números do PDF, com gráficos nativos e editáveis: cada índice por
-condição e etapa, a curva média dos índices com achados (alinhada na primeira
-cheirada), comparações, teste de associação, topomapas, a síntese por amostra
-e claim, a análise de IA escolhida e as limitações. Só códigos de participante.
+Os mesmos números do PDF, com gráficos nativos e editáveis. Com uma análise
+de IA escolhida, ela vem logo depois da capa, e o resto passa a anexos: a
+síntese por amostra e claim, os achados, cada índice por condição e etapa, a
+curva média dos índices com achados (alinhada na primeira cheirada),
+comparações, teste de associação, topomapas e limitações. Só códigos de
+participante.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -14,8 +16,11 @@ from pptx.enum.chart import XL_TICK_LABEL_POSITION
 from utils import pptx_kit, sensorial_design, sensorial_metrics
 from utils.pptx_kit import ACCENT, BODY_BOTTOM, BODY_TOP, CATEGORICAL, CONTENT_WIDTH, LEFT, Inches, rgb
 from utils.sensorial_export import (
+    ANNEX_NOTE,
+    ANNEX_TITLE,
     association_rows,
     comparison_rows,
+    cover_numbers,
     export_filename,
     synthesis_rows,
 )
@@ -116,15 +121,15 @@ def build_pptx(project: Dict, model: Dict, metrics: Dict, *, recorte: str = "", 
     findings = metrics.get("achados") or []
     slide = deck.slide(project.get("name") or "Projeto", "Teste Sensorial · Análise Geral · recorte: {}".format(
         recorte or "todo o projeto"))
-    pptx_kit.kpis(slide, BODY_TOP, [
-        ("Participantes", str(metrics.get("participantes", 0))),
-        ("Condições", str(len(metrics["n_por_condicao"]))),
-        ("Diferenças (Holm)", str(sum(1 for f in findings if f["tipo"] == "diferença"))),
-        ("Tendências", str(sum(1 for f in findings if f["tipo"] == "tendência"))),
-    ])
+    pptx_kit.kpis(slide, BODY_TOP, cover_numbers(model, metrics))
     if project.get("objetivo"):
         pptx_kit.textbox(slide, LEFT, BODY_TOP + Inches(1.6), CONTENT_WIDTH, Inches(2.5), project["objetivo"],
                          size=14)
+    # Com a análise de IA, ela é a apresentação e o resto vira anexo; sem ela, as tabelas são o conteúdo.
+    if analysis and analysis.get("analysis_text"):
+        deck.flow("Análise de IA", pptx_kit.markdown_items(analysis["analysis_text"]), size=12,
+                  subtitle="{} · {}".format(analysis.get("model") or "", analysis.get("created_at") or ""))
+        deck.slide(ANNEX_TITLE, ANNEX_NOTE)
 
     headers, rows = synthesis_rows(metrics["sintese"], model)
     if rows:
@@ -180,9 +185,6 @@ def build_pptx(project: Dict, model: Dict, metrics: Dict, *, recorte: str = "", 
                       [[labels.get(r.condicao, r.condicao), str(r.eeg), str(r.perifericos), str(r.associacao)]
                        for r in metrics["n_por_condicao"].itertuples()], [4.0, 2.6, 2.6, 2.9],
                       subtitle="Participantes por condição e camada")
-    if analysis and analysis.get("analysis_text"):
-        deck.flow("Análise de IA", pptx_kit.markdown_items(analysis["analysis_text"]), size=12,
-                  subtitle="{} · {}".format(analysis.get("model") or "", analysis.get("created_at") or ""))
     deck.flow("Limitações", [("b", note) for note in metrics.get("limitacoes") or ["Sem limitações registradas."]],
               size=13)
     return deck.save(), export_filename(project, "pptx", "teste_sensorial_analise")

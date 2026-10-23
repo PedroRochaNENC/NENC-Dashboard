@@ -12,15 +12,16 @@ define a análise, em abas:
   confirmado pela equipe;
 - Índices: nome de negócio de cada índice e o modo do PPI;
 - Limpeza: BASE LIMPA, regra de outliers do SPSS e qualidade dos periféricos;
-- Claims: o que confirma cada claim no cérebro e no corpo, e as faixas do
-  teste de associação;
+- Claims: o que confirma cada claim no cérebro e no corpo, as faixas do
+  teste de associação e a conclusão do relatório do estudo sobre cada claim
+  de cada amostra, sugerida pela IA e confirmada pela equipe;
 - Temas: a taxonomia de benefício e experiência que organiza a Análise Geral
   por IA (utils/sensorial_taxonomia.py);
 - Estatística: mínimo de pares e alfa.
 
-Toda mudança de Desenho a Estatística, menos Temas e os nomes comerciais, sobe a versão dos dados:
-a análise é recalculada e as análises de IA anteriores ficam marcadas como de
-dados antigos.
+Toda mudança de Desenho a Estatística, menos Temas, os nomes comerciais e a
+conclusão do relatório, sobe a versão dos dados: a análise é recalculada e as
+análises de IA anteriores ficam marcadas como de dados antigos.
 """
 
 from datetime import datetime
@@ -36,7 +37,8 @@ pode_editar = auth.can_write(user)
 
 from utils import sensorial_db, sensorial_design, sensorial_taxonomia
 from utils.ai_provider import add_document_to_vector_store, get_openai_client, get_sensorial_vector_store_id
-from utils.sensorial_ai import load_study_report, suggest_sample_names
+from utils.sensorial_ai import (claims_by_sample_code, load_study_report, suggest_report_claims,
+                                suggest_sample_names)
 from utils.sensorial_cache import get_project_metrics
 from utils.briefing import BRIEFING_EXTENSIONS, cap_text, extract_briefing_text
 from utils.kb_attributes import project_document
@@ -538,6 +540,86 @@ def _render_themes(model: dict) -> None:
         st.rerun()
 
 
+def _render_report_claims(model: dict) -> None:
+    tested = claims_by_sample_code(model, get_project_metrics(project))
+    if not any(tested.values()):
+        return
+    st.divider()
+    st.markdown("**Conclusão do relatório do estudo** — o que o relatório conclui sobre cada claim de cada "
+                "amostra. A Análise Geral por IA só diz que um claim foi validado quando ele está confirmado aqui; sem "
+                "nenhuma confirmação, ela procura a conclusão no relatório.")
+    saved = sensorial_db.report_claims(project)
+    names = sensorial_db.sample_names(project)
+    labels = sensorial_design.condition_labels(model["design"])
+    state_key = "ts_claims_suggestion_{}".format(project["id"])
+    suggestion = st.session_state.get(state_key) or {}
+    has_report = sensorial_db.study_report(project["id"]) is not None
+    if pode_editar and st.button(
+            "Sugerir pelo relatório do estudo", key="ts_suggest_claims", disabled=not (has_report and names),
+            help="A IA lê o relatório e diz o que ele conclui de cada claim; a equipe confere e confirma."
+            if has_report and names else "Marque o relatório do estudo em Uploads e confirme os nomes das amostras "
+                                         "no Desenho."):
+        report, warning = load_study_report(project["id"])
+        if not report:
+            st.error(warning)
+        elif get_openai_client() is None:
+            st.error("A OpenAI não está configurada: defina OPENAI_API_KEY no .env e reinicie o app.")
+        else:
+            try:
+                with st.spinner("Lendo a conclusão do relatório do estudo…"):
+                    st.session_state[state_key] = suggest_report_claims(
+                        project, model, get_project_metrics(project), ai_model=NAMES_AI_MODEL, report=report)
+            except Exception as error:
+                st.error("Não foi possível sugerir: {}".format(error))
+            else:
+                st.rerun()
+    suggested = suggestion.get("status") or {}
+    conflicts = {tuple(item) for item in suggestion.get("conflitos") or []}
+    table = pd.DataFrame([{
+        "codigo": code, "amostra": names.get(code) or labels.get(code, code), "claim": claim,
+        "sugestao": "relatório se contradiz" if (code, claim) in conflicts
+        else (suggested.get(code) or {}).get(claim, ""),
+        "status": (saved.get(code) or {}).get(claim) or (suggested.get(code) or {}).get(claim, ""),
+    } for code, claims in tested.items() for claim in claims])
+    edited = st.data_editor(
+        table, hide_index=True, width="stretch",
+        disabled=True if not pode_editar else ["codigo", "amostra", "claim", "sugestao"],
+        column_config={"codigo": None,
+                       "amostra": st.column_config.TextColumn("Amostra"),
+                       "claim": st.column_config.TextColumn("Claim"),
+                       "sugestao": st.column_config.TextColumn("Sugestão"),
+                       "status": st.column_config.SelectboxColumn(
+                           "Conclusão do relatório", options=[""] + list(sensorial_db.REPORT_CLAIM_STATUSES))},
+        key="ts_report_claims_{}_{}".format(project["id"], len(suggested) + len(conflicts)))
+    if suggestion:
+        notes = ["Sugestão pronta: confira e confirme."]
+        if conflicts:
+            notes.append("{} claim(s) em que o relatório se contradiz entre slides ficaram sem sugestão.".format(
+                len(conflicts)))
+        if suggestion.get("amostras_sem_par"):
+            notes.append("Amostras do relatório sem par no Desenho: {}.".format(
+                "; ".join(suggestion["amostras_sem_par"])))
+        st.caption(" ".join(notes))
+    if pode_editar and st.button("Confirmar conclusões", type="primary", key="ts_save_report_claims"):
+        confirmed = {}
+        for _, row in edited.iterrows():
+            if row["status"] in sensorial_db.REPORT_CLAIM_STATUSES:
+                confirmed.setdefault(row["codigo"], {})[row["claim"]] = row["status"]
+        try:
+            sensorial_db.update_project(project["id"], claims_relatorio=confirmed)
+        except (auth.AuthorizationError, ValueError) as error:
+            st.error(str(error))
+        else:
+            st.session_state.pop(state_key, None)
+            st.toast("Conclusões confirmadas.")
+            st.rerun()
+
+
+def _render_claims_and_report(model: dict) -> None:
+    _render_claims(model)
+    _render_report_claims(model)
+
+
 def _render_statistics(model: dict) -> None:
     stats = model["settings"]["estatistica"]
     st.markdown("As comparações são pareadas por participante (Wilcoxon), com o p de cada família (índice × "
@@ -561,7 +643,7 @@ else:
     with tabs[0]:
         _render_context()
     project_model = get_project_model(project)
-    for tab, render in zip(tabs[1:], (_render_design_and_names, _render_indices, _render_cleaning, _render_claims,
-                                      _render_themes, _render_statistics)):
+    for tab, render in zip(tabs[1:], (_render_design_and_names, _render_indices, _render_cleaning,
+                                      _render_claims_and_report, _render_themes, _render_statistics)):
         with tab:
             render(project_model)

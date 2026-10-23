@@ -160,6 +160,34 @@ class ReportTests(_Base):
         for piece in ("TESTE SENSORIAL", "Estudo Fragr", "Achados", "Teste de associa", "Limita", "Leitura"):
             self.assertIn(piece, text)
 
+    def test_with_an_analysis_the_text_comes_first_and_the_tables_become_annexes(self):
+        _, pdf, pptx = self._files()
+        text = _pdf_text(pdf)
+        self.assertLess(text.index("Leitura"), text.index("Anexos"))
+        self.assertLess(text.index("Anexos"), text.index("Achados"))
+        self.assertNotIn("Holm", text[:text.index("Leitura")])  # a capa não traz estatística
+        deck = Presentation(io.BytesIO(pptx))
+        titles = [next((s.text_frame.text for s in slide.shapes if s.has_text_frame and s.text_frame.text), "")
+                  for slide in deck.slides]
+        self.assertLess(titles.index("Análise de IA"), titles.index(sensorial_export.ANNEX_TITLE))
+        self.assertLess(titles.index(sensorial_export.ANNEX_TITLE), titles.index("Achados"))
+        cover = " ".join(shape.text_frame.text for shape in deck.slides[0].shapes if shape.has_text_frame)
+        self.assertIn("Claims testados", cover)
+        self.assertNotIn("Holm", cover)
+
+    def test_without_an_analysis_the_tables_are_the_document(self):
+        pdf, _ = build_pdf(self.project, self.model, self.metrics, recorte="todo o projeto")
+        pptx, _ = build_pptx(self.project, self.model, self.metrics, recorte="todo o projeto")
+        self.assertNotIn("Anexos", _pdf_text(pdf))
+        titles = [next((s.text_frame.text for s in slide.shapes if s.has_text_frame and s.text_frame.text), "")
+                  for slide in Presentation(io.BytesIO(pptx)).slides]
+        self.assertNotIn(sensorial_export.ANNEX_TITLE, titles)
+        self.assertIn("Achados", titles)
+
+    def test_the_cover_numbers_describe_the_study_size(self):
+        self.assertEqual([label for label, _ in sensorial_export.cover_numbers(self.model, self.metrics)],
+                         ["Participantes no recorte", "Amostras", "Claims testados", "Etapas"])
+
     def test_tiny_scale_indices_go_in_scientific_notation(self):
         from utils import sensorial_pptx
 
