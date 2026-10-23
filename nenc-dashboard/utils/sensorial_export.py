@@ -221,6 +221,29 @@ def report_topomaps(model: Dict, limit: int = MAX_TOPOMAPS) -> List[Dict]:
              "title": " · ".join(p for p in (t.get("experimento") or "", stages[t["etapa_arquivo"]][1]) if p)}
             for t in chosen[:limit]]
 
+
+# PDF e PPTX: com uma análise de IA, ela vem logo depois da capa e as tabelas
+# e os gráficos do estudo passam a anexos, para quem quiser conferir os números.
+ANNEX_TITLE = "Anexos: tabelas e gráficos do estudo"
+ANNEX_NOTE = ("Os números e as estatísticas que sustentam a análise acima, para consulta. A leitura do estudo "
+              "está no texto da análise.")
+
+
+def cover_numbers(model: Dict, metrics: Dict) -> List[Tuple[str, str]]:
+    """Os números da capa: o tamanho do estudo, sem estatística (as diferenças ficam nos anexos)."""
+    design = model["design"]
+    association = (metrics.get("associacao") or {}).get("por_condicao")
+    claims = set(association["palavra"]) if association is not None and not association.empty else {
+        item["palavra"] for item in model.get("claims") or []}
+    return [
+        ("Participantes no recorte", str(metrics.get("participantes", 0))),
+        ("Amostras", str(sum(1 for c in design.get("condicoes") or [] if c.get("papel") == "amostra"))),
+        ("Claims testados", str(len(claims))),
+        ("Etapas", str(sum(1 for s in design.get("etapas") or [] if s.get("papel") not in ("referencia",
+                                                                                           "ignorar")))),
+    ]
+
+
 def _fmt(value, digits: int = 3) -> str:
     try:
         number = float(value)

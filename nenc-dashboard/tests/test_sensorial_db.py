@@ -397,6 +397,18 @@ class StudyReportTests(_Base):
         self.assertEqual(sensorial_db.sample_names(project), {"B1": "Clash MOD 8"})
         self.assertEqual(self._version(project_id), before)
 
+    def test_report_claims_keep_only_known_statuses_and_the_data_version(self):
+        project_id = self._project()
+        self.assertEqual(sensorial_db.report_claims(sensorial_db.get_project(project_id)), {})
+        before = self._version(project_id)
+        with self._as(self.first_admin):
+            sensorial_db.update_project(project_id, claims_relatorio={
+                "B1": {"Recarrega sua mente": "validado", "Foco": "talvez", "Energia": "não validado"},
+                "B2": {"Foco": ""}})
+        self.assertEqual(sensorial_db.report_claims(sensorial_db.get_project(project_id)),
+                         {"B1": {"Recarrega sua mente": "validado", "Energia": "não validado"}})
+        self.assertEqual(self._version(project_id), before)
+
 
 class SchemaMigrationTests(unittest.TestCase):
     def test_an_old_projects_table_gains_the_taxonomy_columns(self):
@@ -411,7 +423,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 sensorial_db.init_db()
             with closing(sqlite3.connect(database_path)) as database:
                 columns = {row[1] for row in database.execute("PRAGMA table_info(sens_projects)")}
-        self.assertTrue({"taxonomia", "taxonomia_status", "nomes_amostras"} <= columns)
+        self.assertTrue({"taxonomia", "taxonomia_status", "nomes_amostras", "claims_relatorio"} <= columns)
 
 
 class DataTests(_Base):

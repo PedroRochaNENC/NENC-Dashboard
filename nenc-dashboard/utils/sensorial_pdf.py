@@ -1,11 +1,12 @@
 """
 Relatório PDF da Análise Geral do Teste Sensorial (fpdf2, A4).
 
-Mesmo conteúdo da página, no recorte dela: capa com os números do estudo,
-síntese por amostra e claim, achados, EEG (cada índice por condição e etapa,
-comparações e topomapas), periféricos, teste de associação, amostra e
-qualidade, a análise de IA escolhida e as limitações. Só códigos de
-participante; nenhum nome.
+Mesmo conteúdo da página, no recorte dela: capa com os números do estudo e,
+com uma análise de IA escolhida, o texto dela logo em seguida. As tabelas e
+os gráficos — síntese por amostra e claim, achados, EEG (cada índice por
+condição e etapa, comparações e topomapas), periféricos, teste de associação,
+amostra e qualidade e limitações — vêm depois, como anexos; sem análise, são
+o conteúdo. Só códigos de participante; nenhum nome.
 """
 
 from datetime import datetime
@@ -14,8 +15,11 @@ from typing import Dict, List, Optional, Tuple
 from utils import pdf_report, sensorial_design
 from utils.project_ai import MODE_LABELS
 from utils.sensorial_export import (
+    ANNEX_NOTE,
+    ANNEX_TITLE,
     association_rows,
     comparison_rows,
+    cover_numbers,
     export_filename,
     measure_rows,
     synthesis_rows,
@@ -27,7 +31,7 @@ def _widths(count: int, first: float = 36.0) -> List[float]:
     return [first] + [rest] * (count - 1)
 
 
-def _cover(pdf, project: Dict, metrics: Dict, recorte: str, generated_at: str) -> None:
+def _cover(pdf, project: Dict, model: Dict, metrics: Dict, recorte: str, generated_at: str) -> None:
     pdf.set_font(pdf_report.FONT, "B", 8.5)
     pdf.set_text_color(*pdf_report.ACCENT)
     pdf.cell(0, 5, pdf_report.sanitize("TESTE SENSORIAL · ANÁLISE GERAL"), new_x="LMARGIN", new_y="NEXT")
@@ -45,13 +49,7 @@ def _cover(pdf, project: Dict, metrics: Dict, recorte: str, generated_at: str) -
         pdf.ln(1)
         pdf_report.paragraph(pdf, project["objetivo"], size=9)
     pdf.ln(3)
-    findings = metrics.get("achados") or []
-    pdf_report.kpi_row(pdf, [
-        ("Participantes no recorte", str(metrics.get("participantes", 0))),
-        ("Condições", str(len(metrics["n_por_condicao"]))),
-        ("Diferenças (Holm)", str(sum(1 for f in findings if f["tipo"] == "diferença"))),
-        ("Tendências", str(sum(1 for f in findings if f["tipo"] == "tendência"))),
-    ])
+    pdf_report.kpi_row(pdf, cover_numbers(model, metrics))
 
 
 def _synthesis(pdf, model: Dict, metrics: Dict) -> None:
@@ -141,7 +139,14 @@ def build_pdf(project: Dict, model: Dict, metrics: Dict, *, recorte: str = "", a
     generated_at = generated_at or datetime.now().strftime("%d/%m/%Y %H:%M")
     pdf = pdf_report.ReportPDF("Teste Sensorial · {}".format(project.get("name") or "Projeto"))
     pdf.add_page()
-    _cover(pdf, project, metrics, recorte or "todo o projeto", generated_at)
+    _cover(pdf, project, model, metrics, recorte or "todo o projeto", generated_at)
+    # Com a análise de IA, ela é o documento e o resto vira anexo; sem ela, as tabelas são o conteúdo.
+    with_analysis = bool(analysis and analysis.get("analysis_text"))
+    if with_analysis:
+        _analysis(pdf, analysis, project.get("data_version"))
+        pdf.add_page()
+        pdf_report.heading(pdf, ANNEX_TITLE)
+        pdf_report.paragraph(pdf, ANNEX_NOTE, size=9)
     _synthesis(pdf, model, metrics)
     _findings(pdf, metrics)
     _layer(pdf, model, metrics["eeg"], list(model["indices"]), "EEG: índices do relatório")
@@ -154,8 +159,6 @@ def build_pdf(project: Dict, model: Dict, metrics: Dict, *, recorte: str = "", a
     _layer(pdf, model, metrics["perifericos"], peripherals, "Periféricos")
     _association(pdf, model, metrics)
     _sample(pdf, model, metrics)
-    if analysis and analysis.get("analysis_text"):
-        _analysis(pdf, analysis, project.get("data_version"))
     pdf_report.heading(pdf, "Limitações")
     pdf_report.bullets(pdf, metrics.get("limitacoes") or ["Sem limitações registradas."], size=8.5)
     return pdf_report.output_bytes(pdf), export_filename(project, "pdf", "teste_sensorial_analise")
