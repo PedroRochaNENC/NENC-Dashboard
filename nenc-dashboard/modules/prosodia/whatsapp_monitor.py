@@ -495,6 +495,7 @@ with tab_audios:
                                             api_audio.get("qr_code_name")
                                             or api_audio.get("qr_code_code")
                                         ),
+                                        qr_code_code=api_audio.get("qr_code_code"),
                                         received_at=api_audio.get("received_at"),
                                     )
                                     

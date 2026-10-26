@@ -91,7 +91,7 @@ Colunas novas em `audios`:
 - Lista: código, nome, cidade, UF e quantos QRs e áudios estão ligados a cada uma.
 - **Nova** e **editar**, num formulário com os quatro campos.
 - **Importar planilha** (CSV ou XLSX, colunas `codigo`, `nome`, `cidade`, `uf`): atualiza pelo código quando ele existe e cria o que não existe. Mostra a prévia antes de gravar.
-- **Sugerir pelos QRs**: lista os nomes distintos dos QRs dos projetos da organização ainda sem unidade, cada um como uma unidade proposta, com o nome editável. A equipe confirma uma por uma, e a confirmação já liga o QR à unidade criada.
+- **Sugerir pelos QRs**: um botão lê da API os QRs dos projetos da organização (uma chamada por projeto, por isso não na abertura da página) e lista os que estão sem unidade, cada um como uma unidade proposta, com o nome do QR editável. A equipe marca quais ligar e confirma. QRs com o mesmo nome formam uma unidade só, o nome de uma unidade já cadastrada liga o QR a ela, e a confirmação já liga cada QR à sua unidade.
 - **Excluir**: pede confirmação e diz quantos QRs e áudios vão ficar sem unidade.
 - Quem só consulta vê a lista com os botões desligados (`_require_write`).
 
@@ -328,7 +328,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 
 ## 9. Fases
 
-1. **Unidade no banco e no cadastro.** Tabelas, colunas, backfill do código do QR, página Unidades, escolha da unidade no QR e correção na página do áudio.
+1. **Unidade no banco e no cadastro.** Tabelas, colunas, backfill do código do QR, página Unidades, escolha da unidade no QR e correção na página do áudio. **Feita em 23/10/2026.** As regras sem banco ficaram em `utils/prosodia_unidades.py` (só biblioteca padrão), e por enquanto só `get_audio` devolve a unidade; as listas passam a devolvê-la na Fase 2.
 2. **Unidade nas telas e na Análise Geral.** Lista de Áudios, Resumo, exportação, filtro do recorte, Δ com unidade e coluna Unidades, sobre a tabela da v2.
 3. **Taxonomia por tags.** Parse, classificação, Outros, candidatos a tag, todas as tags na tabela, alertas e selo.
 4. **Redação do relatório.** Como ler, Sinal emocional, Matriz e Termômetro sem números, Para acompanhar, regras de redação, prompt, exemplo e verificação.

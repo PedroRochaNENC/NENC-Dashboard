@@ -11,6 +11,7 @@ cartão em vez da barra lateral.
 para cá.
 """
 
+import html
 import io
 import logging
 import secrets
@@ -29,6 +30,7 @@ pode_editar = auth.can_write(_user)
 from utils import pdf_report
 from utils import prosodia_audio as pa
 from utils import prosodia_overview as overview
+from utils import prosodia_unidades as pu
 from utils.ai_provider import (
     PROVIDER_OPENAI,
     add_document_to_vector_store,
@@ -42,6 +44,8 @@ from utils.ai_provider import (
 from utils.kb_attributes import build_kb_filter, project_document
 from utils.organization_data import list_external_resources
 from utils.prosodia_db import (
+    UNIDADE_MANUAL,
+    UNIDADE_PELO_QR,
     delete_audio,
     get_analyses,
     get_audio,
@@ -52,10 +56,12 @@ from utils.prosodia_db import (
     get_project,
     get_project_questions,
     get_sincronizados_for_project,
+    get_unidades,
     init_db,
     save_analysis,
     save_high_activations,
     save_quality_check,
+    set_audio_unidade,
 )
 from utils.prosodia_indice import atualizar_sem_derrubar as atualizar_indices_sem_derrubar
 from utils.prosodia_loader import load_prosodia_from_uploads, normalizar_sincronizado
@@ -228,6 +234,40 @@ def _abrir(outro_id: int) -> None:
     st.session_state.pop("pros_timeline_focus", None)
 
 
+def _editar_unidade() -> None:
+    """Correção manual da unidade, que vence o vínculo do QR por onde o áudio entrou."""
+    origem = audio.get("unidade_origem")
+    if origem == UNIDADE_MANUAL:
+        st.caption("Unidade corrigida à mão. Voltar a seguir o QR code devolve a unidade dele.")
+    elif origem == UNIDADE_PELO_QR:
+        st.caption("Unidade herdada do QR code {}.".format(overview.qr_label(audio)))
+    elif audio.get("qr_code_name"):
+        st.caption("O QR code {} não está ligado a nenhuma unidade.".format(overview.qr_label(audio)))
+    else:
+        st.caption("O áudio chegou sem QR code.")
+    unidades = get_unidades(project.get("organization_id"))
+    if not unidades:
+        st.page_link("modules/prosodia/unidades.py", label="Cadastrar unidades", icon=":material/apartment:")
+        return
+    por_id = {u["id"]: u for u in unidades}
+    opcoes = [None] + list(por_id)
+    atual = audio.get("unidade_manual_id")
+    escolha = st.selectbox(
+        "Unidade", opcoes,
+        index=opcoes.index(atual) if atual in opcoes else 0,
+        format_func=lambda i: pu.rotulo_unidade(por_id[i]) if i else "Seguir o QR code",
+        key="au_unidade_{}".format(audio_id),
+    )
+    if st.button("Salvar unidade", disabled=escolha == atual, width="stretch",
+                 key="au_unidade_salvar_{}".format(audio_id)):
+        try:
+            set_audio_unidade(audio_id, escolha)
+        except (ValueError, auth.AuthorizationError) as error:
+            st.error(str(error))
+        else:
+            st.rerun()
+
+
 ui.inject_theme()
 # Player preso ao topo. O Streamlit envolve o container num stLayoutWrapper
 # da mesma altura; o sticky vai nele, senão não tem por onde correr.
@@ -251,6 +291,7 @@ duracao_s = audio.get("duration_seconds") or (
 )
 chips = [_chip("qr-code", overview.qr_label(audio), "var(--nenc-accent-300)", "rgba(145,132,217,.08)",
                "var(--nenc-accent-800)")]
+chips.append(_chip("buildings", html.escape(audio.get("unidade_nome") or "Sem unidade")))
 if chegada is not None:
     chips.append(_chip("calendar-blank", chegada.strftime("%d/%m às %H:%M")))
 if duracao_s:
@@ -294,6 +335,9 @@ with c_acoes:
         reprocessar_clicked = bool(is_wa and pode_editar and st.button(
             "Reprocessar", key="au_reprocessar",
             help="Solicitar reprocessamento da transcrição e NencBoost via WhatsApp API"))
+        if pode_editar:
+            with st.popover("", icon=":material/apartment:", help="Unidade do áudio"):
+                _editar_unidade()
         with st.popover("", icon=":material/more_vert:", help="Baixar e excluir"):
             if audio.get("prosodia_json"):
                 st.download_button("Baixar JSON", data=audio["prosodia_json"], file_name=f"NencLex-{sid}.json",

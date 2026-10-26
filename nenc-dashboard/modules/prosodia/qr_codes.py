@@ -9,6 +9,9 @@ criação, que ocupa o lugar do detalhe.
 O texto de verificação é do projeto e entra no link de todos os QR codes.
 Antes ele aparecia em três formulários e salvar um sobrescrevia os outros;
 agora fica uma vez, no topo da página.
+
+Cada QR code se liga a uma unidade da organização, pelo código, e os áudios
+que chegam por ele herdam essa unidade (docs/SPEC_UNIDADES_E_TAGS.md, §3).
 """
 
 import html
@@ -22,6 +25,7 @@ user = auth.require_module("prosodia")
 
 from utils import prosodia_db
 from utils import prosodia_summary as summary
+from utils import prosodia_unidades as pu
 from utils.organization_data import list_external_resources
 from utils.project_ui import active_project
 from utils.whatsapp_api_client import (
@@ -155,11 +159,25 @@ except Exception as error:
 
 phones = _org_phones()
 stats = summary.qr_stats(summary.project_entries(project["id"]))
+# As unidades oferecidas são as da organização do projeto, mesmo com "Todas
+# as organizações" escolhida no topo.
+unidades = prosodia_db.get_unidades(project.get("organization_id"))
+unidades_por_id = {u["id"]: u for u in unidades}
+vinculos = prosodia_db.get_qr_unidades(project["id"])
 
 
 def _stats_for(qr: dict) -> dict:
     # A importação grava o nome do QR, ou o código quando a API não manda nome.
     return stats.get(str(qr.get("name") or "").strip()) or stats.get(str(qr.get("code") or "").strip()) or {}
+
+
+def _unidade_do(qr: dict):
+    """Vínculo do QR com a unidade, pelo código, ou None."""
+    return vinculos.get(str(qr.get("code") or "").strip())
+
+
+def _rotulo_opcao(unidade_id) -> str:
+    return pu.rotulo_unidade(unidades_por_id.get(unidade_id)) if unidade_id else "Sem unidade"
 
 
 qr_codes = sorted(qr_codes, key=lambda qr: -_stats_for(qr).get("entradas", 0))
@@ -225,6 +243,11 @@ def _new_panel() -> None:
             st.text_input("Código de rastreio", value=code, disabled=True,
                           help="Gerado automaticamente, em sequência.", key="pros_qr_new_code_{}".format(code))
             phone = st.selectbox("WhatsApp destino *", phones, format_func=summary.phone_text)
+            unidade_id = st.selectbox(
+                "Unidade", [None] + list(unidades_por_id), format_func=_rotulo_opcao,
+                help="Os áudios que chegarem por este QR code herdam a unidade. "
+                     "As unidades se cadastram na página Unidades.",
+            )
             description = st.text_area("Descrição do local ou canal", height=80,
                                        placeholder="Ex: Cartaz A3 afixado no balcão de entrada principal")
             welcome = st.text_area("Resposta automática de boas-vindas", value=DEFAULT_WELCOME, height=120,
@@ -253,8 +276,48 @@ def _new_panel() -> None:
             except Exception as error:
                 st.error("Erro ao criar o QR code: {}".format(error))
                 return
+            if unidade_id:
+                try:
+                    prosodia_db.set_qr_unidade(project["id"], code, unidade_id)
+                except (ValueError, auth.AuthorizationError) as error:
+                    st.session_state[PANEL] = "detalhe"
+                    _flash("QR code {} cadastrado, mas sem unidade: {}".format(code, error))
             st.session_state[PANEL] = "detalhe"
             _flash("QR code {} cadastrado.".format(code))
+
+
+def _unidade_panel(qr: dict, entries: int) -> None:
+    """A unidade do QR: os áudios que chegaram e os que chegarem por ele a herdam."""
+    vinculo = _unidade_do(qr)
+    atual = vinculo["unidade_id"] if vinculo else None
+    if not pode_alterar:
+        _field("Unidade", pu.rotulo_unidade(vinculo) if vinculo else "Sem unidade")
+        return
+    if not unidades:
+        _field("Unidade", "")
+        st.page_link("modules/prosodia/unidades.py", label="Cadastrar unidades", icon=material("buildings"))
+        return
+    opcoes = [None] + list(unidades_por_id)
+    nova = st.selectbox(
+        "Unidade", opcoes,
+        index=opcoes.index(atual) if atual in opcoes else 0,
+        format_func=_rotulo_opcao,
+        help="Vale para os áudios que já chegaram por este QR code e para os próximos, "
+             "menos os corrigidos à mão na página do áudio.",
+        key="pros_qr_unidade_{}".format(qr["id"]),
+    )
+    if st.button("Atualizar unidade", disabled=nova == atual, key="pros_qr_unidade_btn_{}".format(qr["id"])):
+        try:
+            prosodia_db.set_qr_unidade(project["id"], qr.get("code"), nova)
+        except (ValueError, auth.AuthorizationError) as error:
+            st.error("Erro ao atualizar a unidade: {}".format(error))
+        else:
+            mensagem = "QR code {}: {}.".format(qr.get("code"), "sem unidade" if nova is None else _rotulo_opcao(nova))
+            if entries:
+                mensagem += " Vale também para {} por ele.".format(
+                    "a entrada que já chegou" if entries == 1 else "as {} entradas que já chegaram".format(entries)
+                )
+            _flash(mensagem)
 
 
 def _detail_panel(qr: dict) -> None:
@@ -341,6 +404,8 @@ def _detail_panel(qr: dict) -> None:
         else:
             _field("WhatsApp destino", summary.phone_text(target))
 
+        _unidade_panel(qr, entries)
+
         _field("Descrição do local", str(qr.get("description") or ""))
         _field("Resposta automática", str(qr.get("welcome_message") or ""))
 
@@ -381,6 +446,7 @@ table = pd.DataFrame([
     {
         "id": qr["id"],
         "QR code": qr.get("name") or "",
+        "Unidade": (_unidade_do(qr) or {}).get("unidade_nome") or "Sem unidade",
         "Local": qr.get("description") or "",
         "Código": qr.get("code") or "",
         "Entradas": _stats_for(qr).get("entradas", 0),
@@ -402,6 +468,7 @@ with col_list:
         key="pros_qr_table",
         column_config={
             "QR code": st.column_config.TextColumn(width="medium"),
+            "Unidade": st.column_config.TextColumn(width="medium"),
             "Local": st.column_config.TextColumn(width="medium"),
             "Código": st.column_config.TextColumn(width="small"),
             "Entradas": st.column_config.ProgressColumn(

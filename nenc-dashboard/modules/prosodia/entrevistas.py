@@ -258,6 +258,7 @@ if wa_configured():
                                     sincronizado_csv=None,
                                     whatsapp_message_id=wa_msg_id,
                                     qr_code_name=a.get("qr_code_name") or a.get("qr_code_code"),
+                                    qr_code_code=a.get("qr_code_code"),
                                     received_at=a.get("received_at"),
                                 )
                                 save_quality_check(
@@ -277,6 +278,7 @@ if wa_configured():
                                     sincronizado_csv=None,
                                     whatsapp_message_id=wa_msg_id,
                                     qr_code_name=a.get("qr_code_name") or a.get("qr_code_code"),
+                                    qr_code_code=a.get("qr_code_code"),
                                     received_at=a.get("received_at"),
                                 )
                                 save_quality_check(
@@ -393,6 +395,7 @@ if wa_configured():
                             qr_code_name=(
                                 api_audio.get("qr_code_name") or api_audio.get("qr_code_code")
                             ),
+                            qr_code_code=api_audio.get("qr_code_code"),
                             received_at=api_audio.get("received_at"),
                         )
                     else:
