@@ -287,6 +287,25 @@ exclusao. O acervo anterior as colunas nasce sem indice:
    `python scripts/backfill_indice_combinado.py --database /app/data/prosodia.db`
 3. Depois com `--apply` (backup `prosodia_before_indice_backfill_*.db` antes).
 
+## Unidades e o codigo do QR nos audios
+
+A unidade e da organizacao, e o audio a herda do QR code por onde entrou, pelo
+codigo do QR (`audios.qr_code_code`), que a tela nao deixa editar
+(`docs/SPEC_UNIDADES_E_TAGS.md`). A importacao grava o codigo a partir desta
+versao; o acervo anterior so tem o nome do QR e nao herda unidade nenhuma ate o
+codigo ser preenchido:
+
+1. Deploy do dashboard e um acesso a qualquer pagina do NencBoost (`init_db`
+   cria `unidades`, `qr_unidades` e as colunas `qr_code_code` e
+   `unidade_manual_id` em `audios`).
+2. Dentro do container, em simulacao (mostra, por audio, o QR que nao casou ou
+   que casou com mais de um):
+   `python scripts/backfill_audio_qr_code.py --database /app/data/prosodia.db`
+3. Depois com `--apply` (backup `prosodia_before_qr_code_backfill_*.db` antes).
+4. Na pagina Unidades, "Sugerir pelos QR codes" cria as unidades a partir dos
+   nomes dos QRs e liga cada QR a sua. O audio cujo QR nao casou se corrige a
+   mao, na pagina do audio.
+
 ## Recuperacao de administrador
 
 O bootstrap nao deve ser reutilizado para recuperar acesso. Um administrador

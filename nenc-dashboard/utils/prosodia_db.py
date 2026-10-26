@@ -22,6 +22,7 @@ from utils.prosodia_project_types import (
     PROJECT_TYPE_LABELS,
 )
 from utils.prosodia_temas import TAXONOMIA_STATUS_LABELS
+from utils.prosodia_unidades import ATUALIZAR, normalizar_unidade, planejar_importacao
 
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "prosodia.db"
 
@@ -352,8 +353,40 @@ def init_db() -> None:
                 temas_json       TEXT    NOT NULL,
                 created_at       TEXT    DEFAULT (datetime('now','localtime'))
             );
+
+            -- Unidades da organização (docs/SPEC_UNIDADES_E_TAGS.md, §3). O
+            -- áudio herda a unidade do QR code por onde entrou: qr_unidades
+            -- liga o código do QR, que a tela não deixa editar, à unidade.
+            CREATE TABLE IF NOT EXISTS unidades (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id),
+                codigo          TEXT,
+                nome            TEXT    NOT NULL,
+                cidade          TEXT,
+                uf              TEXT,
+                created_at      TEXT    DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS qr_unidades (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id),
+                project_id      INTEGER NOT NULL
+                                REFERENCES projects(id) ON DELETE CASCADE,
+                qr_code         TEXT    NOT NULL,
+                unidade_id      INTEGER NOT NULL
+                                REFERENCES unidades(id) ON DELETE CASCADE,
+                UNIQUE (project_id, qr_code)
+            );
             """
         )
+        # O código interno da cliente é opcional, mas não se repete na
+        # organização.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_unidades_codigo "
+            "ON unidades(organization_id, codigo) WHERE codigo IS NOT NULL"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_unidades_organization ON unidades(organization_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qr_unidades_unidade ON qr_unidades(unidade_id)")
 
         # Migração incremental para bancos já existentes.
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
@@ -416,6 +449,16 @@ def init_db() -> None:
         for coluna in ("indice_combinado", "indice_texto", "indice_voz"):
             if coluna not in audio_cols:
                 conn.execute("ALTER TABLE audios ADD COLUMN {} REAL".format(coluna))
+        # Código do QR por onde o áudio entrou, que liga o áudio à unidade (o
+        # nome do QR pode ser renomeado), e a unidade corrigida à mão, que vence
+        # o vínculo do QR. Áudios existentes ficam com NULL nos dois até o
+        # backfill do código (scripts/backfill_audio_qr_code.py).
+        _ensure_column(conn, "audios", "qr_code_code", "TEXT")
+        _ensure_column(
+            conn, "audios", "unidade_manual_id",
+            "INTEGER REFERENCES unidades(id) ON DELETE SET NULL",
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audios_qr_code ON audios(project_id, qr_code_code)")
         # Snapshot de cada Análise Geral (áudios cobertos, recorte e tabela de
         # temas): é com ele que a análise seguinte calcula "Anteriores → novos".
         _ensure_column(conn, "project_analyses", "temas_json", "TEXT")
@@ -815,12 +858,15 @@ def create_audio(
     whatsapp_message_id: Optional[str] = None,
     qr_code_name: Optional[str] = None,
     received_at: Optional[str] = None,
+    qr_code_code: Optional[str] = None,
 ) -> int:
     """Salva um áudio com seus arquivos brutos. Retorna o ID gerado.
 
     `qr_code_name` e o QR por onde o participante entrou, copiado da API na
     importacao. A tabela de Entrevistas e a exportacao Power BI leem daqui para
     nao depender da API no ar a cada render. Upload direto nao tem QR.
+    `qr_code_code` e o codigo desse QR: e por ele que o audio herda a unidade,
+    porque o nome pode ser renomeado na tela de QR codes e o codigo nao.
 
     `received_at` e a hora em que a mensagem chegou a API (ISO, em UTC), para o
     Resumo contar entradas por hora; `created_at` marca so a importacao. Upload
@@ -835,10 +881,11 @@ def create_audio(
         cur = conn.execute(
             """INSERT INTO audios
                (organization_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-                whatsapp_message_id, qr_code_name, received_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                whatsapp_message_id, qr_code_name, received_at, qr_code_code)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (actual_org_id, project_id, session_id, prosodia_json, transcricao_csv, sincronizado_csv,
-             whatsapp_message_id, qr_code_name or None, received_at or None),
+             whatsapp_message_id, qr_code_name or None, received_at or None,
+             str(qr_code_code).strip() if qr_code_code else None),
         )
         audio_id = cur.lastrowid
     _audit("prosodia.audio.create", "audio", audio_id, actual_org_id, write=True)
@@ -1339,16 +1386,14 @@ def _backfill_audio_duration(audio_id: int) -> float:
 
 
 def get_audio(audio_id: int) -> Optional[Dict]:
-    """Retorna um áudio pelo ID."""
+    """Retorna um áudio pelo ID, com a unidade calculada (_COLUNAS_UNIDADE)."""
     organization_id = _active_organization_id()
+    sql = "SELECT a.*, {} FROM audios a {} WHERE a.id = ?".format(_COLUNAS_UNIDADE, _JOIN_UNIDADE)
     with _connect() as conn:
         if not organization_id:
-            row = conn.execute("SELECT * FROM audios WHERE id = ?", (audio_id,)).fetchone()
+            row = conn.execute(sql, (audio_id,)).fetchone()
         else:
-            row = conn.execute(
-                "SELECT * FROM audios WHERE id = ? AND organization_id = ?",
-                (audio_id, organization_id),
-            ).fetchone()
+            row = conn.execute(sql + " AND a.organization_id = ?", (audio_id, organization_id)).fetchone()
     _audit("prosodia.audio.read", "audio", audio_id, organization_id or 0)
     return dict(row) if row else None
 
@@ -1538,6 +1583,249 @@ def update_audio_content(
             )
     if result.rowcount:
         _audit("prosodia.audio.update_content", "audio", audio_id, organization_id or 0, write=True)
+
+
+# ---------------------------------------------------------------------------
+# Unidades da organização e o vínculo com os QR codes
+# ---------------------------------------------------------------------------
+
+UNIDADE_PELO_QR = "qr"
+UNIDADE_MANUAL = "manual"
+
+# A unidade do áudio é calculada na leitura, e não gravada: a correção manual
+# vence o vínculo do QR por onde ele entrou. Assim ligar um QR vale também
+# para os áudios que já tinham chegado por ele, sem propagar nada.
+_JOIN_UNIDADE = """
+    LEFT JOIN qr_unidades qu
+           ON qu.project_id = a.project_id AND qu.qr_code = a.qr_code_code
+    LEFT JOIN unidades u
+           ON u.id = COALESCE(a.unidade_manual_id, qu.unidade_id)
+"""
+_COLUNAS_UNIDADE = """
+    u.id AS unidade_id, u.nome AS unidade_nome, u.codigo AS unidade_codigo,
+    CASE WHEN a.unidade_manual_id IS NOT NULL THEN '{}'
+         WHEN qu.unidade_id IS NOT NULL THEN '{}' END AS unidade_origem
+""".format(UNIDADE_MANUAL, UNIDADE_PELO_QR)
+
+
+def _organizacao_para_cadastro() -> int:
+    """A organização em que a unidade nova entra.
+
+    Em "Todas as Organizações" (0) não há a quem atribuí-la: quem administra a
+    plataforma escolhe a organização antes de cadastrar.
+    """
+    organization_id = _active_organization_id()
+    if not organization_id:
+        raise ValueError("Escolha uma organização para cadastrar unidades.")
+    return organization_id
+
+
+def _unidade_visivel(conn: sqlite3.Connection, unidade_id: int, organization_id: int) -> sqlite3.Row:
+    """A unidade, se a organização ativa a enxerga; senão ValueError."""
+    row = conn.execute("SELECT * FROM unidades WHERE id = ?", (unidade_id,)).fetchone()
+    if row is None or (organization_id and row["organization_id"] != organization_id):
+        raise ValueError("Unidade nao encontrada para a organizacao ativa.")
+    return row
+
+
+def _require_unidade_da_organizacao(conn: sqlite3.Connection, unidade_id: int, organization_id: int) -> None:
+    """Projeto e áudio só se ligam a unidade da própria organização."""
+    row = conn.execute("SELECT organization_id FROM unidades WHERE id = ?", (unidade_id,)).fetchone()
+    if row is None or row["organization_id"] != organization_id:
+        raise ValueError("A unidade nao pertence a esta organizacao.")
+
+
+def _gravar_unidade(conn: sqlite3.Connection, sql: str, params: tuple, codigo: Optional[str]) -> sqlite3.Cursor:
+    try:
+        return conn.execute(sql, params)
+    except sqlite3.IntegrityError as error:
+        raise ValueError("Já existe uma unidade com o código {} nesta organização.".format(codigo)) from error
+
+
+def get_unidades(organization_id: Optional[int] = None) -> List[Dict]:
+    """Unidades por nome, com quantos QR codes e áudios estão ligados a cada uma.
+
+    Sem `organization_id`, as da organização ativa, ou as de todas em "Todas as
+    Organizações". Com ele, as daquela organização, que é como a tela de QR
+    codes oferece as unidades da organização do projeto; outra organização que
+    não a ativa volta vazia.
+    """
+    ativa = _active_organization_id()
+    if organization_id is None:
+        organization_id = ativa
+    elif ativa and organization_id != ativa:
+        return []
+    sql = """
+        SELECT u.*, o.name AS organization_name,
+               (SELECT COUNT(*) FROM qr_unidades q WHERE q.unidade_id = u.id) AS n_qr,
+               (SELECT COUNT(*) FROM audios a
+                  LEFT JOIN qr_unidades qu
+                         ON qu.project_id = a.project_id AND qu.qr_code = a.qr_code_code
+                 WHERE COALESCE(a.unidade_manual_id, qu.unidade_id) = u.id) AS n_audios
+        FROM unidades u
+        LEFT JOIN organizations o ON o.id = u.organization_id
+    """
+    params: tuple = ()
+    if organization_id:
+        sql += " WHERE u.organization_id = ?"
+        params = (organization_id,)
+    sql += " ORDER BY u.nome COLLATE NOCASE, u.id"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    _audit("prosodia.unidade.list", "unidade", None, organization_id or 0)
+    return [dict(r) for r in rows]
+
+
+def create_unidade(nome: str, codigo: str = "", cidade: str = "", uf: str = "") -> int:
+    """Cadastra uma unidade na organização ativa. Retorna o ID gerado."""
+    campos = normalizar_unidade(nome, codigo, cidade, uf)
+    _require_write()
+    organization_id = _organizacao_para_cadastro()
+    with _connect() as conn:
+        cur = _gravar_unidade(
+            conn,
+            "INSERT INTO unidades (organization_id, codigo, nome, cidade, uf) VALUES (?, ?, ?, ?, ?)",
+            (organization_id, campos["codigo"], campos["nome"], campos["cidade"], campos["uf"]),
+            campos["codigo"],
+        )
+        unidade_id = cur.lastrowid
+    _audit("prosodia.unidade.create", "unidade", unidade_id, organization_id, write=True)
+    return unidade_id
+
+
+def update_unidade(unidade_id: int, nome: str, codigo: str = "", cidade: str = "", uf: str = "") -> None:
+    """Regrava os quatro campos da unidade."""
+    campos = normalizar_unidade(nome, codigo, cidade, uf)
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        row = _unidade_visivel(conn, unidade_id, organization_id)
+        _gravar_unidade(
+            conn,
+            "UPDATE unidades SET codigo = ?, nome = ?, cidade = ?, uf = ? WHERE id = ?",
+            (campos["codigo"], campos["nome"], campos["cidade"], campos["uf"], unidade_id),
+            campos["codigo"],
+        )
+    _audit("prosodia.unidade.update", "unidade", unidade_id, row["organization_id"], write=True)
+
+
+def delete_unidade(unidade_id: int) -> None:
+    """Apaga a unidade.
+
+    Os QR codes ligados a ela ficam sem unidade (o vínculo sai em cascata), e
+    os áudios corrigidos à mão para ela voltam a seguir o QR.
+    """
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        row = _unidade_visivel(conn, unidade_id, organization_id)
+        conn.execute("DELETE FROM unidades WHERE id = ?", (unidade_id,))
+    _audit("prosodia.unidade.delete", "unidade", unidade_id, row["organization_id"], write=True)
+
+
+def importar_unidades(unidades: List[Dict]) -> Dict[str, int]:
+    """Cria ou atualiza as unidades da planilha, numa transação só.
+
+    `unidades` sai de `prosodia_unidades.ler_planilha`. O que é criado e o que
+    é atualizado segue `planejar_importacao`, contra as unidades cadastradas
+    no momento da gravação. Devolve quantas foram criadas e atualizadas.
+    """
+    _require_write()
+    organization_id = _organizacao_para_cadastro()
+    contagem = {"criadas": 0, "atualizadas": 0}
+    with _connect() as conn:
+        existentes = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, codigo, nome FROM unidades WHERE organization_id = ?", (organization_id,)
+            )
+        ]
+        for item in planejar_importacao(unidades, existentes):
+            campos = normalizar_unidade(item["nome"], item["codigo"], item["cidade"], item["uf"])
+            if item["acao"] == ATUALIZAR:
+                _gravar_unidade(
+                    conn,
+                    "UPDATE unidades SET codigo = ?, nome = ?, cidade = ?, uf = ? WHERE id = ?",
+                    (campos["codigo"], campos["nome"], campos["cidade"], campos["uf"], item["unidade_id"]),
+                    campos["codigo"],
+                )
+                contagem["atualizadas"] += 1
+            else:
+                _gravar_unidade(
+                    conn,
+                    "INSERT INTO unidades (organization_id, codigo, nome, cidade, uf) VALUES (?, ?, ?, ?, ?)",
+                    (organization_id, campos["codigo"], campos["nome"], campos["cidade"], campos["uf"]),
+                    campos["codigo"],
+                )
+                contagem["criadas"] += 1
+    _audit("prosodia.unidade.import", "unidade", None, organization_id, write=True)
+    return contagem
+
+
+def get_qr_unidades(project_id: int) -> Dict[str, Dict]:
+    """Unidade de cada QR code ligado do projeto, pelo código do QR."""
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        rows = conn.execute(
+            """
+            SELECT q.qr_code, u.id AS unidade_id, u.nome AS unidade_nome, u.codigo AS unidade_codigo
+            FROM qr_unidades q
+            JOIN unidades u ON u.id = q.unidade_id
+            WHERE q.project_id = ?
+            """,
+            (project_id,),
+        ).fetchall()
+    _audit("prosodia.qr.unidades", "project", project_id, organization_id or 0)
+    return {row["qr_code"]: dict(row) for row in rows}
+
+
+def set_qr_unidade(project_id: int, qr_code: str, unidade_id: Optional[int]) -> None:
+    """Liga o QR code do projeto a uma unidade, ou o desliga com None.
+
+    Vale para os áudios que já chegaram por esse QR e para os próximos, menos
+    os corrigidos à mão. O QR é do projeto, então valem as mesmas regras de
+    quem pode alterar o projeto.
+    """
+    qr_code = str(qr_code or "").strip()
+    if not qr_code:
+        raise ValueError("Informe o código do QR.")
+    actor = _require_write()
+    _assert_project_authorship(project_id, actor, "project.qr_unidade")
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        org_do_projeto = conn.execute(
+            "SELECT organization_id FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()["organization_id"]
+        if unidade_id is None:
+            conn.execute(
+                "DELETE FROM qr_unidades WHERE project_id = ? AND qr_code = ?", (project_id, qr_code)
+            )
+        else:
+            _require_unidade_da_organizacao(conn, unidade_id, org_do_projeto)
+            conn.execute(
+                """INSERT INTO qr_unidades (organization_id, project_id, qr_code, unidade_id)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(project_id, qr_code) DO UPDATE SET unidade_id = excluded.unidade_id""",
+                (org_do_projeto, project_id, qr_code, unidade_id),
+            )
+    _audit("prosodia.qr.unidade", "project", project_id, org_do_projeto, write=True)
+
+
+def set_audio_unidade(audio_id: int, unidade_id: Optional[int]) -> None:
+    """Corrige à mão a unidade do áudio; None volta a seguir o QR."""
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_audio(conn, audio_id, organization_id)
+        org_do_audio = conn.execute(
+            "SELECT organization_id FROM audios WHERE id = ?", (audio_id,)
+        ).fetchone()["organization_id"]
+        if unidade_id is not None:
+            _require_unidade_da_organizacao(conn, unidade_id, org_do_audio)
+        conn.execute("UPDATE audios SET unidade_manual_id = ? WHERE id = ?", (unidade_id, audio_id))
+    _audit("prosodia.audio.unidade", "audio", audio_id, org_do_audio, write=True)
 
 
 # ---------------------------------------------------------------------------

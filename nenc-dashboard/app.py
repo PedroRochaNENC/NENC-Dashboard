@@ -330,6 +330,11 @@ def _prosodia_pages(user: auth.User) -> dict[str, list]:
         module_pages.append(
             _page("modules/prosodia/preparacao.py", "Novo projeto", "plus")
         )
+    # Unidades são da organização, não do projeto: ficam neste nível, ao lado
+    # da Base de Conhecimento, e valem para todos os projetos.
+    module_pages.append(
+        _page("modules/prosodia/unidades.py", "Unidades", "buildings")
+    )
     module_pages.append(
         _page("modules/prosodia/base_conhecimento.py",
               "Base de Conhecimento", "books")
