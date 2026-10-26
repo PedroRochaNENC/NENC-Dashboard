@@ -612,7 +612,17 @@ for audio in audios:
         contagem["sem_analise"] += 1
 
 min_date, max_date = overview.period_bounds(audios)
-f_busca, f_qr, f_periodo, f_indice, f_mais = st.columns([2.4, 1.7, 1.9, 1.6, 1.35], vertical_alignment="bottom")
+# A unidade só aparece, como filtro e coluna, quando algum áudio do projeto tem
+# uma: a maioria dos projetos não liga os QR codes a unidades.
+unidades = overview.unidade_options(audios)
+if unidades:
+    f_busca, f_qr, f_unidade, f_periodo, f_indice, f_mais = st.columns(
+        [2.2, 1.5, 1.5, 1.8, 1.5, 1.3], vertical_alignment="bottom"
+    )
+    filtro_unidade = f_unidade.selectbox("Unidade", ["Todas"] + unidades, key="en_unidade")
+else:
+    f_busca, f_qr, f_periodo, f_indice, f_mais = st.columns([2.4, 1.7, 1.9, 1.6, 1.35], vertical_alignment="bottom")
+    filtro_unidade = "Todas"
 search = f_busca.text_input(
     "Buscar", placeholder="Número do áudio, sessão ou telefone", key="en_search"
 ).strip().lower()
@@ -648,6 +658,8 @@ for audio in audios:
     )):
         continue
     if filtro_qr != "Todos" and overview.qr_label(audio) != filtro_qr:
+        continue
+    if filtro_unidade != "Todas" and overview.unidade_label(audio) != filtro_unidade:
         continue
     if filtro_indice != "Todos":
         faixa = faixa_indice(audio.get("indice_combinado"), audio.get("indice_texto"), audio.get("indice_voz"))
@@ -703,6 +715,7 @@ else:
             "Áudio": "#{}".format(overview.api_audio_id(session_id) or a.get("id")),
             "Telefone": overview.masked_phone(session_id),
             "QR code": overview.qr_label(a),
+            "Unidade": overview.unidade_label(a),
             "Recebido": overview.entry_text(a),
             "Duração": a.get("duration_str", "00:00") if pronto else None,
             "Índice": a.get("indice_combinado") if pronto else None,
@@ -711,8 +724,11 @@ else:
             "Análise": ("feita" if int(a.get("n_analyses", 0)) else "pendente") if pronto else "—",
         })
 
+    tabela = pd.DataFrame(rows)
+    if not unidades:
+        tabela = tabela.drop(columns="Unidade")
     table_event = st.dataframe(
-        pd.DataFrame(rows),
+        tabela,
         width="stretch",
         hide_index=True,
         on_select="rerun",

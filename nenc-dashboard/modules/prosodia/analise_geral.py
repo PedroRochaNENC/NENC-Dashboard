@@ -571,8 +571,19 @@ if not audios:
 # ------------------------------------------------------------------
 audios_projeto = audios
 _inicio, _fim = overview.period_bounds(audios_projeto)
+# O filtro de unidade só aparece quando algum áudio do projeto tem unidade.
+_unidades_do_projeto = overview.unidade_options(audios_projeto)
 with st.container(border=True):
-    f_qr, f_periodo, f_origem, f_total = st.columns([2, 2, 2, 1.4], vertical_alignment="bottom")
+    if _unidades_do_projeto:
+        f_unidade, f_qr, f_periodo, f_origem, f_total = st.columns(
+            [2, 2, 2, 2, 1.4], vertical_alignment="bottom"
+        )
+        filtro_unidade = f_unidade.multiselect(
+            "Unidade", _unidades_do_projeto, placeholder="Todas", key="prj_f_unidade"
+        )
+    else:
+        f_qr, f_periodo, f_origem, f_total = st.columns([2, 2, 2, 1.4], vertical_alignment="bottom")
+        filtro_unidade = []
     filtro_qr = f_qr.multiselect(
         "QR code", overview.qr_options(audios_projeto), placeholder="Todos", key="prj_f_qr"
     )
@@ -584,7 +595,7 @@ with st.container(border=True):
         "Origem", list(overview.ORIGENS), format_func=overview.ORIGENS.get,
         placeholder="WhatsApp e upload", key="prj_f_origem",
     )
-    audios = overview.filter_audios(audios_projeto, filtro_qr, filtro_periodo, filtro_origem)
+    audios = overview.filter_audios(audios_projeto, filtro_qr, filtro_periodo, filtro_origem, filtro_unidade)
     f_total.markdown(
         '<div style="text-align:right;font-size:.78rem;color:var(--nenc-muted);padding-bottom:.6rem">'
         "{} de {} áudios</div>".format(len(audios), len(audios_projeto)),
@@ -592,10 +603,11 @@ with st.container(border=True):
     )
 
 # O recorte fica escrito na análise por IA salva; vazio sem filtro. Marcar
-# todos os QR codes é o mesmo que não filtrar por QR.
+# todos os QR codes, ou todas as unidades, é o mesmo que não filtrar.
 recorte = overview.filter_description(
     [] if set(filtro_qr) == set(overview.qr_options(audios_projeto)) else filtro_qr,
     filtro_periodo, filtro_origem, (_inicio, _fim),
+    [] if set(filtro_unidade) == set(_unidades_do_projeto) else filtro_unidade,
 )
 
 if not audios:
@@ -1211,7 +1223,8 @@ if st.button(
                 audios_projeto,
                 [a["id"] for a in audios],
                 geracao.recorte_da_pagina(
-                    filtro_qr, overview.qr_options(audios_projeto), filtro_periodo, filtro_origem, recorte
+                    filtro_qr, overview.qr_options(audios_projeto), filtro_periodo, filtro_origem, recorte,
+                    unidades=filtro_unidade, unidades_do_projeto=_unidades_do_projeto,
                 ),
                 tr_projeto,
                 sinc_projeto,

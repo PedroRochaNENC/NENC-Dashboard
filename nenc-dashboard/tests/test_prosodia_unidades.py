@@ -14,12 +14,22 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 from scripts import backfill_audio_qr_code as backfill
 from utils import auth, prosodia_db
+from utils import prosodia_geracao as geracao
+from utils import prosodia_overview as overview
+from utils import prosodia_relatorio as rel
+from utils import prosodia_summary as summary
 from utils import prosodia_unidades as pu
+from utils.prosodia_project_types import PESQUISA_OPINIAO
+from utils.prosodia_temas import Linha, parse_taxonomia
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 PAGES_DIR = APP_ROOT / "modules" / "prosodia"
@@ -543,6 +553,251 @@ class BackfillDoCodigoTests(unittest.TestCase):
             self.assertTrue(any((Path(pasta) / "backups").glob("prosodia_before_qr_code_backfill_*.db")))
 
 
+# ---------------------------------------------------------------------------
+# Fase 2: a unidade nas telas, na exportação e na Análise Geral
+# ---------------------------------------------------------------------------
+
+def _linha_de_audio(audio_id, unidade=None, codigo=None, qr="Cartaz", sessao=None):
+    """Uma linha como get_audios_for_interviews a devolve, só com o que o filtro usa."""
+    return {
+        "id": audio_id,
+        "session_id": sessao or "wa_5511900000{:03d}_{}".format(audio_id, audio_id),
+        "qr_code_name": qr,
+        "unidade_id": audio_id * 10 if unidade else None,
+        "unidade_nome": unidade,
+        "unidade_codigo": codigo,
+    }
+
+
+class FiltroPorUnidadeTests(unittest.TestCase):
+    def test_label_has_the_code_and_without_unit_says_so(self):
+        self.assertEqual(overview.unidade_label(_linha_de_audio(1, "Paulista", "SP012")), "Paulista · SP012")
+        self.assertEqual(overview.unidade_label(_linha_de_audio(2, "Moema")), "Moema")
+        self.assertEqual(overview.unidade_label(_linha_de_audio(3)), overview.SEM_UNIDADE)
+
+    def test_options_by_count_with_no_unit_last_and_empty_without_units(self):
+        audios = [
+            _linha_de_audio(1), _linha_de_audio(2), _linha_de_audio(3),
+            _linha_de_audio(4, "Moema"), _linha_de_audio(5, "Paulista"), _linha_de_audio(6, "Paulista"),
+        ]
+
+        self.assertEqual(overview.unidade_options(audios), ["Paulista", "Moema", overview.SEM_UNIDADE])
+        self.assertEqual(overview.unidade_options(audios[:3]), [])
+
+    def test_filter_and_description(self):
+        audios = [_linha_de_audio(1, "Paulista"), _linha_de_audio(2, "Moema"), _linha_de_audio(3)]
+
+        filtrados = overview.filter_audios(audios, unidades=["Moema", overview.SEM_UNIDADE])
+
+        self.assertEqual([a["id"] for a in filtrados], [2, 3])
+        self.assertEqual(
+            overview.filter_description(["Cartaz"], None, None, (None, None), ["Moema"]),
+            "unidade Moema; QR code Cartaz",
+        )
+        self.assertEqual(
+            overview.filter_description([], None, None, (None, None), ["Moema", "Paulista"]),
+            "unidades Moema, Paulista",
+        )
+
+
+class RankingPorUnidadeTests(unittest.TestCase):
+    def test_counts_audios_with_unit_and_the_rest_apart(self):
+        entries = pd.DataFrame({"unidade": ["Paulista", "Paulista", "Moema", "", "Tijuca", "Centro"]})
+
+        ranking = summary.unidade_ranking(entries, top=2)
+
+        # No empate vale a ordem em que a unidade aparece, como no ranking por QR.
+        self.assertEqual([(l["nome"], l["entradas"]) for l in ranking["linhas"]], [("Paulista", 2), ("Moema", 1)])
+        self.assertEqual(
+            (ranking["distintas"], ranking["outras"], ranking["outras_entradas"], ranking["sem_unidade"],
+             ranking["total"], ranking["maximo"]),
+            (4, 2, 2, 1, 5, 2),
+        )
+
+
+class LeiturasComUnidadeTests(_BancoComDuasOrganizacoes):
+    def test_list_readers_bring_the_unit(self):
+        project_id = prosodia_db.create_project("Piloto VoC")
+        pelo_qr = prosodia_db.create_audio(project_id, "wa_1_1", qr_code_name="Cartaz", qr_code_code="16-01")
+        sem = prosodia_db.create_audio(project_id, "wa_2_2")
+        unidade = prosodia_db.create_unidade("Paulista", "SP012", "São Paulo", "SP")
+        prosodia_db.set_qr_unidade(project_id, "16-01", unidade)
+
+        for nome, leitura in (
+            ("get_audios", prosodia_db.get_audios),
+            ("get_audio_entries", prosodia_db.get_audio_entries),
+            ("get_audios_for_interviews", prosodia_db.get_audios_for_interviews),
+        ):
+            with self.subTest(leitura=nome):
+                por_id = {a["id"]: a for a in leitura(project_id)}
+                self.assertEqual(
+                    (por_id[pelo_qr]["unidade_id"], por_id[pelo_qr]["unidade_nome"], por_id[pelo_qr]["unidade_codigo"]),
+                    (unidade, "Paulista", "SP012"),
+                )
+                self.assertIsNone(por_id[sem]["unidade_id"])
+
+        entradas = summary.project_entries(project_id).set_index("id")
+        self.assertEqual((entradas.loc[pelo_qr, "unidade"], entradas.loc[sem, "unidade"]), ("Paulista · SP012", ""))
+
+
+TAXONOMIA_FASE2 = parse_taxonomia("Ambiente > Lotação\nAmbiente > Limpeza\nAtendimento > Recepção")
+LOTACAO, LIMPEZA, RECEPCAO = (s.rotulo for s in TAXONOMIA_FASE2.subtemas)
+
+
+def _audio_com_unidade(audio_id, unidade, *subtemas, numero=None):
+    """Áudio do WhatsApp classificado; `numero` repetido é o mesmo respondente na Opinião."""
+    linhas = tuple(Linha(i, "Respondente", "Fala {}.".format(i), i * 4.0, i * 4.0 + 3.5, i) for i in range(1, 4))
+    classificacao = {
+        "respondente": None,
+        "respondente_incerto": False,
+        "temas": [{"subtema": s, "polaridade": "negativa", "evidencia": "", "trechos": [{"linha": 1}]} for s in subtemas],
+        "emergentes": [],
+    }
+    return rel.AudioDoProjeto(
+        audio_id,
+        "wa_+552199{:06d}_{}".format(audio_id if numero is None else numero, audio_id),
+        linhas,
+        classificacao,
+        datetime(2026, 10, 1) + timedelta(hours=audio_id),
+        unidade=unidade,
+    )
+
+
+def _agregar_fase2(audios, recorte=None):
+    ids = [a.audio_id for a in audios] if recorte is None else recorte
+    return rel.agregar(audios, ids, TAXONOMIA_FASE2, PESQUISA_OPINIAO)
+
+
+class ColunaUnidadesTests(unittest.TestCase):
+    def setUp(self):
+        # Lotação espalhada pelas 3 unidades (2, 2 e 1 de 4 com unidade);
+        # Limpeza concentrada em Moema (3 de 4); um respondente sem unidade e um
+        # que mandou áudios de duas unidades.
+        self.audios = [
+            _audio_com_unidade(1, "Paulista", LOTACAO),
+            _audio_com_unidade(2, "Paulista", LOTACAO, LIMPEZA),
+            _audio_com_unidade(3, "Moema", LOTACAO, LIMPEZA),
+            _audio_com_unidade(4, "Moema", LIMPEZA),
+            _audio_com_unidade(5, "Moema", LIMPEZA, numero=4),
+            _audio_com_unidade(6, "Tijuca", LOTACAO, numero=1),
+            _audio_com_unidade(7, "", LOTACAO, RECEPCAO),
+            _audio_com_unidade(8, "Moema", LIMPEZA),
+            _audio_com_unidade(9, "Moema", LOTACAO),
+        ]
+
+    def _tema(self, agregacao, rotulo):
+        return next(t for t in agregacao.temas if t.subtema == rotulo)
+
+    def test_counts_respondents_per_unit_and_the_ones_without_unit(self):
+        agregacao = _agregar_fase2(self.audios)
+
+        self.assertEqual(agregacao.unidades, ("Moema", "Paulista", "Tijuca"))
+        self.assertEqual(agregacao.sem_unidade, 1)
+        lotacao = self._tema(agregacao, LOTACAO)
+        # O respondente 1 mandou áudios por Paulista e por Tijuca: conta nas duas
+        # e uma vez só no total do tema.
+        self.assertEqual(lotacao.respondentes, 5)
+        self.assertEqual(lotacao.unidades, {"Paulista": 2, "Moema": 2, "Tijuca": 1})
+        self.assertEqual(lotacao.com_unidade, 4)
+        self.assertEqual(self._tema(agregacao, LIMPEZA).unidades, {"Paulista": 1, "Moema": 3})
+
+    def test_cell_says_how_many_units_or_where_it_concentrates(self):
+        agregacao = _agregar_fase2(self.audios)
+
+        self.assertEqual(rel.texto_unidades(self._tema(agregacao, LOTACAO), 3), "3 de 3")
+        self.assertEqual(
+            rel.texto_unidades(self._tema(agregacao, LIMPEZA), 3), "concentrada em Moema (3 de 4 respondentes)"
+        )
+        self.assertEqual(rel.texto_unidades(self._tema(agregacao, RECEPCAO), 3), "—")
+
+    def test_fewer_than_three_respondents_never_concentrate(self):
+        agregacao = _agregar_fase2([
+            _audio_com_unidade(1, "Moema", LIMPEZA),
+            _audio_com_unidade(2, "Moema", LIMPEZA),
+            _audio_com_unidade(3, "Paulista", LOTACAO),
+        ])
+
+        self.assertEqual(rel.texto_unidades(self._tema(agregacao, LIMPEZA), 2), "1 de 2")
+
+    def test_table_shows_the_column_and_the_legend(self):
+        agregacao = _agregar_fase2(self.audios)
+
+        tabela = rel.tabela_temas_markdown(agregacao)
+
+        self.assertIn("| Unidades |", tabela.splitlines()[0])
+        self.assertIn("concentrada em Moema (3 de 4 respondentes)", tabela)
+        self.assertIn("\"Unidades\" diz em quantas das 3 unidades do recorte", tabela)
+        self.assertIn("1 respondente sem unidade fica fora dessa coluna.", tabela)
+
+    def test_one_unit_or_none_hides_the_column(self):
+        uma = _agregar_fase2([a for a in self.audios if a.unidade in ("Moema", "")])
+        nenhuma = _agregar_fase2([replace(a, unidade="") for a in self.audios])
+
+        for agregacao in (uma, nenhuma):
+            with self.subTest(unidades=agregacao.unidades):
+                self.assertFalse(agregacao.por_unidade)
+                self.assertNotIn("Unidades", rel.tabela_temas_markdown(agregacao))
+
+    def test_matrix_rows_carry_the_unit(self):
+        agregacao = _agregar_fase2(self.audios)
+        linhas = [
+            rel.LinhaMatriz(a.audio_id, agregacao.aliases[a.audio_id], 0.5, 0.2, 0.6, 0.1, ("Lotação",), a.unidade)
+            for a in self.audios[:2]
+        ]
+        agregacao.matriz = rel.Matriz(12, 0.5, 0.2, rel._grupo(linhas), rel._grupo([]))
+
+        texto = rel.matriz_markdown(agregacao)
+
+        self.assertIn("| Respondente | Unidade | Texto | Voz | Índice | Temas |", texto)
+        self.assertIn("| Áudio 01 | Paulista |", texto)
+
+
+class RecorteComUnidadeTests(unittest.TestCase):
+    def test_unit_is_saved_and_old_snapshots_read_as_all_units(self):
+        recorte = rel.Recorte(qr=("Cartaz",), unidade=("Moema",))
+
+        lido = rel.Recorte.de_dict(recorte.como_dict())
+
+        self.assertEqual(lido.unidade, ("Moema",))
+        self.assertTrue(lido.mesmo_filtro(recorte))
+        self.assertEqual(rel.Recorte.de_dict({"qr": [], "origem": []}).unidade, ())
+        self.assertFalse(rel.Recorte(unidade=("Moema",)).mesmo_filtro(rel.Recorte()))
+
+    def test_delta_compares_only_with_the_same_unit_cut(self):
+        audios = [_audio_com_unidade(i, "Moema", LOTACAO) for i in range(1, 7)]
+        ids = [a.audio_id for a in audios]
+        antes = datetime(2026, 10, 1, 3, 30).strftime("%Y-%m-%d %H:%M:%S")
+        outra_unidade = {"id": 2, "created_at": antes, "analysis_text": "",
+                         "temas": {"audios": [1, 2, 3], "recorte": rel.Recorte(unidade=("Paulista",)).como_dict()}}
+        mesma_unidade = {"id": 1, "created_at": antes, "analysis_text": "",
+                         "temas": {"audios": [1, 2], "recorte": rel.Recorte(unidade=("Moema",)).como_dict()}}
+        antiga_sem_snapshot = {"id": 3, "created_at": antes, "analysis_text": "", "temas": None}
+
+        escolhida = rel.escolher_analise_anterior(
+            [outra_unidade, mesma_unidade], rel.Recorte(unidade=("Moema",)), audios, ids
+        )
+
+        self.assertEqual(escolhida.analise_id, 1)
+        # Análise anterior à v2 cobriu o projeto inteiro: não serve a um recorte por unidade.
+        self.assertIsNone(rel.escolher_analise_anterior(
+            [antiga_sem_snapshot], rel.Recorte(unidade=("Moema",)), audios, ids
+        ))
+
+    def test_page_cut_selecting_every_unit_is_no_filter(self):
+        periodo = (date(2026, 10, 1), date(2026, 10, 2))
+
+        todas = geracao.recorte_da_pagina([], ["A"], periodo, [], "", ["Moema", "Paulista"], ["Paulista", "Moema"])
+        uma = geracao.recorte_da_pagina([], ["A"], periodo, [], "unidade Moema", ["Moema"], ["Paulista", "Moema"])
+
+        self.assertEqual((todas.unidade, uma.unidade), ((), ("Moema",)))
+
+    def test_generation_takes_the_unit_of_each_audio(self):
+        com = geracao._audio_do_projeto(dict(_linha_de_audio(1, "Paulista", "SP012"), created_at=None), {}, {})
+        sem = geracao._audio_do_projeto(dict(_linha_de_audio(2), created_at=None), {}, {})
+
+        self.assertEqual((com.unidade, sem.unidade), ("Paulista · SP012", ""))
+
+
 class ContratoDasPaginasTests(unittest.TestCase):
     def test_every_import_that_saves_the_qr_name_also_saves_the_code(self):
         verificadas = 0
@@ -563,6 +818,20 @@ class ContratoDasPaginasTests(unittest.TestCase):
     def test_units_page_is_in_the_module_menu(self):
         fonte = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         self.assertIn('_page("modules/prosodia/unidades.py", "Unidades", "buildings")', fonte)
+
+    def test_general_analysis_filters_by_unit_and_saves_it_in_the_cut(self):
+        arvore = ast.parse((PAGES_DIR / "analise_geral.py").read_text(encoding="utf-8"))
+        chamadas = {
+            no.func.attr: no
+            for no in ast.walk(arvore)
+            if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+            and no.func.attr in ("filter_audios", "recorte_da_pagina")
+        }
+
+        self.assertIn("filtro_unidade", [ast.unparse(a) for a in chamadas["filter_audios"].args])
+        self.assertLessEqual(
+            {"unidades", "unidades_do_projeto"}, {k.arg for k in chamadas["recorte_da_pagina"].keywords}
+        )
 
 
 if __name__ == "__main__":

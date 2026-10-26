@@ -40,6 +40,7 @@ PAGES = {
     "monitor": "modules/prosodia/whatsapp_monitor.py",
     "dados": "modules/prosodia/preparacao.py",
     "uploads": "modules/prosodia/audios.py",
+    "unidades": "modules/prosodia/unidades.py",
 }
 
 
@@ -78,6 +79,24 @@ def _kpi(icon_name: str, label: str, value: str, note: str, good: bool = False) 
 
 
 def _qr_bars(ranking: dict) -> str:
+    footer = []
+    if ranking["outros_qr"]:
+        footer.append("Outros {} QR codes · {} entradas".format(ranking["outros_qr"], ranking["outros_entradas"]))
+    if ranking["sem_qr"]:
+        footer.append("Upload direto, sem QR · {} áudios".format(ranking["sem_qr"]))
+    return _bars(ranking, footer)
+
+
+def _unidade_bars(ranking: dict) -> str:
+    footer = []
+    if ranking["outras"]:
+        footer.append("Outras {} unidades · {} entradas".format(ranking["outras"], ranking["outras_entradas"]))
+    if ranking["sem_unidade"]:
+        footer.append("Sem unidade · {} áudios".format(ranking["sem_unidade"]))
+    return _bars(ranking, footer)
+
+
+def _bars(ranking: dict, footer: list) -> str:
     rows = []
     for index, row in enumerate(ranking["linhas"]):
         top = index == 0
@@ -97,11 +116,6 @@ def _qr_bars(ranking: dict) -> str:
                 bc=ACCENT if top else ACCENT_600,
             )
         )
-    footer = []
-    if ranking["outros_qr"]:
-        footer.append("Outros {} QR codes · {} entradas".format(ranking["outros_qr"], ranking["outros_entradas"]))
-    if ranking["sem_qr"]:
-        footer.append("Upload direto, sem QR · {} áudios".format(ranking["sem_qr"]))
     footer_html = (
         '<div style="display:flex;flex-direction:column;gap:.3rem;margin-top:.9rem;padding-top:.7rem;'
         'border-top:1px solid rgba(233,233,237,.08);font-size:.72rem;color:var(--nenc-faint)">{}</div>'.format(
@@ -194,6 +208,7 @@ ui.breadcrumb_nav(
 entries = summary.project_entries(project["id"])
 numbers = summary.kpis(entries)
 ranking = summary.qr_ranking(entries)
+ranking_unidade = summary.unidade_ranking(entries)
 
 api_id = project.get("api_project_id")
 type_label = PROJECT_TYPE_LABELS.get(normalize_project_type(project.get("tipo_projeto")), "")
@@ -254,7 +269,23 @@ col_rank, col_hour = st.columns([1, 1.15], gap="small")
 
 with col_rank:
     with st.container(border=True):
-        if ranking["total"]:
+        # Por unidade só aparece quando algum áudio tem unidade: a maioria dos
+        # projetos não liga os QR codes a unidades.
+        por_unidade = bool(ranking_unidade["total"]) and st.segmented_control(
+            "Agrupar por", ["QR code", "Unidade"], default="QR code",
+            key="pros_resumo_ranking", label_visibility="collapsed",
+        ) == "Unidade"
+        if por_unidade:
+            st.markdown(
+                _card_head(
+                    "Entradas por unidade",
+                    "{} unidades · {} com mais entradas".format(ranking_unidade["distintas"], len(ranking_unidade["linhas"]))
+                    if ranking_unidade["distintas"] > len(ranking_unidade["linhas"])
+                    else "{} unidade{}".format(ranking_unidade["distintas"], "" if ranking_unidade["distintas"] == 1 else "s"),
+                ) + _unidade_bars(ranking_unidade),
+                unsafe_allow_html=True,
+            )
+        elif ranking["total"]:
             st.markdown(
                 _card_head(
                     "Entradas por QR code",
@@ -267,7 +298,10 @@ with col_rank:
         else:
             st.markdown(_card_head("Entradas por QR code"), unsafe_allow_html=True)
             st.caption("Nenhum áudio deste projeto entrou por QR code.")
-        st.page_link(PAGES["qr"], label="Ver todos os QR codes", icon=":material/arrow_forward:")
+        if por_unidade:
+            st.page_link(PAGES["unidades"], label="Ver as unidades", icon=":material/arrow_forward:")
+        else:
+            st.page_link(PAGES["qr"], label="Ver todos os QR codes", icon=":material/arrow_forward:")
 
 with col_hour:
     with st.container(border=True):

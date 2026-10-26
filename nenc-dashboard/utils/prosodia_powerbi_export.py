@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from utils import prosodia_db
+from utils import prosodia_temas as temas
 from utils.excel_export import (  # noqa: F401 - reexportados para quem ja importava daqui
     EXCEL_SAFE_MAX_DATA_ROWS,
     EXCEL_SHEET_NAME_MAX_LENGTH,
@@ -45,6 +46,13 @@ _INTERVIEW_COLUMNS = [
     "openai_file_id_transcricao",
     "whatsapp_message_id",
     "qr_code_name",
+    "qr_code_code",
+    "unidade_id",
+    "unidade_codigo",
+    "unidade_nome",
+    "unidade_cidade",
+    "unidade_uf",
+    "unidade_origem",
     "duration_seconds",
     "quality_status",
     "checks_ok",
@@ -156,6 +164,25 @@ _RAW_ARTIFACT_COLUMNS = [
     "content_truncated",
     "chunk_count",
 ]
+# Uma linha por tema citado em cada áudio, da classificação gravada em
+# audio_temas. Com a unidade do áudio (Entrevistas), dá para cruzar tema por
+# unidade e por período no Power BI (docs/SPEC_UNIDADES_E_TAGS.md, §3.4).
+_THEME_COLUMNS = [
+    "audio_id",
+    "project_id",
+    "session_id",
+    "unidade_id",
+    "tipo",
+    "categoria",
+    "subtema",
+    "polaridade",
+    "evidencia",
+    "linhas",
+    "versao_taxonomia",
+    "taxonomia_atual",
+    "modelo",
+    "classificado_em",
+]
 _RAW_ARTIFACT_CHUNK_COLUMNS = [
     "audio_id",
     "project_id",
@@ -186,6 +213,54 @@ def _first_value(item: dict[str, Any], *keys: str) -> Any:
         if key in item and item[key] is not None:
             return item[key]
     return None
+
+
+def _theme_rows(project: dict, audios: list[dict]) -> list[dict[str, Any]]:
+    """Os temas de cada áudio, como a classificação os gravou.
+
+    Vem a última classificação de cada áudio, válida ou não para a taxonomia
+    de agora: `taxonomia_atual` diz se ela foi feita com a taxonomia que o
+    projeto tem hoje. Emergente entra com o rótulo no lugar do subtema e a
+    categoria que a IA sugeriu.
+    """
+    project_id = project["id"]
+    versao_atual = temas.versao_taxonomia(temas.parse_taxonomia(project.get("taxonomia")))
+    por_id = {audio["id"]: audio for audio in audios}
+    rows = []
+    for audio_id, item in sorted(prosodia_db.get_audio_temas_for_project(project_id).items()):
+        audio = por_id.get(audio_id, {})
+        classificacao = item.get("temas") if isinstance(item.get("temas"), dict) else {}
+        comum = {
+            "audio_id": audio_id,
+            "project_id": project_id,
+            "session_id": audio.get("session_id"),
+            "unidade_id": audio.get("unidade_id"),
+            "versao_taxonomia": item.get("versao_taxonomia"),
+            "taxonomia_atual": bool(versao_atual) and item.get("versao_taxonomia") == versao_atual,
+            "modelo": item.get("modelo"),
+            "classificado_em": item.get("created_at"),
+        }
+        for tipo, chave in (("taxonomia", "temas"), ("emergente", "emergentes")):
+            for tema in classificacao.get(chave) or []:
+                if not isinstance(tema, dict):
+                    continue
+                if tipo == "taxonomia":
+                    categoria, _, subtema = str(tema.get("subtema") or "").partition(" > ")
+                else:
+                    categoria, subtema = str(tema.get("categoria") or ""), str(tema.get("rotulo") or "")
+                linhas = [
+                    trecho.get("linha") for trecho in tema.get("trechos") or [] if isinstance(trecho, dict)
+                ]
+                rows.append(dict(
+                    comum,
+                    tipo=tipo,
+                    categoria=categoria.strip(),
+                    subtema=subtema.strip(),
+                    polaridade=tema.get("polaridade"),
+                    evidencia=tema.get("evidencia"),
+                    linhas=", ".join(str(linha) for linha in linhas if linha is not None),
+                ))
+    return rows
 
 
 def _frame(rows: list[dict[str, Any]], columns: list[str]) -> pd.DataFrame:
@@ -656,6 +731,13 @@ def export_project_to_powerbi_excel(
             "openai_file_id_transcricao": audio.get("openai_file_id_transcricao"),
             "whatsapp_message_id": audio.get("whatsapp_message_id"),
             "qr_code_name": audio.get("qr_code_name"),
+            "qr_code_code": audio.get("qr_code_code"),
+            "unidade_id": audio.get("unidade_id"),
+            "unidade_codigo": audio.get("unidade_codigo"),
+            "unidade_nome": audio.get("unidade_nome"),
+            "unidade_cidade": audio.get("unidade_cidade"),
+            "unidade_uf": audio.get("unidade_uf"),
+            "unidade_origem": audio.get("unidade_origem"),
             "duration_seconds": _duration_seconds(
                 vad_frame,
                 transcript_frame,
@@ -734,6 +816,7 @@ def export_project_to_powerbi_excel(
         "Verificacoes_Qualidade": _frame(quality_rows, _QUALITY_COLUMNS),
         "Checks_Qualidade": _frame(quality_check_rows, _QUALITY_CHECK_COLUMNS),
         "Cobertura_Perguntas": _frame(coverage_rows, _COVERAGE_COLUMNS),
+        "Temas_Audio": _frame(_theme_rows(project, audios), _THEME_COLUMNS),
         "Momentos_Alta_Ativacao": _frame(
             _activation_rows(activation_history),
             _ACTIVATION_COLUMNS,

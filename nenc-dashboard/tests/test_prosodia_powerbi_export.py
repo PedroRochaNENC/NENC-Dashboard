@@ -250,6 +250,7 @@ class ProsodiaPowerBiExportTests(unittest.TestCase):
                 "Verificacoes_Qualidade",
                 "Checks_Qualidade",
                 "Cobertura_Perguntas",
+                "Temas_Audio",
                 "Momentos_Alta_Ativacao",
                 "Dados_Brutos_Entrevistas",
                 "Chunks_Dados_Brutos_Entrevistas",
@@ -307,6 +308,54 @@ class ProsodiaPowerBiExportTests(unittest.TestCase):
         self.assertTrue(
             raw_artifact_chunks["chunk_text"].astype(str).str.contains("Atendimento muito bom").any()
         )
+
+    def test_export_carries_the_unit_and_the_themes_of_each_audio(self):
+        # Com a unidade em Entrevistas e os temas em Temas_Audio, o Power BI
+        # cruza tema por unidade e por período (spec de Unidades, §3.4).
+        from utils import prosodia_temas as temas
+
+        taxonomia = "Ambiente > Lotação: academia cheia"
+        project_id = prosodia_db.create_project("Piloto VoC", taxonomia=taxonomia, taxonomia_status="validada")
+        audio_id = prosodia_db.create_audio(project_id, "wa_5511900000001_1", qr_code_code="16-01")
+        sem_unidade = prosodia_db.create_audio(project_id, "wa_5511900000002_2")
+        unidade_id = prosodia_db.create_unidade("Smart Fit Paulista", "SP012", "São Paulo", "SP")
+        prosodia_db.set_qr_unidade(project_id, "16-01", unidade_id)
+        versao = temas.versao_taxonomia(temas.parse_taxonomia(taxonomia))
+        prosodia_db.save_audio_temas(audio_id, "chave", versao, "gpt-4.1-mini", {
+            "temas": [{"subtema": "Ambiente > Lotação", "polaridade": "negativa", "evidencia": "fila no pico",
+                       "trechos": [{"linha": 2}, {"linha": 3}]}],
+            "emergentes": [{"rotulo": "Preço da mensalidade", "categoria": "Plano", "polaridade": "negativa",
+                            "evidencia": "achou caro", "trechos": [{"linha": 5}]}],
+        })
+        prosodia_db.save_audio_temas(sem_unidade, "chave", "versao-antiga", "gpt-4.1-mini", {
+            "temas": [{"subtema": "Ambiente > Lotação", "polaridade": "mista", "trechos": [{"linha": 1}]}],
+            "emergentes": [],
+        })
+
+        workbook, _ = export_project_to_powerbi_excel(project_id)
+        sheets = self._sheets(workbook)
+
+        interviews = pd.read_excel(sheets, "Entrevistas").set_index("id")
+        self.assertEqual(
+            tuple(interviews.loc[audio_id, ["qr_code_code", "unidade_codigo", "unidade_nome", "unidade_cidade",
+                                            "unidade_uf", "unidade_origem"]]),
+            ("16-01", "SP012", "Smart Fit Paulista", "São Paulo", "SP", "qr"),
+        )
+        self.assertTrue(pd.isna(interviews.loc[sem_unidade, "unidade_id"]))
+
+        themes = pd.read_excel(sheets, "Temas_Audio")
+        self.assertEqual(
+            sorted(
+                (int(r.audio_id), r.tipo, r.categoria, r.subtema, r.polaridade, str(r.linhas), bool(r.taxonomia_atual))
+                for r in themes.itertuples()
+            ),
+            [
+                (audio_id, "emergente", "Plano", "Preço da mensalidade", "negativa", "5", True),
+                (audio_id, "taxonomia", "Ambiente", "Lotação", "negativa", "2, 3", True),
+                (sem_unidade, "taxonomia", "Ambiente", "Lotação", "mista", "1", False),
+            ],
+        )
+        self.assertTrue((themes.loc[themes["audio_id"] == audio_id, "unidade_id"] == unidade_id).all())
 
     def test_export_of_empty_project_keeps_all_table_schemas(self):
         project_id = prosodia_db.create_project(name="Projeto sem entrevistas")

@@ -1143,7 +1143,7 @@ class SnapshotTests(unittest.TestCase):
             [{"subtema": MAQUINA, "respondentes": 1, "faixa": MENCAO_ISOLADA, "polaridades": {"negativa": 1}}],
         )
         lido = Recorte.de_dict(json.loads(json.dumps(dados))["recorte"])
-        self.assertTrue(lido.mesmo_qr_e_origem(recorte))
+        self.assertTrue(lido.mesmo_filtro(recorte))
         self.assertEqual((lido.periodo, lido.descricao), (recorte.periodo, recorte.descricao))
 
     def test_the_snapshot_feeds_the_next_comparison(self):
