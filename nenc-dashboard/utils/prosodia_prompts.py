@@ -573,6 +573,10 @@ amostra e não generalize para o público.
 - A coluna "Anteriores → novos", quando vem, compara os respondentes da análise \
 anterior com os que chegaram depois. Com menos de 20 novos, a diferença é variação \
 observada, nunca tendência.
+- A coluna "Unidades", quando vem, diz em quantas unidades do recorte o subtema \
+aparece. "Concentrada em <unidade>" aponta um problema daquela unidade: trate-o como \
+local, não o generalize para a rede, e dirija a recomendação à unidade. Os respondentes \
+sem unidade ficam fora dessa coluna.
 - Os Sumários Executivos das análises individuais são interpretação prévia: podem \
 inspirar hipóteses, mas não sustentam achado nem número.
 - A base de conhecimento traz literatura e material do projeto, para contexto e \

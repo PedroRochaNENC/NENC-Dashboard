@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 import utils.charts  # noqa: F401  registra o template "nenc" do Plotly
 from utils import prosodia_summary
 from utils.prosodia_signals import EMOCOES
+from utils.prosodia_unidades import rotulo_unidade
 
 POSITIVO = "#9184d9"
 NEUTRO = "#595d6c"
@@ -31,6 +32,7 @@ LIMIAR = 0.2
 
 SEM_QR = "Sem QR"
 UPLOAD = "Upload direto"
+SEM_UNIDADE = "Sem unidade"
 
 _ID_NO_FIM = re.compile(r"_(\d+)$")
 
@@ -52,6 +54,17 @@ def qr_label(audio: dict) -> str:
 
 def origin(audio: dict) -> str:
     return "upload" if qr_label(audio) == UPLOAD else "whatsapp"
+
+
+def unidade_label(audio: dict) -> str:
+    """A unidade do áudio, com o código quando há, ou "Sem unidade".
+
+    É a unidade calculada pelo banco: a corrigida à mão ou a do QR code por
+    onde o áudio entrou (docs/SPEC_UNIDADES_E_TAGS.md, §3).
+    """
+    if not audio.get("unidade_id"):
+        return SEM_UNIDADE
+    return rotulo_unidade({"nome": audio.get("unidade_nome"), "codigo": audio.get("unidade_codigo")})
 
 
 def api_audio_id(session_id: str) -> Optional[int]:
@@ -126,17 +139,32 @@ def qr_options(audios: Iterable[dict]) -> List[str]:
     return list(counts.index)
 
 
+def unidade_options(audios: Iterable[dict]) -> List[str]:
+    """Unidades presentes, da com mais áudios à com menos, e "Sem unidade" no fim.
+
+    Vazia quando nenhum áudio tem unidade: aí a tela nem mostra o filtro.
+    """
+    counts = pd.Series([unidade_label(a) for a in audios], dtype=object).value_counts()
+    nomes = [nome for nome in counts.index if nome != SEM_UNIDADE]
+    if not nomes:
+        return []
+    return nomes + ([SEM_UNIDADE] if SEM_UNIDADE in counts.index else [])
+
+
 def filter_audios(
     audios: Sequence[dict],
     qrs: Optional[Sequence[str]] = None,
     period: Optional[Tuple[date, date]] = None,
     origins: Optional[Sequence[str]] = None,
+    unidades: Optional[Sequence[str]] = None,
 ) -> List[dict]:
     selected = []
     for audio in audios:
         if qrs and qr_label(audio) not in qrs:
             continue
         if origins and origin(audio) not in origins:
+            continue
+        if unidades and unidade_label(audio) not in unidades:
             continue
         if period:
             day = entry_date(audio)
@@ -154,9 +182,12 @@ def filter_description(
     period: Optional[Tuple[date, date]],
     origins: Optional[Sequence[str]],
     bounds: Tuple[date, date],
+    unidades: Optional[Sequence[str]] = None,
 ) -> str:
     """O recorte em uma linha, para registrar na análise salva; vazio sem filtro."""
     parts = []
+    if unidades:
+        parts.append("{} {}".format("unidade" if len(unidades) == 1 else "unidades", ", ".join(unidades)))
     if qrs:
         parts.append("QR code {}".format(", ".join(qrs)))
     if period and tuple(period) != tuple(bounds):

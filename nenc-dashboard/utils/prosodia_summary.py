@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from utils import prosodia_db
+from utils.prosodia_unidades import rotulo_unidade
 from utils.prosodia_signals import (
     EMOCOES,
     detectar_divergencias,
@@ -45,7 +46,8 @@ _TZ = os.environ.get("NENC_TZ", "America/Sao_Paulo")
 # Fuso de `created_at` (datetime('now','localtime') do SQLite).
 _SERVER_TZ = datetime.now().astimezone().tzinfo
 _ENTRY_COLUMNS = ["id", "session_id", "qr_code_name", "duration_seconds",
-                  "received_at", "created_at", "n_analyses"]
+                  "received_at", "created_at", "n_analyses",
+                  "unidade_id", "unidade_nome", "unidade_codigo"]
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +93,8 @@ def project_entries(project_id: int) -> pd.DataFrame:
     """Uma linha por áudio do projeto, só com metadado.
 
     `entrou_em` é `received_at` quando a importação o gravou, senão
-    `created_at`; `hora_real` diz qual das duas valeu.
+    `created_at`; `hora_real` diz qual das duas valeu. `unidade` é o nome da
+    unidade com o código, como nas listas de escolha, ou vazio.
     """
     frame = pd.DataFrame(prosodia_db.get_audio_entries(project_id), columns=_ENTRY_COLUMNS)
     received = pd.to_datetime(frame["received_at"].map(received_time))
@@ -101,7 +104,11 @@ def project_entries(project_id: int) -> pd.DataFrame:
     frame["qr_code_name"] = frame["qr_code_name"].fillna("").astype(str).str.strip()
     frame["n_analyses"] = pd.to_numeric(frame["n_analyses"], errors="coerce").fillna(0).astype(int)
     frame["duration_seconds"] = pd.to_numeric(frame["duration_seconds"], errors="coerce")
-    return frame.drop(columns=["received_at", "created_at"])
+    frame["unidade"] = [
+        rotulo_unidade({"nome": nome, "codigo": codigo}) if pd.notna(unidade_id) else ""
+        for unidade_id, nome, codigo in zip(frame["unidade_id"], frame["unidade_nome"], frame["unidade_codigo"])
+    ]
+    return frame.drop(columns=["received_at", "created_at", "unidade_id", "unidade_nome", "unidade_codigo"])
 
 
 def project_activity() -> Dict[int, dict]:
@@ -208,6 +215,29 @@ def qr_ranking(entries: pd.DataFrame, top: int = TOP_QR) -> dict:
         "outros_qr": int(len(rest)),
         "outros_entradas": int(rest.sum()),
         "sem_qr": int((entries["qr_code_name"] == "").sum()),
+        "total": total,
+        "maximo": int(counts.max()) if total else 0,
+    }
+
+
+def unidade_ranking(entries: pd.DataFrame, top: int = TOP_QR) -> dict:
+    """Entradas por unidade, do jeito de qr_ranking.
+
+    Entram todos os áudios com unidade, os de upload corrigidos à mão
+    inclusive; os sem unidade ficam fora das barras e são contados à parte.
+    """
+    counts = entries.loc[entries["unidade"] != "", "unidade"].value_counts()
+    total = int(counts.sum())
+    rest = counts.iloc[top:]
+    return {
+        "linhas": [
+            {"nome": name, "entradas": int(n), "fatia": n / total}
+            for name, n in counts.head(top).items()
+        ],
+        "distintas": int(len(counts)),
+        "outras": int(len(rest)),
+        "outras_entradas": int(rest.sum()),
+        "sem_unidade": int((entries["unidade"] == "").sum()),
         "total": total,
         "maximo": int(counts.max()) if total else 0,
     }

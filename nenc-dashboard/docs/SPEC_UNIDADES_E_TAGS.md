@@ -111,7 +111,7 @@ Colunas novas em `audios`:
 - **Recorte.** Um filtro "Unidade" ao lado de QR code, período e origem (`analise_geral.py:575`). `Recorte` ganha o campo `unidade`, gravado no snapshot, e a análise anterior do Δ passa a exigir o mesmo QR, a mesma origem e a mesma unidade (`mesmo_qr_e_origem` vira `mesmo_filtro`). Snapshot antigo sem o campo conta como "todas as unidades".
 - **Coluna "Unidades"** na tabela de temas, calculada em código sobre os respondentes com unidade:
   - "*k* de *m*", onde *m* é o número de unidades com respondente no recorte e *k*, as que têm o tema;
-  - "concentrada em <unidade> (*a*/*b*)" quando uma unidade sozinha tem mais da metade dos respondentes do tema que têm unidade, e o tema tem pelo menos 3 deles;
+  - "concentrada em <unidade> (*a* de *b* respondentes)" quando uma unidade sozinha tem mais da metade dos respondentes do tema que têm unidade, e o tema tem pelo menos 3 deles. Sem barra, para a verificação das referências não ler o par como uma fração n/N do tema;
   - um respondente da Opinião que mandou áudios por QRs de unidades diferentes conta em cada uma delas, e uma vez só no total;
   - a coluna não aparece quando o recorte é de uma unidade só ou quando nenhum respondente tem unidade. A legenda diz quantos respondentes ficaram fora por estarem sem unidade.
 - **Cabeçalho**: o recorte por unidade entra na linha "Recorte".
@@ -180,7 +180,7 @@ Exemplo, num recorte de 51 respondentes em 6 unidades:
 |---|---|---|---|---|---|---|
 | Staff | 18/51 (35%) | Padrão | 15 elogios · 3 críticas | Fala mais animada que a média; confirma o elogio | 6 de 6 | Cordialidade da recepção 11 · Professor ausente no salão 4 · Gerente resolveu problema 3 |
 | Lotação | 9/51 (18%) | Padrão | 9 críticas | Crítica dita com resignação, sem irritação na voz | 5 de 6 | Fila nos aparelhos à noite 6 · Academia cheia no sábado 3 |
-| Limpeza | 6/51 (12%) | Padrão | 6 críticas | Sem destaque em relação aos demais relatos | concentrada em Moema (5/6) | Vestiário sujo à noite 5 · Falta de papel 1 |
+| Limpeza | 6/51 (12%) | Padrão | 6 críticas | Sem destaque em relação aos demais relatos | concentrada em Moema (5 de 6 respondentes) | Vestiário sujo à noite 5 · Falta de papel 1 |
 | Aulas Coletivas | 3/51 (6%) | Sinal | 2 elogios · 1 crítica | Poucos relatos com voz para uma leitura | 2 de 6 | Grade de horários 2 · Professora de spinning 1 |
 | Outros | 4/51 | — | 3 críticas · 1 neutra | — | — | Preço da mensalidade 3 · Horário de funcionamento 1 |
 | Aplicativo | 0/51 | — | sem menções espontâneas nesta amostra | | | |
@@ -329,7 +329,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 ## 9. Fases
 
 1. **Unidade no banco e no cadastro.** Tabelas, colunas, backfill do código do QR, página Unidades, escolha da unidade no QR e correção na página do áudio. **Feita em 23/10/2026.** As regras sem banco ficaram em `utils/prosodia_unidades.py` (só biblioteca padrão), e por enquanto só `get_audio` devolve a unidade; as listas passam a devolvê-la na Fase 2.
-2. **Unidade nas telas e na Análise Geral.** Lista de Áudios, Resumo, exportação, filtro do recorte, Δ com unidade e coluna Unidades, sobre a tabela da v2.
+2. **Unidade nas telas e na Análise Geral.** Lista de Áudios, Resumo, exportação, filtro do recorte, Δ com unidade e coluna Unidades, sobre a tabela da v2. **Feita em 26/10/2026.** Filtro e coluna só aparecem quando algum áudio do projeto tem unidade; a coluna Unidades e a da Matriz, com duas unidades ou mais no recorte. O prompt ganhou uma regra para ler "concentrada" como problema local. A exportação leva a última classificação de cada áudio em `Temas_Audio`, com `taxonomia_atual` dizendo se ela foi feita com a taxonomia de agora.
 3. **Taxonomia por tags.** Parse, classificação, Outros, candidatos a tag, todas as tags na tabela, alertas e selo.
 4. **Redação do relatório.** Como ler, Sinal emocional, Matriz e Termômetro sem números, Para acompanhar, regras de redação, prompt, exemplo e verificação.
 5. **Validação com a Smart Fit.** Cópia de produção, como na validação da v2 (§15 de `SPEC_ANALISE_GERAL.md`), as 16 tags no campo e as unidades cadastradas pela sugestão dos QRs. Gerar o relatório e conferir:

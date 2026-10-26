@@ -86,6 +86,9 @@ ESCALA_TERMOMETRO = 5
 # Δ: com menos respondentes novos a coluna não aparece, e com menos de 20 a
 # diferença é variação observada, não tendência.
 MIN_NOVOS_DELTA = 5
+# Respondentes com unidade no tema a partir dos quais a coluna "Unidades" diz
+# que ele se concentra numa unidade (spec de Unidades, §3.5).
+MIN_CONCENTRACAO = 3
 MIN_NOVOS_TENDENCIA = 20
 
 MAX_TRECHOS_POR_TEMA = 6
@@ -227,7 +230,9 @@ class AudioDoProjeto:
     anteriores. `qr` e `chegada` só aparecem na legenda dos aliases.
     `conteudo` identifica o arquivo (assinatura_do_conteudo): áudios do
     recorte com o mesmo conteúdo são o mesmo arquivo enviado de novo e contam
-    uma vez.
+    uma vez. `unidade` é o rótulo da unidade do áudio (nome e código), vazio
+    quando ele não tem: é com ela que a coluna "Unidades" separa problema
+    local de problema da rede.
     """
 
     audio_id: int
@@ -238,6 +243,7 @@ class AudioDoProjeto:
     qr: str = ""
     chegada: str = ""
     conteudo: Optional[str] = None
+    unidade: str = ""
 
 
 def assinatura_do_conteudo(prosodia_json: Optional[bytes]) -> Optional[str]:
@@ -763,6 +769,10 @@ class LinhaTema:
     voz: LeituraVoz
     anteriores: Optional[int] = None
     novos: Optional[int] = None
+    # Respondentes do tema em cada unidade, e quantos respondentes do tema têm
+    # unidade: quem mandou áudios por unidades diferentes conta em cada uma.
+    unidades: Dict[str, int] = field(default_factory=dict)
+    com_unidade: int = 0
 
     @property
     def predominante(self) -> str:
@@ -964,6 +974,7 @@ class LinhaMatriz:
     indice: float
     ativacao: Optional[float]
     temas: Tuple[str, ...]
+    unidade: str = ""
 
 
 @dataclass(frozen=True)
@@ -1057,6 +1068,7 @@ def montar_matriz(
             float(indice.indice),
             ativacao_projeto.get(str(audio.session_id)),
             temas_por_audio.get(audio.audio_id, ()),
+            audio.unidade,
         )
         if linha.indice >= corte_indice and linha.texto > LIMIAR_TEXTO:
             vinculo.append(linha)
@@ -1080,23 +1092,30 @@ def montar_matriz(
 class Recorte:
     """O filtro da Análise Geral, como fica gravado no snapshot.
 
-    QR code e origem ficam vazios quando não filtram (marcar todos é o mesmo
-    que não filtrar). O período fica registrado, mas não entra na comparação
-    do Δ: é ele que muda de uma onda para a outra.
+    QR code, origem e unidade ficam vazios quando não filtram (marcar todos é
+    o mesmo que não filtrar). O período fica registrado, mas não entra na
+    comparação do Δ: é ele que muda de uma onda para a outra. Snapshot gravado
+    antes da unidade existir lê como "todas as unidades".
     """
 
     qr: Tuple[str, ...] = ()
     origem: Tuple[str, ...] = ()
     periodo: Tuple[str, ...] = ()
     descricao: str = ""
+    unidade: Tuple[str, ...] = ()
 
-    def mesmo_qr_e_origem(self, outro: "Recorte") -> bool:
-        return set(self.qr) == set(outro.qr) and set(self.origem) == set(outro.origem)
+    def mesmo_filtro(self, outro: "Recorte") -> bool:
+        return (
+            set(self.qr) == set(outro.qr)
+            and set(self.origem) == set(outro.origem)
+            and set(self.unidade) == set(outro.unidade)
+        )
 
     def como_dict(self) -> dict:
         return {
             "qr": sorted(self.qr),
             "origem": sorted(self.origem),
+            "unidade": sorted(self.unidade),
             "periodo": list(self.periodo),
             "descricao": self.descricao,
         }
@@ -1109,7 +1128,9 @@ class Recorte:
             valor = dados.get(chave)
             return tuple(str(v) for v in valor) if isinstance(valor, (list, tuple)) else ()
 
-        return cls(tupla("qr"), tupla("origem"), tupla("periodo"), str(dados.get("descricao") or ""))
+        return cls(
+            tupla("qr"), tupla("origem"), tupla("periodo"), str(dados.get("descricao") or ""), tupla("unidade")
+        )
 
 
 @dataclass(frozen=True)
@@ -1166,7 +1187,7 @@ def escolher_analise_anterior(
     """A análise com que o Δ compara, ou None.
 
     `analises` vem de get_project_analyses, da mais recente para a mais
-    antiga. Vale a última com o mesmo recorte de QR code e origem. A análise
+    antiga. Vale a última com o mesmo recorte de QR code, origem e unidade. A análise
     com snapshot traz a lista de áudios que cobriu. A sem snapshot (todas as
     anteriores à v2) cobriu os áudios criados antes dela, desde que o texto
     não traga "Recorte analisado"; se trouxer, não há como saber o que ela
@@ -1183,14 +1204,14 @@ def escolher_analise_anterior(
             continue
         snapshot = analise.get("temas")
         if isinstance(snapshot, dict) and isinstance(snapshot.get("audios"), list):
-            if not recorte.mesmo_qr_e_origem(Recorte.de_dict(snapshot.get("recorte"))):
+            if not recorte.mesmo_filtro(Recorte.de_dict(snapshot.get("recorte"))):
                 continue
             cobertos = frozenset(i for i in (_inteiro(v) for v in snapshot["audios"]) if i is not None)
             candidata = AnaliseAnterior(criada_em, cobertos, False, analise.get("id"))
         else:
             if _MARCA_RECORTE in str(analise.get("analysis_text") or ""):
                 return None
-            if recorte.qr or recorte.origem:
+            if recorte.qr or recorte.origem or recorte.unidade:
                 continue
             cobertos = frozenset(
                 audio_id for audio_id, criado in criados.items() if criado is not None and criado < criada_em
@@ -1204,6 +1225,52 @@ def escolher_analise_anterior(
 # ---------------------------------------------------------------------------
 # Agregação
 # ---------------------------------------------------------------------------
+
+def _presenca_por_unidade(
+    contados: Sequence[AudioDoProjeto], tipo: str, rotulos: Set[str]
+) -> Tuple[Dict[str, Dict[str, Set[str]]], Tuple[str, ...], int]:
+    """Quem citou cada tema em cada unidade, as unidades do recorte e os sem unidade.
+
+    A menção vale na unidade do áudio em que foi dita: um respondente da
+    Opinião que mandou áudios por QRs de unidades diferentes conta em cada
+    unidade em que tratou do tema, e uma vez só no total. As unidades saem da
+    com mais respondentes à com menos.
+    """
+    presenca: Dict[str, Dict[str, Set[str]]] = {}
+    respondentes_por_unidade: Dict[str, Set[str]] = {}
+    com_unidade: Set[str] = set()
+    todos: Set[str] = set()
+    for audio in contados:
+        respondente = chave_respondente(audio.session_id, tipo)
+        todos.add(respondente)
+        if not audio.unidade:
+            continue
+        com_unidade.add(respondente)
+        respondentes_por_unidade.setdefault(audio.unidade, set()).add(respondente)
+        for tema in _lista(audio.classificacao.get("temas")):
+            rotulo = tema.get("subtema")
+            if rotulo in rotulos:
+                presenca.setdefault(rotulo, {}).setdefault(audio.unidade, set()).add(respondente)
+    unidades = tuple(sorted(
+        respondentes_por_unidade, key=lambda u: (-len(respondentes_por_unidade[u]), chave_rotulo(u))
+    ))
+    return presenca, unidades, len(todos - com_unidade)
+
+
+def texto_unidades(tema: "LinhaTema", unidades_no_recorte: int) -> str:
+    """A célula "Unidades" de um tema: em quantas aparece, ou onde se concentra.
+
+    "Concentrada" quando uma unidade sozinha tem mais da metade dos
+    respondentes do tema que têm unidade, a partir de 3 deles. Sem fração com
+    barra, para a verificação das referências não a confundir com n/N.
+    """
+    if not tema.unidades:
+        return "—"
+    unidade, maior = max(tema.unidades.items(), key=lambda item: (item[1], chave_rotulo(item[0])))
+    if tema.com_unidade >= MIN_CONCENTRACAO and maior * 2 > tema.com_unidade:
+        return "concentrada em {} ({} de {} respondentes)".format(unidade, maior, tema.com_unidade)
+    return "{} de {}".format(len(tema.unidades), unidades_no_recorte)
+
 
 @dataclass
 class Agregacao:
@@ -1228,10 +1295,19 @@ class Agregacao:
     delta: Optional[Delta] = None
     # Cópia → o áudio que conta por ela: o mesmo arquivo enviado de novo.
     repetidos: Dict[int, int] = field(default_factory=dict)
+    # Unidades com respondente contado no recorte, e respondentes sem unidade
+    # nenhuma (chegaram sem QR de unidade): ficam fora da coluna "Unidades".
+    unidades: Tuple[str, ...] = ()
+    sem_unidade: int = 0
 
     @property
     def exploratoria(self) -> bool:
         return self.n_respondentes < MIN_RESPONDENTES
+
+    @property
+    def por_unidade(self) -> bool:
+        """A coluna "Unidades" só diz algo com duas unidades ou mais no recorte."""
+        return len(self.unidades) >= 2
 
 
 def agregar(
@@ -1277,6 +1353,7 @@ def agregar(
     total = len(mencoes)
     reguas = reguas_do_projeto(sinc_projeto)
     ocorrencias = _ocorrencias(contados, tipo, nomes, conjunto, sinc_projeto, transcricao_projeto, reguas)
+    presenca, unidades_do_recorte, sem_unidade = _presenca_por_unidade(contados, tipo, conjunto)
 
     temas: List[LinhaTema] = []
     for rotulo in rotulos:
@@ -1288,7 +1365,11 @@ def agregar(
             ((respondente, leitura) for respondente, _, leitura in ocorrencias.get(rotulo, [])),
             predominante(polaridades),
         )
-        temas.append(LinhaTema(rotulo, curtos[rotulo], n, faixa(n, total), dict(polaridades), voz))
+        linha = LinhaTema(rotulo, curtos[rotulo], n, faixa(n, total), dict(polaridades), voz)
+        por_unidade = presenca.get(rotulo, {})
+        linha.unidades = {unidade: len(quem) for unidade, quem in por_unidade.items()}
+        linha.com_unidade = len(set().union(*por_unidade.values())) if por_unidade else 0
+        temas.append(linha)
     ordem = {rotulo: i for i, rotulo in enumerate(rotulos)}
     temas.sort(key=lambda t: (-t.respondentes, ordem[t.subtema]))
     citados = {tema.subtema for tema in temas}
@@ -1340,6 +1421,8 @@ def agregar(
         reguas=reguas,
         delta=delta,
         repetidos=repetidos,
+        unidades=unidades_do_recorte,
+        sem_unidade=sem_unidade,
     )
 
 
@@ -1451,6 +1534,8 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
     blocos = []
     if agregacao.temas:
         cabecalho = ["Categoria > Subtema", "Respondentes", "Faixa", "Texto", "Voz nos trechos"]
+        if agregacao.por_unidade:
+            cabecalho.append("Unidades")
         if coluna_delta:
             cabecalho.append("Anteriores → novos")
         linhas = []
@@ -1462,6 +1547,8 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
                 texto_polaridades(tema.polaridades),
                 "—" if tema.faixa == MENCAO_ISOLADA else tema.voz.texto(),
             ]
+            if agregacao.por_unidade:
+                celulas.append(texto_unidades(tema, len(agregacao.unidades)))
             if coluna_delta:
                 celulas.append("{} → {}".format(
                     _fracao(tema.anteriores or 0, delta.anteriores), _fracao(tema.novos or 0, delta.novos)
@@ -1480,6 +1567,17 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
         "total, padrão. O mesmo respondente pode estar em vários subtemas, então as contagens "
         "não se somam."
     )
+    if agregacao.por_unidade:
+        nota += (
+            " \"Unidades\" diz em quantas das {} unidades do recorte o subtema aparece, ou, quando "
+            "uma unidade sozinha tem mais da metade dos respondentes dele (a partir de {}), onde ele "
+            "se concentra.".format(len(agregacao.unidades), MIN_CONCENTRACAO)
+        )
+        if agregacao.sem_unidade:
+            nota += " {} sem unidade {} fora dessa coluna.".format(
+                _plural(agregacao.sem_unidade, "respondente", "respondentes"),
+                "fica" if agregacao.sem_unidade == 1 else "ficam",
+            )
     if coluna_delta:
         nota += " \"Anteriores → novos\" compara os respondentes da análise de {} com os que chegaram depois".format(
             delta.anterior.data
@@ -1537,6 +1635,16 @@ def _grupos_da_matriz(agregacao: Agregacao) -> List[Tuple[str, str, bool]]:
     pede leitura à IA.
     """
     matriz = agregacao.matriz
+    # Com duas unidades ou mais no recorte, cada linha diz de que unidade é o
+    # áudio: é a unidade que age sobre quem está em risco de abandono.
+    com_unidade = agregacao.por_unidade
+
+    def _cabecalho(colunas):
+        return colunas[:1] + (["Unidade"] if com_unidade else []) + colunas[1:]
+
+    def _celulas(linha, resto):
+        return [linha.alias] + ([linha.unidade or "—"] if com_unidade else []) + resto
+
     grupos = [(
         VINCULO,
         "**{}** — índice combinado no terço superior do projeto (a partir de {}) e texto acima de +0,2"
@@ -1545,8 +1653,10 @@ def _grupos_da_matriz(agregacao: Agregacao) -> List[Tuple[str, str, bool]]:
             _decimal(matriz.corte_indice),
             _tabela_grupo(
                 matriz.vinculo,
-                ["Respondente", "Texto", "Voz", "Índice", "Temas"],
-                lambda l: [l.alias, _decimal(l.texto), _decimal(l.voz), _decimal(l.indice), "; ".join(l.temas) or "—"],
+                _cabecalho(["Respondente", "Texto", "Voz", "Índice", "Temas"]),
+                lambda l: _celulas(
+                    l, [_decimal(l.texto), _decimal(l.voz), _decimal(l.indice), "; ".join(l.temas) or "—"]
+                ),
             ),
         ),
         _com_audios(matriz.vinculo),
@@ -1561,8 +1671,8 @@ def _grupos_da_matriz(agregacao: Agregacao) -> List[Tuple[str, str, bool]]:
                 _decimal(matriz.corte_ativacao),
                 _tabela_grupo(
                     matriz.risco,
-                    ["Respondente", "Texto", "Ativação", "Temas"],
-                    lambda l: [l.alias, _decimal(l.texto), _decimal(l.ativacao), "; ".join(l.temas) or "—"],
+                    _cabecalho(["Respondente", "Texto", "Ativação", "Temas"]),
+                    lambda l: _celulas(l, [_decimal(l.texto), _decimal(l.ativacao), "; ".join(l.temas) or "—"]),
                 ),
             ),
             _com_audios(matriz.risco),

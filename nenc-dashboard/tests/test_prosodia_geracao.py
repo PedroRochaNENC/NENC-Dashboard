@@ -387,7 +387,7 @@ class PaginaTests(unittest.TestCase):
         self.assertEqual((tudo.qr, tudo.origem), ((), ()))
         self.assertEqual(tudo.periodo, ("2026-09-01", "2026-09-30"))
         self.assertEqual((parte.qr, parte.origem, parte.descricao), (("B",), ("whatsapp",), "QR code B"))
-        self.assertTrue(tudo.mesmo_qr_e_origem(rel.Recorte()))
+        self.assertTrue(tudo.mesmo_filtro(rel.Recorte()))
 
     def test_lines_come_from_each_audio_transcript(self):
         audios = [{"id": 1, "session_id": "a"}, {"id": 2, "session_id": "b"}]

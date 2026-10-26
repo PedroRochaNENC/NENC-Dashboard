@@ -128,17 +128,20 @@ def recorte_da_pagina(
     periodo: Optional[Tuple[date, date]],
     origens: Sequence[str],
     descricao: str,
+    unidades: Sequence[str] = (),
+    unidades_do_projeto: Sequence[str] = (),
 ) -> rel.Recorte:
     """O filtro da página como o snapshot grava.
 
-    Marcar todos os QR codes, ou todas as origens, é o mesmo que não filtrar,
-    como na descrição do recorte. O período fica registrado sempre, mas o Δ
-    não o compara: é ele que muda de uma onda para a outra.
+    Marcar todos os QR codes, todas as origens ou todas as unidades é o mesmo
+    que não filtrar, como na descrição do recorte. O período fica registrado
+    sempre, mas o Δ não o compara: é ele que muda de uma onda para a outra.
     """
     qr = () if not qrs or set(qrs) == set(qrs_do_projeto) else tuple(sorted(qrs))
     origem = () if not origens or set(origens) == set(overview.ORIGENS) else tuple(sorted(origens))
+    unidade = () if not unidades or set(unidades) == set(unidades_do_projeto) else tuple(sorted(unidades))
     datas = tuple(dia.isoformat() for dia in periodo) if periodo else ()
-    return rel.Recorte(qr, origem, datas, descricao or "")
+    return rel.Recorte(qr, origem, datas, descricao or "", unidade)
 
 
 def contexto_do_projeto(projeto: dict) -> dict:
@@ -209,6 +212,7 @@ def _audio_do_projeto(
         qr=overview.qr_label(audio),
         chegada=overview.entry_text(audio),
         conteudo=(conteudos or {}).get(audio_id),
+        unidade=overview.unidade_label(audio) if audio.get("unidade_id") else "",
     )
 
 

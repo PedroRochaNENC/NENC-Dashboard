@@ -901,15 +901,17 @@ def get_audios(project_id: int) -> List[Dict]:
                 """
                 SELECT
                     a.*,
+                    {unidade},
                     (SELECT overall_status FROM quality_checks q
                      WHERE q.audio_id = a.id
                      ORDER BY q.created_at DESC LIMIT 1) AS quality_status,
                     (SELECT COUNT(*) FROM analyses an
                      WHERE an.audio_id = a.id) AS n_analyses
                 FROM audios a
+                {join}
                 WHERE a.project_id = ?
                 ORDER BY a.created_at DESC
-                """,
+                """.format(unidade=_COLUNAS_UNIDADE, join=_JOIN_UNIDADE),
                 (project_id,),
             ).fetchall()
         else:
@@ -917,15 +919,17 @@ def get_audios(project_id: int) -> List[Dict]:
                 """
                 SELECT
                     a.*,
+                    {unidade},
                     (SELECT overall_status FROM quality_checks q
                      WHERE q.audio_id = a.id AND q.organization_id = a.organization_id
                      ORDER BY q.created_at DESC LIMIT 1) AS quality_status,
                     (SELECT COUNT(*) FROM analyses an
                      WHERE an.audio_id = a.id AND an.organization_id = a.organization_id) AS n_analyses
                 FROM audios a
+                {join}
                 WHERE a.project_id = ? AND a.organization_id = ?
                 ORDER BY a.created_at DESC
-                """,
+                """.format(unidade=_COLUNAS_UNIDADE, join=_JOIN_UNIDADE),
                 (project_id, organization_id),
             ).fetchall()
     _audit("prosodia.audio.list", "project", project_id, organization_id or 0)
@@ -945,24 +949,26 @@ def get_audio_entries(project_id: int) -> List[Dict]:
             rows = conn.execute(
                 """
                 SELECT a.id, a.session_id, a.qr_code_name, a.duration_seconds,
-                       NULLIF(a.received_at, '') AS received_at, a.created_at,
+                       NULLIF(a.received_at, '') AS received_at, a.created_at, {unidade},
                        (SELECT COUNT(*) FROM analyses an
                         WHERE an.audio_id = a.id) AS n_analyses
                 FROM audios a
+                {join}
                 WHERE a.project_id = ?
-                """,
+                """.format(unidade=_COLUNAS_UNIDADE, join=_JOIN_UNIDADE),
                 (project_id,),
             ).fetchall()
         else:
             rows = conn.execute(
                 """
                 SELECT a.id, a.session_id, a.qr_code_name, a.duration_seconds,
-                       NULLIF(a.received_at, '') AS received_at, a.created_at,
+                       NULLIF(a.received_at, '') AS received_at, a.created_at, {unidade},
                        (SELECT COUNT(*) FROM analyses an
                         WHERE an.audio_id = a.id AND an.organization_id = a.organization_id) AS n_analyses
                 FROM audios a
+                {join}
                 WHERE a.project_id = ? AND a.organization_id = ?
-                """,
+                """.format(unidade=_COLUNAS_UNIDADE, join=_JOIN_UNIDADE),
                 (project_id, organization_id),
             ).fetchall()
     _audit("prosodia.audio.summary", "project", project_id, organization_id or 0)
@@ -1104,6 +1110,7 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.duration_seconds,
                     a.qr_code_name,
                     a.received_at,
+                    {unidade},
                     a.indice_combinado,
                     a.indice_texto,
                     a.indice_voz,
@@ -1136,9 +1143,10 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                         WHERE an.audio_id = a.id
                     ) AS n_analyses
                 FROM audios a
+                {join}
                 WHERE a.project_id = ?
                 ORDER BY a.created_at DESC
-                """,
+                """.format(unidade=_COLUNAS_UNIDADE, join=_JOIN_UNIDADE),
                 (project_id,),
             ).fetchall()
         else:
@@ -1152,6 +1160,7 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                     a.duration_seconds,
                     a.qr_code_name,
                     a.received_at,
+                    {unidade},
                     a.indice_combinado,
                     a.indice_texto,
                     a.indice_voz,
@@ -1184,9 +1193,10 @@ def get_audios_for_interviews(project_id: int) -> List[Dict]:
                         WHERE an.audio_id = a.id AND an.organization_id = a.organization_id
                     ) AS n_analyses
                 FROM audios a
+                {join}
                 WHERE a.project_id = ? AND a.organization_id = ?
                 ORDER BY a.created_at DESC
-                """,
+                """.format(unidade=_COLUNAS_UNIDADE, join=_JOIN_UNIDADE),
                 (project_id, organization_id),
             ).fetchall()
 
@@ -1603,6 +1613,7 @@ _JOIN_UNIDADE = """
 """
 _COLUNAS_UNIDADE = """
     u.id AS unidade_id, u.nome AS unidade_nome, u.codigo AS unidade_codigo,
+    u.cidade AS unidade_cidade, u.uf AS unidade_uf,
     CASE WHEN a.unidade_manual_id IS NOT NULL THEN '{}'
          WHEN qu.unidade_id IS NOT NULL THEN '{}' END AS unidade_origem
 """.format(UNIDADE_MANUAL, UNIDADE_PELO_QR)
