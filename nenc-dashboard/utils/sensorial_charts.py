@@ -42,8 +42,13 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return "rgba({}, {}, {}, {})".format(*(int(raw[i:i + 2], 16) for i in (0, 2, 4)), alpha)
 
 
+def _ci_note(figure: go.Figure, text: str) -> None:
+    figure.add_annotation(text=text, xref="paper", yref="paper", x=1, y=1.08, showarrow=False,
+                          font=dict(size=11, color=MUTED), xanchor="right")
+
+
 def condition_stage_bars(summary: pd.DataFrame, measure: str, design: Dict, name: str) -> go.Figure:
-    """Média das médias por participante, por etapa e condição, com o erro padrão e a linha do basal."""
+    """Média das médias por participante, por etapa e condição, com o IC 95% e a linha do basal."""
     data = summary[summary["medida"] == measure]
     if data.empty:
         return empty_figure("Sem dados desta medida no recorte.")
@@ -60,42 +65,67 @@ def condition_stage_bars(summary: pd.DataFrame, measure: str, design: Dict, name
         figure.add_bar(
             name=labels.get(condition, condition), x=[stage_labels.get(s, s) for s in stages], y=rows["media"],
             marker=dict(color=colors.get(condition, OTHER_COLOR), line=dict(width=2, color="#1c1e2c")),
-            error_y=dict(type="data", array=rows["ep"].fillna(0), color=MUTED, thickness=1.2, width=4),
-            customdata=rows[["n"]].fillna(0).astype(int),
-            hovertemplate="%{x} · " + labels.get(condition, condition) + "<br>média %{y:.4g} (n = %{customdata[0]})"
-                          "<extra></extra>")
+            error_y=dict(type="data", array=rows["ic95"].fillna(0), color=MUTED, thickness=1.2, width=4),
+            customdata=pd.concat([rows[["n"]].fillna(0).astype(int), rows[["ic95"]]], axis=1),
+            hovertemplate="%{x} · " + labels.get(condition, condition) + "<br>média %{y:.4g} ± %{customdata[1]:.3g} "
+                          "(IC 95%, n = %{customdata[0]})<extra></extra>")
     basal = data[(data["condicao"] == reference.get("condicao")) & (data["etapa"] == reference.get("etapa"))]
     if not basal.empty:
         figure.add_hline(y=float(basal["media"].iloc[0]), line=dict(color=MUTED, dash="dot", width=1.5),
                          annotation_text="basal", annotation_font_color=MUTED)
+    _ci_note(figure, "barras de erro: IC 95%")
     return layout(figure, 380, barmode="group", yaxis_title=name, bargap=0.25, bargroupgap=0.08)
 
 
-def comparison_chart(table: pd.DataFrame, labels: Dict[str, str], stage_labels: Dict[str, str]) -> go.Figure:
-    """Diferença mediana de cada comparação pareada, colorida pelo resultado (Holm)."""
-    if table.empty:
-        return empty_figure("Sem comparação para esta medida.")
-    rows = table.copy()
+# Só o que responde ao estudo: cada amostra contra o controle e as amostras entre si.
+BUSINESS_COMPARISONS = ("vs_controle", "entre_amostras")
+
+
+def comparison_chart(table: pd.DataFrame, labels: Dict[str, str], stage_labels: Dict[str, str],
+                     name: str = "") -> go.Figure:
+    """Diferença média pareada (com o IC 95%) de cada amostra × controle e amostra × amostra, por etapa.
+
+    A cor e o texto da barra dizem o resultado do teste ("maior que Neutro", "sem diferença"); a comparação
+    com o basal fica só na tabela.
+    """
+    rows = table[table["tipo"].isin(BUSINESS_COMPARISONS)].copy() if not table.empty else table
+    if rows.empty:
+        return empty_figure("Sem comparação entre amostras e controle para esta medida.")
     rows["rotulo"] = ["{} × {} · {}".format(labels.get(a, a), labels.get(b, b), stage_labels.get(e, e))
                       for a, b, e in zip(rows["condicao_a"], rows["condicao_b"], rows["etapa"])]
+
+    def reading(row) -> str:
+        if row.resultado in ("diferença", "tendência"):
+            text = "{} que {}".format("maior" if row.diferenca_media > 0 else "menor",
+                                    labels.get(row.condicao_b, row.condicao_b))
+            return text if row.resultado == "diferença" else text + " (tendência)"
+        return row.resultado
+
+    rows["leitura"] = [reading(row) for row in rows.itertuples()]
     figure = go.Figure()
     for result, color in RESULT_COLORS.items():
         part = rows[rows["resultado"] == result]
         if part.empty:
             continue
-        figure.add_scatter(
-            name=result, x=part["diferenca_mediana"], y=part["rotulo"], mode="markers",
-            marker=dict(size=11, color=color, line=dict(width=2, color="#1c1e2c")),
-            customdata=part[["n", "r", "p_holm"]],
-            hovertemplate="%{y}<br>diferença mediana %{x:.4g}<br>n = %{customdata[0]} · r = %{customdata[1]:.2f}"
-                          " · p Holm = %{customdata[2]:.3g}<extra></extra>")
+        figure.add_bar(
+            name=result, orientation="h", x=part["diferenca_media"], y=part["rotulo"],
+            marker=dict(color=color, line=dict(width=1.5, color="#1c1e2c")),
+            error_x=dict(type="data", symmetric=False, array=(part["ic_sup"] - part["diferenca_media"]).fillna(0),
+                         arrayminus=(part["diferenca_media"] - part["ic_inf"]).fillna(0), color=MUTED, thickness=1.2),
+            text=part["leitura"], textposition="outside", cliponaxis=False,
+            customdata=part[["n", "p", "ic_inf", "ic_sup"]],
+            hovertemplate="%{y}<br>diferença média %{x:.4g} (IC 95%: %{customdata[2]:.3g} a %{customdata[3]:.3g})"
+                          "<br>n = %{customdata[0]} · p = %{customdata[1]:.3g}<extra></extra>")
     figure.add_vline(x=0, line=dict(color=MUTED, width=1))
-    return layout(figure, bar_height(len(rows), 30, 120), xaxis_title="diferença mediana (pareada)",
-                  yaxis=dict(autorange="reversed"))
+    _ci_note(figure, "barra: diferença média pareada · traço: IC 95%")
+    figure = layout(figure, bar_height(len(rows), 34, 140), xaxis_title="diferença média pareada{}".format(
+        " — " + name if name else ""), yaxis=dict(autorange="reversed", automargin=True), barmode="overlay")
+    figure.update_layout(margin=dict(l=12, r=160))
+    return figure
 
 
 def curve_chart(curve: pd.DataFrame, reference: Optional[Dict], design: Dict, name: str, alignment: str) -> go.Figure:
-    """Curva média ± erro padrão por condição, com a faixa do basal."""
+    """Curva média e IC 95% por condição, com a faixa do basal."""
     if curve.empty:
         return empty_figure("Sem janelas desta medida no recorte.")
     labels = {c["codigo"]: c["rotulo"] for c in design.get("condicoes") or []}
@@ -105,8 +135,8 @@ def curve_chart(curve: pd.DataFrame, reference: Optional[Dict], design: Dict, na
         rows = rows.sort_values("t")
         color = colors.get(condition, OTHER_COLOR)
         label = labels.get(condition, condition)
-        upper = rows["media"] + rows["ep"].fillna(0)
-        lower = rows["media"] - rows["ep"].fillna(0)
+        upper = rows["media"] + rows["ic95"].fillna(0)
+        lower = rows["media"] - rows["ic95"].fillna(0)
         group = "{}|{}".format(condition, stage)
         figure.add_scatter(x=pd.concat([rows["t"], rows["t"][::-1]]), y=pd.concat([upper, lower[::-1]]),
                            fill="toself", fillcolor=_rgba(color, 0.18), line=dict(width=0), hoverinfo="skip",
@@ -117,14 +147,15 @@ def curve_chart(curve: pd.DataFrame, reference: Optional[Dict], design: Dict, na
                            hovertemplate=label + " · %{x:.2f} s<br>média %{y:.4g} (n = %{customdata[0]})"
                                                  "<extra></extra>")
     if reference and reference.get("n"):
-        mean, error = reference["media"], reference.get("ep") or 0
+        mean, error = reference["media"], reference.get("ic95") or 0
         figure.add_hrect(y0=mean - error, y1=mean + error, fillcolor=_rgba("#9397ab", 0.12), line_width=0)
         figure.add_hline(y=mean, line=dict(color=MUTED, dash="dot", width=1.5), annotation_text="basal",
                          annotation_font_color=MUTED)
     if alignment == "olfacao":
-        figure.add_vline(x=0, line=dict(color=INK, width=1, dash="dash"), annotation_text="1ª cheirada",
+        figure.add_vline(x=0, line=dict(color=INK, width=1, dash="dash"), annotation_text="1ª olfação",
                          annotation_font_color=INK)
-    title = "segundos desde a 1ª cheirada" if alignment == "olfacao" else "segundos desde o início da etapa"
+    _ci_note(figure, "faixa: IC 95%")
+    title = "segundos desde a 1ª olfação" if alignment == "olfacao" else "segundos desde o início da etapa"
     return layout(figure, 420, xaxis_title=title, yaxis_title=name)
 
 

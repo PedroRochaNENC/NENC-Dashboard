@@ -143,7 +143,7 @@ class ReportTests(_Base):
         self.assertEqual(round(deck.slide_width / deck.slide_height, 2), 1.78)
         titles = [next((s.text_frame.text for s in slide.shapes if s.has_text_frame and s.text_frame.text), "")
                   for slide in deck.slides]
-        for title in ("Achados", "Valência emocional", "Teste de associação: Score por claim",
+        for title in ("Achados", "Atratividade sensorial", "Teste de associação: Score por claim",
                       "Topomapas do pipeline", "Amostra", "Análise de IA", "Limitações"):
             self.assertIn(title, titles)
         charts = [shape.chart for slide in deck.slides for shape in slide.shapes if shape.has_chart]

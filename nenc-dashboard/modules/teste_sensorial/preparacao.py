@@ -216,7 +216,9 @@ def _render_design(model: dict) -> None:
                 + ("Este projeto usa um desenho salvo." if custom else "Este desenho foi deduzido dos dados."))
 
     st.markdown("**Condições**")
-    conditions = pd.DataFrame(design.get("condicoes") or [], columns=["codigo", "rotulo", "papel"])
+    # O modelo traz o nome comercial no rótulo; aqui se edita e se grava o do desenho.
+    conditions = pd.DataFrame([dict(c, rotulo=c.get("rotulo_desenho") or c["rotulo"])
+                               for c in design.get("condicoes") or []], columns=["codigo", "rotulo", "papel"])
     counts = sessions[sessions["condicao"] != ""].groupby("condicao")["sessao_id"].nunique()
     conditions["sessoes"] = conditions["codigo"].map(counts).fillna(0).astype(int)
     edited_conditions = st.data_editor(
@@ -470,7 +472,8 @@ def _render_sample_names(model: dict) -> None:
                 st.rerun()
     suggested = suggestion.get("nomes") or {}
     table = pd.DataFrame([{
-        "codigo": c["codigo"], "rotulo": c["rotulo"], "sugestao": suggested.get(c["codigo"], ""),
+        "codigo": c["codigo"], "rotulo": c.get("rotulo_desenho") or c["rotulo"],
+        "sugestao": suggested.get(c["codigo"], ""),
         "nome": saved.get(c["codigo"]) or suggested.get(c["codigo"], ""),
     } for c in samples])
     edited = st.data_editor(
@@ -622,16 +625,22 @@ def _render_claims_and_report(model: dict) -> None:
 
 def _render_statistics(model: dict) -> None:
     stats = model["settings"]["estatistica"]
-    st.markdown("As comparações são pareadas por participante (Wilcoxon), com o p de cada família (índice × "
-                "etapa) corrigido por Holm. Só o que passa na correção vira “diferença”; o resto com p bruto "
-                "abaixo de alfa é “tendência”.")
-    c1, c2 = st.columns(2)
+    st.markdown("As comparações são pareadas por participante, com o critério do relatório do estudo: "
+                "“diferença” com p abaixo de alfa, sem correção para múltiplas comparações; “tendência” com p "
+                "abaixo do alfa de tendência. O teste é o Wilcoxon pareado até a Aline confirmar o da sintaxe dela.")
+    tests = {"wilcoxon": "Wilcoxon pareado", "t_pareado": "t pareado"}
+    test = st.radio("Teste", list(tests), format_func=tests.get, horizontal=True, disabled=not pode_editar,
+                    index=list(tests).index(stats.get("teste") or "wilcoxon"), key="ts_stats_test")
+    c1, c2, c3 = st.columns(3)
     pairs = c1.number_input("Mínimo de participantes pareados para testar", value=int(stats.get("min_pares", 5)),
                             min_value=3, step=1, disabled=not pode_editar)
     alpha = c2.number_input("Alfa", value=float(stats.get("alfa", 0.05)), min_value=0.001, max_value=0.2,
                             step=0.01, format="%.3f", disabled=not pode_editar)
+    trend = c3.number_input("Alfa de tendência", value=float(stats.get("alfa_tendencia", 0.10)), min_value=0.001,
+                            max_value=0.3, step=0.01, format="%.3f", disabled=not pode_editar)
     if pode_editar and st.button("Salvar estatística", type="primary", key="ts_save_stats"):
-        _save_settings("estatistica", {"min_pares": int(pairs), "alfa": float(alpha)})
+        _save_settings("estatistica", {"min_pares": int(pairs), "alfa": float(alpha),
+                                       "alfa_tendencia": max(float(trend), float(alpha)), "teste": test})
 
 
 if not editing:
