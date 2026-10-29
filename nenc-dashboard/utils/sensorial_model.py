@@ -194,24 +194,33 @@ def _eeg_windows(tables: Dict[str, pd.DataFrame], sessions: pd.DataFrame, stages
     forced = session_reason == "incluída por decisão"
     in_stage = eeg["Etapa"].isin(stages)
 
+    # A rotina de outliers da Aline (Sintaxe_OUTLIER.sps) decide as janelas em todo projeto, com o z e a
+    # Mahalanobis calculados no arquivo de PSD inteiro, como no SPSS. A BASE LIMPA do EEG, quando houver,
+    # só é conferida contra ela; sem a rotina (projeto que a desligou), a BASE LIMPA decide como antes.
+    rule = bool(settings["limpeza"].get("regra_spss")) and psd is not None and sensorial_indices.has_bands(psd)
     keys = tables.get("base_limpa_eeg") if settings["limpeza"].get("usar_base_limpa", True) else None
     in_base = sensorial_cleaning.in_base_limpa(eeg, keys)
+    valid = pd.Series(True, index=eeg.index)
+    if rule:
+        flags = sensorial_cleaning.outlier_flags(
+            psd, sensorial_indices.BAND_COLUMNS, z=float(settings["limpeza"]["z"]),
+            p_mahalanobis=float(settings["limpeza"]["p_mahalanobis"]),
+            min_marks=int(settings["limpeza"]["min_marcas"]))
+        valid.loc[flags.index] = flags["valida"]
+        eeg["marcas_outlier"] = np.nan
+        eeg.loc[flags.index, "marcas_outlier"] = flags["marcas"]
+        if in_base is not None:
+            candidates = in_stage & session_in
+            removed_by_base = int((candidates & valid & ~in_base).sum())
+            removed_by_rule = int((candidates & ~valid & in_base).sum())
+            if removed_by_base or removed_by_rule:
+                _issue(issues, "info", "base_limpa_eeg_conferencia",
+                       "Conferência da limpeza do EEG: a BASE LIMPA tirou {} janela(s) que a rotina de outliers "
+                       "manteve, e a rotina tirou {} que a BASE LIMPA manteve. Vale a rotina.".format(
+                           removed_by_base, removed_by_rule))
+        in_base = None
     if in_base is None:
         in_base = pd.Series(True, index=eeg.index)
-    elif settings["limpeza"].get("regra_spss"):
-        _issue(issues, "info", "regra_spss_ignorada",
-               "A BASE LIMPA do EEG decide as janelas; a regra de outliers do SPSS não é aplicada por cima.")
-    valid = pd.Series(True, index=eeg.index)
-    if settings["limpeza"].get("regra_spss") and keys is None and psd is not None:
-        candidates = in_stage & session_in
-        if candidates.any():
-            flags = sensorial_cleaning.outlier_flags(
-                psd.loc[candidates], sensorial_indices.BAND_COLUMNS, z=float(settings["limpeza"]["z"]),
-                p_mahalanobis=float(settings["limpeza"]["p_mahalanobis"]),
-                min_marks=int(settings["limpeza"]["min_marcas"]))
-            valid.loc[flags.index] = flags["valida"]
-            eeg["marcas_outlier"] = np.nan
-            eeg.loc[flags.index, "marcas_outlier"] = flags["marcas"]
     included = session_in & in_stage & (in_base | forced) & valid
     reason = pd.Series("", index=eeg.index, dtype=object)
     reason[~valid] = "outlier pela regra do SPSS"
@@ -223,7 +232,7 @@ def _eeg_windows(tables: Dict[str, pd.DataFrame], sessions: pd.DataFrame, stages
     eeg["PPI"] = np.nan
     if "FAI" in eeg and included.any():
         ppi_settings = settings["indices"]["ppi"]
-        eeg.loc[included, "PPI"] = sensorial_indices.ppi(eeg.loc[included], ppi_settings.get("modo", "z"),
+        eeg.loc[included, "PPI"] = sensorial_indices.ppi(eeg.loc[included], ppi_settings.get("modo", "spss"),
                                                           ppi_settings.get("pesos"))
     return eeg
 
@@ -300,6 +309,12 @@ def _association_trials(tables: Dict[str, pd.DataFrame], sessions: pd.DataFrame,
     trials["incluida"] = session_in & (in_base | forced)
     trials["motivo"] = reason
     trials["rt"] = pd.to_numeric(trials["rt"], errors="coerce")
+    # Teto do tempo de resposta, como na BASE LIMPA da Aline: no 1055 as 89 tentativas acima de 3.000 ms
+    # viraram 3.000 ms. Sem ele, uma tentativa lenta puxa a média da sessão e o CR do "Sim" troca de sinal.
+    ceiling = settings["associacao"].get("rt_teto_ms")
+    if ceiling:
+        trials["rt_original"] = trials["rt"]
+        trials["rt"] = trials["rt"].clip(upper=float(ceiling))
     trials["sim"] = trials["resposta"].map(lambda value: fold(value) in ("sim", "s", "yes", "y"))
     # CR da tentativa: o quanto ela foi mais rápida que a média da própria sessão, em desvios.
     included = trials[trials["incluida"]]
@@ -336,6 +351,20 @@ def _participants(bundle: Dict, sessions: pd.DataFrame, field_log: Optional[pd.D
     return table
 
 
+def _with_commercial_names(design: Dict[str, Any], project: Optional[Dict]) -> Dict[str, Any]:
+    """O desenho com o nome comercial confirmado de cada amostra no `rotulo` (gráficos, tabelas, achados).
+
+    O rótulo do desenho fica em `rotulo_desenho`, que é o que o Desenho edita.
+    """
+    names = sensorial_db.sample_names(project)
+    if not names:
+        return design
+    design = dict(design)
+    design["condicoes"] = [dict(c, rotulo=names[c["codigo"]], rotulo_desenho=c["rotulo"]) if names.get(c["codigo"])
+                           else c for c in design.get("condicoes") or []]
+    return design
+
+
 def build_model(bundle: Dict) -> Dict[str, Any]:
     """O modelo do projeto a partir do bundle de `sensorial_db.load_project_bundle`."""
     settings = sensorial_design.resolve_settings(bundle.get("settings"))
@@ -352,7 +381,7 @@ def build_model(bundle: Dict) -> Dict[str, Any]:
         if role in tables and "Etapa" in tables[role]:
             stages_seen += [s for s in tables[role]["Etapa"].dropna().astype(str).unique() if s not in stages_seen]
     deduced = sensorial_design.deduce_design(sessions, stages_seen, manifests)
-    design = sensorial_design.resolve_design(settings, deduced)
+    design = _with_commercial_names(sensorial_design.resolve_design(settings, deduced), bundle.get("project"))
     sessions["condicao"] = [
         corrected or sensorial_design.condition_for(experimento, amostra, design)
         for corrected, experimento, amostra in zip(sessions["condicao_corrigida"], sessions["experimento"],
@@ -400,7 +429,8 @@ def build_model(bundle: Dict) -> Dict[str, Any]:
                    "O registro de campo cita {} código(s) sem sessão no pipeline: {}.".format(
                        len(unknown), ", ".join(unknown[:12])))
     for layer, role in _BASE_LIMPA_ROLE.items():
-        if layer != "gsr" and role in tables and settings["limpeza"].get("usar_base_limpa", True):
+        decided_by_rule = layer == "eeg" and settings["limpeza"].get("regra_spss")
+        if layer != "gsr" and role in tables and settings["limpeza"].get("usar_base_limpa", True)                 and not decided_by_rule:
             _issue(issues, "info", "base_limpa_" + layer,
                    "A BASE LIMPA decide a camada {}.".format(LAYER_LABELS[layer]))
 
@@ -419,7 +449,10 @@ def build_model(bundle: Dict) -> Dict[str, Any]:
         "deduced_design": deduced,
         "index_names": sensorial_design.index_names(settings),
         "indices": [code for code in sensorial_design.INDEX_CODES if code in eeg],
-        "pipeline_indicators": indicator_columns,
+        # Só os 10 índices da Aline são medidas: as outras colunas do pipeline (Memoria_log, AWI_F3_F4…)
+        # ficam guardadas em `pipeline_columns`, fora das telas, da IA e das exportações.
+        "pipeline_indicators": [],
+        "pipeline_columns": indicator_columns,
         "sessions": sessions,
         "participants": participants,
         "eeg": eeg,

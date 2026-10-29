@@ -4,8 +4,8 @@ Teste Sensorial — Análise Geral.
 A leitura consolidada do estudo, no molde da Análise Geral da Jornada:
 
 - Resumo: por amostra e claim, o que cérebro, corpo e teste explícito
-  confirmam; os achados (só é "diferença" o que passa na correção de Holm) e
-  as limitações;
+  confirmam; os achados ("diferença" com p < 0,05, o critério do relatório do
+  estudo) e as limitações;
 - EEG: cada índice por condição e etapa, as comparações pareadas (× basal,
   × controle, × amostra), a matriz de resultados e os topomapas;
 - Periféricos: o mesmo para frequência cardíaca, variabilidade, condutância,
@@ -106,9 +106,11 @@ def _comparison_table(table: pd.DataFrame) -> pd.DataFrame:
         "mediana": table["mediana_a"],
         "mediana contra": table["mediana_b"],
         "diferença mediana": table["diferenca_mediana"],
+        "diferença média": table["diferenca_media"],
+        "IC 95% de": table["ic_inf"],
+        "IC 95% até": table["ic_sup"],
         "r": table["r"],
         "p": table["p"],
-        "p Holm": table["p_holm"],
         "resultado": table["resultado"],
     })
 
@@ -131,21 +133,27 @@ def _measure_section(block: dict, measures: list, key: str) -> str:
         st.dataframe(summary.assign(condicao=summary["condicao"].map(lambda c: labels.get(c, c)),
                                     etapa=summary["etapa"].map(lambda e: stage_labels.get(e, e)))
                      .drop(columns=["medida"]).rename(columns={"condicao": "condição", "media": "média",
-                                                               "dp": "desvio", "ep": "erro padrão"}),
+                                                               "dp": "desvio", "ep": "erro padrão",
+                                                               "ic95": "± IC 95%"}),
                      hide_index=True, width="stretch",
-                     column_config={c: NUMBER for c in ("média", "desvio", "erro padrão", "mediana")})
+                     column_config={c: NUMBER for c in ("média", "desvio", "erro padrão", "± IC 95%", "mediana")})
     st.markdown("**Comparações pareadas por participante**")
-    st.caption("Wilcoxon de postos sinalizados; p de Holm por família (medida × etapa). “diferença” só com o p de "
-               "Holm abaixo de alfa; “tendência” com o p bruto; abaixo do mínimo de pares, só descritivo.")
+    st.caption("Cada amostra contra o controle e as amostras entre si, participante contra ele mesmo. "
+               "“Diferença”: p < 0,05, o critério do relatório do estudo; “tendência”: p < 0,10. A barra é a "
+               "diferença média e o traço, o IC 95%. A comparação com o basal está na tabela.")
     table = block["comparacoes"][block["comparacoes"]["medida"] == measure]
-    st.plotly_chart(charts.comparison_chart(table, labels, stage_labels), width="stretch", key=key + "_cmp")
+    st.plotly_chart(charts.comparison_chart(table, labels, stage_labels, names.get(measure, measure)),
+                    width="stretch", key=key + "_cmp")
     if not table.empty:
-        st.dataframe(_comparison_table(table), hide_index=True, width="stretch",
-                     column_config={"mediana": NUMBER, "mediana contra": NUMBER, "diferença mediana": NUMBER,
-                                    "r": st.column_config.NumberColumn(format="%.2f"), "p": P_VALUE,
-                                    "p Holm": P_VALUE})
+        with st.expander("Todas as comparações desta medida, com o basal"):
+            st.caption("Teste: {}.".format("t pareado" if model["settings"]["estatistica"].get("teste") == "t_pareado"
+                                           else "Wilcoxon pareado"))
+            st.dataframe(_comparison_table(table), hide_index=True, width="stretch",
+                         column_config={"mediana": NUMBER, "mediana contra": NUMBER, "diferença mediana": NUMBER,
+                                        "diferença média": NUMBER, "IC 95% de": NUMBER, "IC 95% até": NUMBER,
+                                        "r": st.column_config.NumberColumn(format="%.2f"), "p": P_VALUE})
     with st.expander("Todas as medidas desta camada"):
-        st.caption("▲/▼ diferença (Holm) para cima ou para baixo; △/▽ tendência; · sem diferença.")
+        st.caption("▲/▼ diferença (p < 0,05) para cima ou para baixo; △/▽ tendência (p < 0,10); · sem diferença.")
         matrix = charts.results_matrix(block["comparacoes"], names, labels, stage_labels, measures)
         if matrix.empty:
             st.info("Sem comparações.")
@@ -171,8 +179,9 @@ if section == "Resumo":
         st.info("Sem amostras ou claims para sintetizar.")
     else:
         if (synthesis["cerebro"] == "sem indicador").all() and (synthesis["corpo"] == "sem indicador").all():
-            st.info("Ligue cada claim aos índices que deveriam mostrar o efeito em **Dados do Projeto → Claims**; "
-                    "por enquanto a síntese só tem o teste explícito.")
+            st.info("Nenhum claim está ligado aos índices que deveriam mostrar o efeito (cérebro ou corpo), então "
+                    "cada claim chega no máximo a **parcial**: “validado” exige o teste explícito e uma camada "
+                    "fisiológica. Ligue os índices em **Dados do Projeto → Claims**, como no relatório do estudo.")
         pivot = synthesis.assign(condicao=synthesis["condicao"].map(lambda c: labels.get(c, c)),
                                  conclusao=synthesis["conclusao"].map(CONCLUSIONS)) \
             .pivot_table(index="palavra", columns="condicao", values="conclusao", aggfunc="first", sort=False)
@@ -191,10 +200,10 @@ if section == "Resumo":
         for item in differences:
             st.markdown("- {}".format(item["texto"]))
     else:
-        st.info("Nenhuma comparação passou na correção de Holm.")
+        st.info("Nenhuma comparação com p < 0,05.")
     trends = [f for f in findings if f["tipo"] == "tendência"]
     if trends:
-        with st.expander("Tendências ({}): p bruto abaixo de alfa, sem passar no Holm".format(len(trends))):
+        with st.expander("Tendências ({}): 0,05 ≤ p < 0,10".format(len(trends))):
             for item in trends:
                 st.markdown("- {}".format(item["texto"]))
 
@@ -299,11 +308,13 @@ elif section == "Amostra e qualidade":
         st.caption("{} de {} janelas das etapas da análise entram ({}).".format(
             int(in_stage["incluida"].sum()), len(in_stage),
             "; ".join("{}: {}".format(k, v) for k, v in reasons.items()) or "nenhuma de fora"))
-    st.subheader("Avisos do modelo")
-    for issue in model["issues"]:
-        (st.warning if issue["level"] == "warn" else st.info)(issue["message"])
-    st.page_link("modules/teste_sensorial/participantes.py", label="Ver as sessões e decidir em Participantes",
-                 icon=":material/group:")
+    # Os avisos dos dados são da equipe: ficam fora do que o cliente vê (tela, PDF, PPTX e IA).
+    if pode_editar:
+        st.subheader("Avisos dos dados (só a equipe vê)")
+        for issue in model["issues"]:
+            (st.warning if issue["level"] == "warn" else st.info)(issue["message"])
+        st.page_link("modules/teste_sensorial/participantes.py", label="Ver as sessões e decidir em Participantes",
+                     icon=":material/group:")
 
 # ------------------------------------------------------------------
 # IA
@@ -317,7 +328,7 @@ elif section == "IA":
     recorte = filters_text(filters)
     st.subheader("Análise por IA")
     st.caption("A IA recebe o contexto do projeto, o relatório do estudo marcado em Uploads, os temas de Dados do "
-               "Projeto e as métricas do recorte — médias, comparações com o p de Holm, o teste de associação e a "
+               "Projeto e as métricas do recorte — médias, comparações pareadas, o teste de associação e a "
                "síntese —, nunca os dados brutos nem o nome de ninguém. O texto é para o marketing: organizado por "
                "tema, sem contradizer o relatório do estudo, com os números num apêndice.")
     study_report, report_warning = load_study_report(project_id)

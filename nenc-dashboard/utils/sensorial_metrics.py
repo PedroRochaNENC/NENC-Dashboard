@@ -2,13 +2,14 @@
 Métricas de um projeto do Teste Sensorial, a partir do modelo.
 
 - **Médias por participante**: cada participante vira um valor por condição e
-  etapa (a média das janelas incluídas), para o EEG (índices do relatório e
-  indicadores do pipeline) e para os periféricos;
+  etapa (a média das janelas incluídas), para o EEG (os 10 índices da sintaxe
+  da Aline) e para os periféricos;
 - **Comparações por etapa**, pareadas por participante: amostra × basal (a
-  etapa de referência do basal), amostra × controle e amostra × amostra, com
-  Wilcoxon, efeito e p de Holm por família (medida × etapa);
-- **Curvas no tempo**, média ± erro padrão entre participantes, alinhadas no
-  início da etapa ou na primeira cheirada (`curves`);
+  etapa de referência do basal), amostra × controle e amostra × amostra, com o
+  teste e o critério do relatório (p < alfa, sem correção) e a diferença média
+  com o IC 95%;
+- **Curvas no tempo**, média e IC 95% entre participantes, alinhadas no
+  início da etapa ou na primeira olfação (`curves`);
 - **Teste de associação**: % de "Sim", CR das respostas "Sim", Score, faixa e
   quadrante por condição e claim, com agrupamento opcional (ex.: B1+B2);
 - **Síntese** por amostra e claim (cérebro, corpo e teste explícito),
@@ -29,9 +30,8 @@ from utils import sensorial_design, sensorial_stats
 
 _PERIPHERAL_LAYERS = {"BPM": ("fc",), "RMSSD": ("fc",), "Comfort_Score": ("fc",), "GSR_CAL_mean": ("gsr",),
                       "Emotional_Index": ("fc", "gsr")}
-_COMPARISON_TYPES = {"vs_basal": "× basal", "vs_controle": "× controle", "entre_amostras": "× amostra"}
 _MEANS_COLUMNS = ["participant_code", "condicao", "etapa", "medida", "valor"]
-# Ponto da curva com menos participantes que isto é ruído de poucos (ex.: antes da cheirada).
+# Ponto da curva com menos participantes que isto é ruído de poucos (ex.: antes da olfação).
 MIN_CURVE_PARTICIPANTS = 3
 
 
@@ -74,8 +74,8 @@ def eeg_means(model: Dict[str, Any], allowed: Optional[set] = None) -> pd.DataFr
     eeg = model["eeg"]
     if eeg.empty:
         return pd.DataFrame(columns=_MEANS_COLUMNS)
-    measures = list(model["indices"]) + (["PPI"] if "PPI" in eeg and "PPI" not in model["indices"] else []) \
-        + list(model["pipeline_indicators"])
+    # Só os índices da sintaxe da Aline; as colunas extras do pipeline não são medidas.
+    measures = list(model["indices"]) + (["PPI"] if "PPI" in eeg and "PPI" not in model["indices"] else [])
     return _means(_restrict(eeg[eeg["incluida"]], allowed), measures)
 
 
@@ -102,7 +102,8 @@ def summary(means: pd.DataFrame) -> pd.DataFrame:
     for (measure, condition, stage), group in means.groupby(["medida", "condicao", "etapa"]):
         rows.append(dict({"medida": measure, "condicao": condition, "etapa": stage},
                          **sensorial_stats.describe(group["valor"])))
-    return pd.DataFrame(rows, columns=["medida", "condicao", "etapa", "n", "media", "dp", "ep", "mediana"])
+    return pd.DataFrame(rows, columns=["medida", "condicao", "etapa", "n", "media", "dp", "ep", "ic95",
+                                       "mediana"])
 
 
 # ---------------------------------------------------------------------------
@@ -110,13 +111,17 @@ def summary(means: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def comparisons(means: pd.DataFrame, design: Dict[str, Any], settings: Dict[str, Any]) -> pd.DataFrame:
-    """Amostra × basal, × controle e × amostra, por medida e etapa, com Holm por família."""
+    """Amostra × basal, × controle e × amostra, por medida e etapa, com o critério do relatório (p < alfa)."""
     columns = ["medida", "etapa", "tipo", "condicao_a", "condicao_b", "etapa_b", "n", "media_a", "media_b",
-               "mediana_a", "mediana_b", "diferenca_mediana", "r", "p", "metodo", "p_holm", "resultado"]
+               "mediana_a", "mediana_b", "diferenca_mediana", "diferenca_media", "ic_inf", "ic_sup", "r", "p",
+               "metodo", "resultado"]
     if means.empty:
         return pd.DataFrame(columns=columns)
-    min_pairs = int(settings["estatistica"].get("min_pares", sensorial_stats.MIN_PAIRS))
-    alpha = float(settings["estatistica"].get("alfa", sensorial_stats.ALPHA))
+    stats_settings = settings["estatistica"]
+    min_pairs = int(stats_settings.get("min_pares", sensorial_stats.MIN_PAIRS))
+    alpha = float(stats_settings.get("alfa", sensorial_stats.ALPHA))
+    alpha_trend = float(stats_settings.get("alfa_tendencia", sensorial_stats.ALPHA_TREND))
+    test = str(stats_settings.get("teste") or "wilcoxon")
     roles = sensorial_design.condition_roles(design)
     reference = design.get("referencia") or {}
     basal, reference_stage = reference.get("condicao"), reference.get("etapa")
@@ -145,17 +150,13 @@ def comparisons(means: pd.DataFrame, design: Dict[str, Any], settings: Dict[str,
             for first, second in itertools.combinations(samples, 2):
                 pairs.append(("entre_amostras", first, values(measure, first, stage), second,
                               values(measure, second, stage), stage))
-            family = []
             for kind, condition_a, a, condition_b, b, stage_b in pairs:
                 if a is None or b is None or a.dropna().empty:
                     continue
-                result = sensorial_stats.paired_test(a, b, min_pairs)
-                family.append(dict({"medida": measure, "etapa": stage, "tipo": kind, "condicao_a": condition_a,
-                                    "condicao_b": condition_b, "etapa_b": stage_b}, **result))
-            for row, adjusted in zip(family, sensorial_stats.holm([row["p"] for row in family])):
-                row["p_holm"] = adjusted
-                row["resultado"] = sensorial_stats.verdict(row["p"], adjusted, alpha)
-            rows += family
+                result = sensorial_stats.paired_test(a, b, min_pairs, test)
+                rows.append(dict({"medida": measure, "etapa": stage, "tipo": kind, "condicao_a": condition_a,
+                                  "condicao_b": condition_b, "etapa_b": stage_b}, **result,
+                                 resultado=sensorial_stats.verdict(result["p"], alpha, alpha_trend)))
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -168,12 +169,13 @@ def curves(model: Dict[str, Any], measure: str, alignment: str = "etapa", filter
     """Curva média ± erro padrão por condição.
 
     `alignment="etapa"`: cada etapa no tempo dela. `"olfacao"`: a exposição e a
-    etapa seguinte num eixo só, com o zero na primeira cheirada da sessão (sem
+    etapa seguinte num eixo só, com o zero na primeira olfação da sessão (sem
     o evento, no início da exposição — contado em `sem_cheirada`).
     """
     design = model["design"]
     eeg = model["eeg"]
-    empty = {"curva": pd.DataFrame(columns=["condicao", "etapa", "t", "media", "ep", "n"]), "referencia": None,
+    empty = {"curva": pd.DataFrame(columns=["condicao", "etapa", "t", "media", "ep", "ic95", "n"]),
+             "referencia": None,
              "alinhamento": alignment, "sem_cheirada": 0}
     if eeg.empty or measure not in eeg:
         return empty
@@ -204,7 +206,7 @@ def curves(model: Dict[str, Any], measure: str, alignment: str = "etapa", filter
         if described["n"] < min_participants:
             continue
         rows.append({"condicao": condition, "etapa": stage, "t": t, "media": described["media"],
-                     "ep": described["ep"], "n": described["n"]})
+                     "ep": described["ep"], "ic95": described["ic95"], "n": described["n"]})
     reference = design.get("referencia") or {}
     basal = frame if alignment == "etapa" else _restrict(eeg[eeg["incluida"]], allowed)
     basal = basal[(basal["condicao"] == reference.get("condicao")) & (basal["Etapa"] == reference.get("etapa"))]
@@ -212,7 +214,7 @@ def curves(model: Dict[str, Any], measure: str, alignment: str = "etapa", filter
     if not basal.empty:
         reference_row = dict(sensorial_stats.describe(basal.groupby("participant_code")[measure].mean()),
                              condicao=reference.get("condicao"), etapa=reference.get("etapa"))
-    return {"curva": pd.DataFrame(rows, columns=["condicao", "etapa", "t", "media", "ep", "n"]),
+    return {"curva": pd.DataFrame(rows, columns=["condicao", "etapa", "t", "media", "ep", "ic95", "n"]),
             "referencia": reference_row, "alinhamento": alignment, "sem_cheirada": missing_sniff}
 
 
@@ -332,7 +334,7 @@ def _fmt(value: float, digits: int = 3) -> str:
 
 
 def findings(tables: Dict[str, pd.DataFrame], model: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Diferenças (Holm) e tendências (p bruto), em frases curtas, das camadas fisiológicas."""
+    """Diferenças (p < alfa) e tendências, em frases curtas, das camadas fisiológicas."""
     names = model["index_names"]
     labels = sensorial_design.condition_labels(model["design"])
     stage_labels = {s["codigo"]: s["rotulo"] for s in model["design"].get("etapas") or []}
@@ -343,15 +345,14 @@ def findings(tables: Dict[str, pd.DataFrame], model: Dict[str, Any]) -> List[Dic
         chosen = table[table["resultado"].isin([sensorial_stats.DIFFERENCE, sensorial_stats.TREND])]
         for row in chosen.itertuples():
             direction = "maior" if row.diferenca_mediana > 0 else "menor"
-            text = "{} {} {}: {} {} na {} (diferença mediana {}; r = {}; p de Holm = {})".format(
-                labels.get(row.condicao_a, row.condicao_a), _COMPARISON_TYPES[row.tipo].split(" ")[0],
-                labels.get(row.condicao_b, row.condicao_b), names.get(row.medida, row.medida), direction,
-                stage_labels.get(row.etapa, row.etapa), _fmt(row.diferenca_mediana), _fmt(row.r, 2),
-                _fmt(row.p_holm, 2))
+            text = "{}: {} {} em {} que em {} (diferença mediana {}; r = {}; p = {})".format(
+                stage_labels.get(row.etapa, row.etapa), names.get(row.medida, row.medida), direction,
+                labels.get(row.condicao_a, row.condicao_a), labels.get(row.condicao_b, row.condicao_b),
+                _fmt(row.diferenca_mediana), _fmt(row.r, 2), _fmt(row.p, 2))
             items.append({"camada": layer, "tipo": row.resultado, "medida": row.medida, "condicao": row.condicao_a,
-                          "comparacao": row.condicao_b, "etapa": row.etapa, "p_holm": row.p_holm, "texto": text})
-    items.sort(key=lambda item: (item["tipo"] != sensorial_stats.DIFFERENCE, item["p_holm"]
-                                 if item["p_holm"] == item["p_holm"] else 1.0))
+                          "comparacao": row.condicao_b, "etapa": row.etapa, "p": row.p, "texto": text})
+    items.sort(key=lambda item: (item["tipo"] != sensorial_stats.DIFFERENCE, item["p"]
+                                 if item["p"] == item["p"] else 1.0))
     return items
 
 
@@ -373,14 +374,24 @@ def limitations(model: Dict[str, Any], counts: pd.DataFrame, allowed: Optional[s
     if model["trials"].empty:
         notes.append("Sem o teste de associação.")
     notes.append("Limpeza: {}{}.".format(
-        "BASE LIMPA do SPSS onde enviada; " if settings["limpeza"].get("usar_base_limpa", True) else "",
-        "regra de outliers ligada" if settings["limpeza"].get("regra_spss") else "regra de outliers desligada"))
-    if settings["indices"]["ppi"].get("modo", "z") == "z":
+        "rotina de outliers da sintaxe do SPSS no EEG" if settings["limpeza"].get("regra_spss")
+        else "EEG sem a rotina de outliers",
+        "; BASE LIMPA dos periféricos e do teste de associação, onde enviada"
+        if settings["limpeza"].get("usar_base_limpa", True) else ""))
+    if settings["indices"]["ppi"].get("modo", "spss") == "z":
         notes.append("O PPI usa os componentes padronizados; a fórmula do SPSS dá outra escala.")
     if allowed is not None:
         notes.append("Recorte por perfil: {} participante(s).".format(len(allowed)))
-    notes += [issue["message"] for issue in model["issues"] if issue["level"] == "warn"]
     return notes
+
+
+def data_quality(model: Dict[str, Any]) -> List[str]:
+    """Os avisos dos dados (sessões sem código, repetidas, pulso ruim…): para a equipe, nunca para o cliente.
+
+    Ficam fora das limitações que vão ao PDF, ao PPTX e à IA; a tela os mostra a quem edita o projeto e o
+    Excel técnico os leva numa aba própria.
+    """
+    return [issue["message"] for issue in model["issues"] if issue["level"] in ("warn", "info")]
 
 
 def profile_comparison(model: Dict[str, Any], means: pd.DataFrame, field: str) -> pd.DataFrame:
@@ -443,5 +454,6 @@ def compute_all(model: Dict[str, Any], filters: Optional[Dict[str, Any]] = None)
         "sintese": synthesis(model, eeg_table, peripheral_table, association),
         "achados": findings({"eeg": eeg_table, "perifericos": peripheral_table}, model),
         "limitacoes": limitations(model, counts, allowed),
+        "qualidade_dados": data_quality(model),
         "perfil": profile_comparison(model, eeg_long, filters.get("comparar_por") or ""),
     }

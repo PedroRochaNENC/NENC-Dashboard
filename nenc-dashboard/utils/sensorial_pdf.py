@@ -68,10 +68,10 @@ def _findings(pdf, metrics: Dict) -> None:
     pdf_report.heading(pdf, "Achados")
     findings = metrics.get("achados") or []
     differences = [f["texto"] for f in findings if f["tipo"] == "diferença"]
-    pdf_report.bullets(pdf, differences or ["Nenhuma comparação passou na correção de Holm."], size=8.5)
+    pdf_report.bullets(pdf, differences or ["Nenhuma comparação com p < 0,05."], size=8.5)
     trends = [f["texto"] for f in findings if f["tipo"] == "tendência"]
     if trends:
-        pdf_report.heading(pdf, "Tendências (p bruto abaixo de alfa, sem passar no Holm)", level=2)
+        pdf_report.heading(pdf, "Tendências (0,05 ≤ p < 0,10)", level=2)
         pdf_report.bullets(pdf, trends[:15], size=8.5)
         if len(trends) > 15:
             pdf_report.paragraph(pdf, "… e mais {} no Excel.".format(len(trends) - 15), size=8)
@@ -113,10 +113,7 @@ def _sample(pdf, model: Dict, metrics: Dict) -> None:
     pdf_report.simple_table(pdf, ["Condição", "EEG", "Periféricos", "Teste de associação"],
                             [[labels.get(r.condicao, r.condicao), str(r.eeg), str(r.perifericos), str(r.associacao)]
                              for r in counts.itertuples()], _widths(4, 60.0), size=8)
-    warnings = [issue["message"] for issue in model["issues"] if issue["level"] == "warn"]
-    if warnings:
-        pdf_report.heading(pdf, "Avisos dos dados", level=2)
-        pdf_report.bullets(pdf, warnings, size=8)
+    # Os avisos dos dados não vão ao cliente: ficam na tela, para quem edita, e no Excel técnico.
 
 
 def _analysis(pdf, analysis: Dict, data_version) -> None:

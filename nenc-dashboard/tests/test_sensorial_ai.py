@@ -41,7 +41,8 @@ class GenerateTests(_Base):
         self.assertEqual(len(create.calls), 1)
         self.assertIn("Relatório Geral do Projeto", call["system_prompt"])
         self.assertIn("**Atratividade** (FAI)", call["system_prompt"])  # o nome de negócio do projeto
-        self.assertIn("Holm", call["system_prompt"])
+        self.assertIn("p < 0,05", call["system_prompt"])
+        self.assertNotIn("Holm", call["system_prompt"])
         clause = call["kb_filter"]["filters"][1]
         self.assertIn({"type": "eq", "key": "project_id", "value": 21}, clause["filters"])
         self.assertIn({"type": "eq", "key": "modulo", "value": "teste_sensorial"}, clause["filters"])
@@ -83,6 +84,8 @@ class GenerateTests(_Base):
         prompt = sensorial_prompts.build_sensorial_project_user_prompt(self.project, self.model, self.metrics)
         self.assertIn("<desenho>", prompt)
         self.assertIn("<eeg>", prompt)
+        self.assertNotIn("<avisos>", prompt)  # os avisos dos dados são da equipe, não do texto do cliente
+        self.assertNotIn("<indicadores_pipeline>", prompt)
         self.assertIn("[briefing truncado]", prompt)
         self.assertTrue(prompt.endswith("estatísticas para os Anexos."))
         for word in CANARY_WORDS:
