@@ -118,6 +118,15 @@ Colunas novas em `audios`:
 - **Matriz**: a tabela de cada grupo ganha a coluna Unidade. Os terços continuam sobre todos os áudios do projeto.
 - **Alertas críticos**: cada alerta traz a unidade (§4.4).
 
+### 3.6 Geração por unidade e nome dos arquivos
+
+Pedido em 03/11/2026.
+
+- **Nome dos arquivos da Análise Geral:** `Analise_<Projeto>_<Unidade>_<data>.pdf` (e `.md`), sem acento nem espaço, com a data em AAAA-MM-DD (`geracao.nome_do_arquivo`). A unidade de uma análise salva sai do recorte dela: uma unidade, o nome dela (com o código, quando há); nenhuma, "Todas_as_unidades"; várias, "Varias_unidades" (`geracao.nome_da_analise`). Vale para os downloads da análise mais recente.
+- **Botão "Gerar por unidade (n PDFs)"** na Análise Geral, quando o projeto tem áudio com unidade: uma análise para cada unidade com áudio no período e na origem escolhidos, e por último uma com todas as unidades, que leva também os áudios sem unidade (`geracao.planejar_por_unidade`). O filtro de QR code e o de unidade não valem aqui. Cada análise fica salva no histórico com a unidade no recorte, então o Δ de cada unidade compara com a análise anterior dela. A classificação tem cache, então cada áudio vai à IA uma vez só; o relatório é uma chamada por análise.
+- Os PDFs saem num `.zip` (`Analises_<Projeto>_<data>.zip`). Uma unidade que falha não para as outras, e a tela lista o resultado de cada uma. Com a base de conhecimento ligada, cada análise vai para a base, como a geração única.
+- A análise de todas as unidades é a última gravada, para ser a que a página mostra depois. As consultas de análises do projeto passaram a desempatar pelo id: as análises do lote saem no mesmo segundo, e a ordem por `created_at` sozinha era arbitrária.
+
 ## 4. Taxonomia por tags
 
 ### 4.1 Formato

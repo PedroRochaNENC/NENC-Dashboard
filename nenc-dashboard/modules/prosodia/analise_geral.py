@@ -9,6 +9,7 @@ Consolida dados de todos os áudios de um projeto para gerar:
 
 import io
 import logging
+import zipfile
 from datetime import datetime
 
 import pandas as pd
@@ -997,7 +998,7 @@ if latest_analysis:
         st.download_button(
             "Download Analise Geral (.md)",
             data=analysis_md,
-            file_name=f"analise_geral_{_slugify(project.get('name', 'projeto'))}.md",
+            file_name=geracao.nome_da_analise(project.get("name", ""), latest_analysis, "md"),
             mime="text/markdown",
             key="download_latest_project_analysis",
             use_container_width=True,
@@ -1014,7 +1015,7 @@ if latest_analysis:
         st.download_button(
             "Download Analise Geral (.pdf)",
             data=pdf_data,
-            file_name=f"analise_geral_{_slugify(project.get('name', 'projeto'))}.pdf",
+            file_name=geracao.nome_da_analise(project.get("name", ""), latest_analysis, "pdf"),
             mime="application/pdf",
             key="download_latest_project_analysis_pdf",
             use_container_width=True,
@@ -1272,3 +1273,134 @@ if st.button(
         "use_kb": use_kb,
     }
     st.rerun()
+
+
+# ------------------------------------------------------------------
+# Análise Geral por unidade: uma para cada unidade e uma com todas
+# ------------------------------------------------------------------
+_lote_key = f"prj_lote_{project_id}"
+
+
+def _ativacao_do_lote(ids) -> list:
+    """Perguntas com maior ativação dos áudios do lote; só a Entrevista tem roteiro."""
+    if not qualitativa or sinc_projeto is None or sinc_projeto.empty or "session_id" not in sinc_projeto.columns:
+        return []
+    escolhidos = [a for a in audios_projeto if int(a["id"]) in set(ids)]
+    sessoes = {str(a.get("session_id") or "") for a in escolhidos}
+    sinc = sinc_projeto[sinc_projeto["session_id"].astype(str).isin(sessoes)]
+    return _calculate_questions_activation(escolhidos, sinc) if not sinc.empty else []
+
+
+if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
+    lote = geracao.planejar_por_unidade(audios_projeto, filtro_periodo, filtro_origem, (_inicio, _fim))
+    if st.button(
+        "Gerar por unidade ({} PDFs)".format(len(lote)),
+        disabled=not pode_editar,
+        key=f"prj_lote_gerar_{project_id}",
+        help=(
+            "Uma Análise Geral para cada unidade e uma com todas, no período e na origem escolhidos "
+            "acima (o filtro de QR code e de unidade não vale aqui), e um .zip com os PDFs. Cada "
+            "análise fica salva no histórico, com a unidade no recorte."
+            if pode_editar
+            else "Seu perfil só consulta: gerar grava a classificação e as análises."
+        ),
+    ):
+        if not ai_provider_id:
+            st.error(
+                "Configure uma chave de API no .env (OPENAI_API_KEY, GROQ_API_KEY "
+                "ou ANTHROPIC_API_KEY) e reinicie o app."
+            )
+            st.stop()
+        vs_id = get_prosodia_vector_store_id() if use_kb else None
+        agora = datetime.now()
+        arquivos, itens = [], []
+        with st.status("Gerando as análises por unidade…", expanded=True) as painel:
+            try:
+                responder, modelo_da_classificacao = geracao.responder_da_classificacao(ai_provider_id, ai_model)
+            except Exception as erro:
+                painel.update(label="As análises não foram geradas", state="error")
+                st.error(str(erro))
+                st.stop()
+            gerar = geracao.gerador_do_relatorio(ai_provider_id, ai_model, project_id, vs_id)
+            for numero, item in enumerate(lote, 1):
+                painel.update(label="{}/{} · {}".format(numero, len(lote), item.unidade))
+                try:
+                    # A classificação tem cache: cada áudio vai à IA uma vez só, na
+                    # primeira análise em que aparece.
+                    resultado = geracao.gerar_analise_geral(
+                        project,
+                        audios_projeto,
+                        item.ids,
+                        item.recorte,
+                        tr_projeto,
+                        sinc_projeto,
+                        responder,
+                        modelo_da_classificacao,
+                        gerar,
+                        ai_model,
+                        perguntas_ativacao=_ativacao_do_lote(item.ids),
+                        incluir_legenda=incluir_legenda,
+                    )
+                except Exception as erro:
+                    _LOGGER.exception("Falha na Análise Geral da unidade %s do projeto %s", item.unidade, project_id)
+                    itens.append((item.unidade, "não gerada: {}".format(erro)))
+                    st.markdown("**{}** — não gerada: {}".format(item.unidade, erro))
+                    continue
+                nome = geracao.nome_do_arquivo(project.get("name", ""), item.unidade, agora.date())
+                arquivos.append((nome, _build_project_analysis_pdf(
+                    project_name="{} · {}".format(project.get("name", ""), item.unidade),
+                    project_info=proj_ctx,
+                    model=ai_model,
+                    created_at=agora.strftime("%Y-%m-%d %H:%M:%S"),
+                    text=resultado.relatorio.texto,
+                    citations=resultado.relatorio.citacoes,
+                )))
+                if use_kb:
+                    _append_result_to_kb(
+                        nome[:-len(".pdf")] + ".md",
+                        _build_project_analysis_markdown(
+                            project_name=project.get("name", ""),
+                            model=ai_model,
+                            created_at=agora.strftime("%Y-%m-%d %H:%M:%S"),
+                            text=resultado.relatorio.texto,
+                            citations=resultado.relatorio.citacoes,
+                        ),
+                        project_id,
+                    )
+                problemas = len(resultado.relatorio.problemas)
+                situacao = "{} · {}".format(
+                    "{} respondentes".format(resultado.agregacao.n_respondentes),
+                    "{} pontos para revisar".format(problemas) if problemas else "referências conferidas",
+                )
+                itens.append((item.unidade, situacao))
+                st.markdown("**{}** — {}.".format(item.unidade, situacao))
+            painel.update(
+                label="{} de {} análises geradas".format(len(arquivos), len(lote)),
+                state="complete" if len(arquivos) == len(lote) else "error",
+            )
+        pacote = None
+        if arquivos:
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_do_lote:
+                for nome, pdf in arquivos:
+                    zip_do_lote.writestr(nome, pdf)
+            pacote = buffer.getvalue()
+        st.session_state[_lote_key] = {
+            "zip": pacote,
+            "nome": geracao.nome_do_pacote(project.get("name", ""), agora.date()),
+            "itens": itens,
+        }
+        st.rerun()
+
+    pronto = st.session_state.get(_lote_key)
+    if pronto:
+        if pronto["zip"]:
+            st.download_button(
+                "Baixar as análises por unidade (.zip)",
+                data=pronto["zip"],
+                file_name=pronto["nome"],
+                mime="application/zip",
+                key=f"prj_lote_zip_{project_id}",
+            )
+        for unidade, situacao in pronto["itens"]:
+            st.caption("{} — {}".format(unidade, situacao))

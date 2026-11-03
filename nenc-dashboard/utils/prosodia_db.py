@@ -1981,18 +1981,20 @@ def delete_project_analyses(project_id: int, analysis_ids: List[int]) -> int:
 
 def get_latest_project_analysis(project_id: int) -> Optional[Dict]:
     """Retorna a análise geral mais recente de um projeto, ou None."""
+    # O id desempata as análises salvas no mesmo segundo, como as da geração por
+    # unidade: a última gravada é a mais recente.
     organization_id = _active_organization_id()
     with _connect() as conn:
         if not organization_id:
             row = conn.execute(
                 """SELECT * FROM project_analyses WHERE project_id = ?
-                   ORDER BY created_at DESC LIMIT 1""",
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
                 (project_id,),
             ).fetchone()
         else:
             row = conn.execute(
                 """SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ?
-                   ORDER BY created_at DESC LIMIT 1""",
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
                 (project_id, organization_id),
             ).fetchone()
     _audit("prosodia.project_analysis.read_latest", "project", project_id, organization_id or 0)
@@ -2009,12 +2011,12 @@ def get_project_analyses(project_id: int) -> List[Dict]:
     with _connect() as conn:
         if not organization_id:
             rows = conn.execute(
-                "SELECT * FROM project_analyses WHERE project_id = ? ORDER BY created_at DESC",
+                "SELECT * FROM project_analyses WHERE project_id = ? ORDER BY created_at DESC, id DESC",
                 (project_id,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ? ORDER BY created_at DESC",
+                "SELECT * FROM project_analyses WHERE project_id = ? AND organization_id = ? ORDER BY created_at DESC, id DESC",
                 (project_id, organization_id),
             ).fetchall()
 
