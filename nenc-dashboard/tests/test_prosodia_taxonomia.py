@@ -79,6 +79,8 @@ class ParseTaxonomiaTests(unittest.TestCase):
         self.assertEqual(taxonomia.linhas_invalidas, ())
 
     def test_bad_lines_are_reported_without_dropping_the_good_ones(self):
+        # "Equipamentos:" era inválida na v2; desde as tags abertas
+        # (spec de Unidades, §4.1), linha sem ">" é tag.
         taxonomia = parse_taxonomia(
             "Equipamentos:\n"
             "Ambiente > Limpeza\n"
@@ -89,12 +91,20 @@ class ParseTaxonomiaTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            [s.rotulo for s in taxonomia.subtemas], ["Ambiente > Limpeza", "Pagamento > Preço"]
+            [s.rotulo for s in taxonomia.subtemas], ["Equipamentos", "Ambiente > Limpeza", "Pagamento > Preço"]
         )
+        self.assertTrue(taxonomia.subtemas[0].aberta)
         self.assertEqual(
             taxonomia.linhas_invalidas,
-            ("Equipamentos:", "> Sem categoria", "Sem subtema >", "Três > níveis > demais"),
+            ("> Sem categoria", "Sem subtema >", "Três > níveis > demais"),
         )
+
+    def test_without_open_tags_a_loose_line_is_invalid(self):
+        # Como a proposta da IA é lida: ali, linha sem ">" é título de categoria.
+        taxonomia = parse_taxonomia("Equipamentos\nEquipamentos > Máquina", tags_abertas=False)
+
+        self.assertEqual([s.rotulo for s in taxonomia.subtemas], ["Equipamentos > Máquina"])
+        self.assertEqual(taxonomia.linhas_invalidas, ("Equipamentos",))
 
     def test_repeated_subtheme_counts_once_ignoring_case_and_accents(self):
         taxonomia = parse_taxonomia(
@@ -157,7 +167,7 @@ class VersaoEFormatoTests(unittest.TestCase):
 
     def test_format_is_the_inverse_of_parse(self):
         taxonomia = parse_taxonomia(
-            "- Ambiente > Lotação:  fila\n\nAtendimento > Cordialidade\nlinha fora do formato"
+            "- Ambiente > Lotação:  fila\n\nAtendimento > Cordialidade\nlinha > fora > do formato"
         )
 
         texto = formatar_taxonomia(taxonomia)

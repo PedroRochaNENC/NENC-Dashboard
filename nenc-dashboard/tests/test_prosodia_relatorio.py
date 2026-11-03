@@ -980,11 +980,14 @@ class TabelaDeTemasTests(unittest.TestCase):
             tabela,
         )
         self.assertIn("| Ambiente > Lotação | 2/64 (3%) | Menção isolada | 2 neg | — |", tabela)
+        # Desde a spec de Unidades (§4.3), a linha sem menção fica na tabela,
+        # depois das citadas e na ordem da taxonomia, com a ressalva da ausência.
         self.assertIn(
-            "Subtemas da taxonomia sem menção no recorte: Atendimento > Atendente da unidade; "
-            "Pagamento > Preço do ciclo.",
+            "| Atendimento > Atendente da unidade | 0/64 | — | sem menções espontâneas nesta amostra |  |\n"
+            "| Pagamento > Preço do ciclo | 0/64 | — | sem menções espontâneas nesta amostra |  |",
             tabela,
         )
+        self.assertIn("a ausência de menções não indica que o tema seja irrelevante", tabela)
         self.assertNotIn("Anteriores → novos", tabela)
 
     def test_nobody_classified(self):

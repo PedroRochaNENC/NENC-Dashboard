@@ -163,7 +163,7 @@ A definição começa no primeiro dois-pontos, então os dois-pontos dentro de "
 - O que não cabe em nenhuma linha vai para **Outros**, com um subtema da IA. Na taxonomia com tag aberta, Outros substitui os emergentes, e a categoria proposta pela IA deixa de existir.
 - A mesma fala pode entrar em mais de uma tag. Uma menção de alerta também entra na tag do assunto, quando houver (furto no vestiário: Alerta Crítico e Serviços Agregados).
 - A validação em código segue a §6 da v2: tag fora da taxonomia vira Outros, polaridade fora da lista vira neutra, linha inexistente é descartada e tema sem linha cai.
-- `VERSAO_CLASSIFICACAO` sobe para "2", e todos os áudios voltam à IA na geração seguinte. Na Smart Fit são cerca de 53 chamadas ao `gpt-4.1-mini`.
+- A taxonomia com tag aberta usa `VERSAO_CLASSIFICACAO_TAGS = "2"`, e os áudios dela voltam à IA na geração seguinte (na Smart Fit, cerca de 60 chamadas ao `gpt-4.1-mini`). A só com subtemas fixos segue com o prompt da v2, byte a byte, e com a versão "1": as classificações dos projetos da v2 continuam valendo. A versão da taxonomia também não mudou para elas, porque o subtema fixo sem `!` entra no hash como antes. A classificação recebe os subtemas já usados em cada tag (até 15, os mais citados) e não vê o `!`, que é do relatório.
 
 ### 4.3 Agregação e tabela
 
@@ -172,7 +172,7 @@ A definição começa no primeiro dois-pontos, então os dois-pontos dentro de "
 - **Todas as tags, sempre.** As mencionadas vêm primeiro, da mais citada à menos, e as sem menção depois, na ordem da taxonomia, com "0/N" e "sem menções espontâneas nesta amostra" no lugar das outras colunas. A legenda fixa, escrita pelo código: "Numa coleta aberta, a ausência de menções não indica que o tema seja irrelevante. Ele segue em acompanhamento nas próximas análises." A linha "Subtemas da taxonomia sem menção no recorte" de hoje (`prosodia_relatorio.py:1476`) sai.
 - **Outros** é a última linha das mencionadas, com a contagem e os subtemas, sem faixa, ID nem voz.
 - **Candidatos a tag nova**: subtemas de Outros com 3 ou mais respondentes no projeto. Aparecem na Preparação, no lugar da lista de emergentes de hoje, e no apêndice, para levar à Smart Fit.
-- **Polaridade em palavras**: "15 elogios · 3 críticas · 2 mistas · 1 neutra" no lugar de "15 pos · 3 neg".
+- **Polaridade em palavras**: "15 elogios · 3 críticas · 2 mistas · 1 neutra" no lugar de "15 pos · 3 neg". Ficou para a Fase 4, com o resto da redação.
 
 Exemplo, num recorte de 51 respondentes em 6 unidades:
 
@@ -191,6 +191,7 @@ Exemplo, num recorte de 51 respondentes em 6 unidades:
 - **Bloco "Alertas críticos"**, escrito pelo código, logo depois do cabeçalho. Um item por menção: alias do áudio, unidade, data de chegada, tempo do trecho e a evidência (a paráfrase da classificação). Nunca a fala literal, porque ela pode trazer nomes e detalhes do caso.
 - Entra qualquer menção a uma tag com `!`, mesmo de um respondente só, fora das faixas. A tag continua na tabela com a contagem.
 - Sem alerta, o bloco não aparece.
+- **A fala de alerta não é citada em lugar nenhum.** Ela sai dos trechos de evidência que vão para a IA (quando a mesma fala também está noutra tag), dos momentos de maior ativação, das divergências voz × texto (no apêndice e na mensagem da IA) e do ranking de palavras. Na verificação de ponta a ponta, o ranking do apêndice trazia a palavra do relato.
 - A IA recebe só o número de alertas e pode citá-lo no Resumo ("há 2 alertas críticos, listados no topo"), sem comentar o conteúdo nem tirar hipótese deles.
 - **Selo** "Alerta crítico" no áudio, na lista de Áudios e na página do áudio, lido de `audio_temas`. O selo só aparece depois que uma geração da Análise Geral classifica o áudio: a classificação na chegada ficou de fora nesta versão (§10).
 
@@ -301,7 +302,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 | `modules/prosodia/resumo.py`, `utils/prosodia_summary.py` | Ranking por unidade. |
 | `utils/prosodia_overview.py` | Opções e filtro por unidade, usados no Resumo, na lista e na Análise Geral. |
 | `utils/prosodia_powerbi_export.py` | Colunas da unidade e a planilha "Temas por áudio". |
-| `utils/prosodia_temas.py` | Linha sem ">" como tag aberta, marcador `!`, versão, regra da tag aberta e de Outros no prompt, validação da saída, `VERSAO_CLASSIFICACAO = "2"`. |
+| `utils/prosodia_temas.py` | Linha sem ">" como tag aberta, marcador `!`, versão, regra da tag aberta e de Outros no prompt, validação da saída, `VERSAO_CLASSIFICACAO_TAGS = "2"` só para taxonomia com tag aberta. `contar_detalhes` e o selo (`audios_com_alerta`, `tem_alerta`). |
 | `utils/prosodia_relatorio.py` | `Recorte.unidade` e `mesmo_filtro`. Agregação por linha da taxonomia, subtemas, Outros, candidatos a tag, todas as tags na tabela, coluna Unidades, alertas, Como ler, Sinal emocional, Matriz e Termômetro sem números no corpo, apêndice com os números, verificação nova. |
 | `utils/prosodia_prompts.py` | Estrutura com "Para acompanhar", regras de redação, exemplo novo, tarefa com alertas e com o destino de cada achado. |
 | `utils/prosodia_geracao.py` | Passa a unidade de cada áudio para a agregação. |
@@ -330,7 +331,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 
 1. **Unidade no banco e no cadastro.** Tabelas, colunas, backfill do código do QR, página Unidades, escolha da unidade no QR e correção na página do áudio. **Feita em 23/10/2026.** As regras sem banco ficaram em `utils/prosodia_unidades.py` (só biblioteca padrão), e por enquanto só `get_audio` devolve a unidade; as listas passam a devolvê-la na Fase 2.
 2. **Unidade nas telas e na Análise Geral.** Lista de Áudios, Resumo, exportação, filtro do recorte, Δ com unidade e coluna Unidades, sobre a tabela da v2. **Feita em 26/10/2026.** Filtro e coluna só aparecem quando algum áudio do projeto tem unidade; a coluna Unidades e a da Matriz, com duas unidades ou mais no recorte. O prompt ganhou uma regra para ler "concentrada" como problema local. A exportação leva a última classificação de cada áudio em `Temas_Audio`, com `taxonomia_atual` dizendo se ela foi feita com a taxonomia de agora.
-3. **Taxonomia por tags.** Parse, classificação, Outros, candidatos a tag, todas as tags na tabela, alertas e selo.
+3. **Taxonomia por tags.** Parse, classificação, Outros, candidatos a tag, todas as tags na tabela, alertas e selo. **Feita em 26/10/2026.** A linha sem menção entra na tabela em toda taxonomia, a da v2 também, e o prompt ganhou duas regras: como ler tag, subtemas, Outros e alerta, e não concluir nada de linha com 0 respondentes. Verificação de ID dado a alerta ou a Outros, e dos subtemas citados como "Tag > subtema" com a fração deles.
 4. **Redação do relatório.** Como ler, Sinal emocional, Matriz e Termômetro sem números, Para acompanhar, regras de redação, prompt, exemplo e verificação.
 5. **Validação com a Smart Fit.** Cópia de produção, como na validação da v2 (§15 de `SPEC_ANALISE_GERAL.md`), as 16 tags no campo e as unidades cadastradas pela sugestão dos QRs. Gerar o relatório e conferir:
    1. cada ponto do feedback (§1) tem resposta visível no relatório;

@@ -25,11 +25,13 @@ from utils.prosodia_db import (
     init_db,
     get_project,
     get_audio,
+    get_audio_temas_for_project,
     get_audios_for_interviews,
     attach_audio_blobs,
     delete_audio,
     mark_project_synced,
 )
+from utils.prosodia_temas import audios_com_alerta, parse_taxonomia
 from utils.prosodia_indice import FAIXAS as FAIXAS_INDICE
 from utils.prosodia_indice import atualizar_sem_derrubar as atualizar_indices_sem_derrubar
 from utils.prosodia_indice import faixa as faixa_indice
@@ -615,6 +617,10 @@ min_date, max_date = overview.period_bounds(audios)
 # A unidade só aparece, como filtro e coluna, quando algum áudio do projeto tem
 # uma: a maioria dos projetos não liga os QR codes a unidades.
 unidades = overview.unidade_options(audios)
+# O selo de alerta crítico só existe quando a taxonomia tem linha com "!", e
+# só nos áudios que uma Análise Geral já classificou.
+_taxonomia = parse_taxonomia(project.get("taxonomia"))
+com_alerta = audios_com_alerta(get_audio_temas_for_project(project_id), _taxonomia) if _taxonomia.alertas else set()
 if unidades:
     f_busca, f_qr, f_unidade, f_periodo, f_indice, f_mais = st.columns(
         [2.2, 1.5, 1.5, 1.8, 1.5, 1.3], vertical_alignment="bottom"
@@ -713,6 +719,7 @@ else:
         pronto = not (is_processing or is_failed)
         rows.append({
             "Áudio": "#{}".format(overview.api_audio_id(session_id) or a.get("id")),
+            "Alerta": "⚠ Alerta crítico" if a.get("id") in com_alerta else "",
             "Telefone": overview.masked_phone(session_id),
             "QR code": overview.qr_label(a),
             "Unidade": overview.unidade_label(a),
@@ -727,6 +734,8 @@ else:
     tabela = pd.DataFrame(rows)
     if not unidades:
         tabela = tabela.drop(columns="Unidade")
+    if not com_alerta:
+        tabela = tabela.drop(columns="Alerta")
     table_event = st.dataframe(
         tabela,
         width="stretch",

@@ -49,6 +49,7 @@ from utils.prosodia_db import (
     delete_audio,
     get_analyses,
     get_audio,
+    get_audio_temas_for_project,
     get_audios_for_interviews,
     get_latest_analysis,
     get_latest_high_activations,
@@ -78,6 +79,7 @@ from utils.prosodia_quality import (
     run_quality_checks,
     thresholds_for_project,
 )
+from utils.prosodia_temas import parse_taxonomia, tem_alerta
 from utils.prosodia_signals import (
     detectar_divergencias,
     indice_combinado_por_grupo,
@@ -292,6 +294,13 @@ duracao_s = audio.get("duration_seconds") or (
 chips = [_chip("qr-code", overview.qr_label(audio), "var(--nenc-accent-300)", "rgba(145,132,217,.08)",
                "var(--nenc-accent-800)")]
 chips.append(_chip("buildings", html.escape(audio.get("unidade_nome") or "Sem unidade")))
+# Selo de alerta crítico: a classificação da última Análise Geral citou uma
+# linha de alerta da taxonomia de agora.
+_taxonomia = parse_taxonomia(project.get("taxonomia"))
+if _taxonomia.alertas and tem_alerta(
+    (get_audio_temas_for_project(project["id"]).get(audio_id) or {}).get("temas"), _taxonomia
+):
+    chips.insert(0, _chip("", "Alerta crítico", pa.NEGATIVO, "rgba(201,112,139,.12)", pa.NEGATIVO))
 if chegada is not None:
     chips.append(_chip("calendar-blank", chegada.strftime("%d/%m às %H:%M")))
 if duracao_s:

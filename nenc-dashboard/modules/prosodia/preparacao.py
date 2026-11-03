@@ -42,8 +42,11 @@ from utils.prosodia_project_types import (
     normalize_project_type,
 )
 from utils.prosodia_temas import (
+    MIN_CANDIDATO,
+    OUTROS,
     TAXONOMIA_PROVISORIA,
     TAXONOMIA_VALIDADA,
+    contar_detalhes,
     contar_emergentes,
     parse_taxonomia,
     versao_taxonomia,
@@ -285,18 +288,24 @@ with st.container():
     st.divider()
     st.subheader("Taxonomia de temas")
     st.markdown(
-        "Categorias e subtemas em que a Análise Geral classifica as falas, para contar "
-        "quantos respondentes trataram de cada assunto. Use **um subtema por linha**, "
-        "no formato `Categoria > Subtema`, com uma definição opcional depois de "
-        "dois-pontos. O que não couber aparece no relatório como tema emergente."
+        "Temas em que a Análise Geral classifica as falas, para contar quantos "
+        "respondentes trataram de cada assunto. Uma linha por tema, com uma definição "
+        "opcional depois de dois-pontos, em dois formatos que podem conviver:\n\n"
+        "- `Categoria > Subtema` é um **subtema fixo**, contado como está;\n"
+        "- `Tag`, sem `>`, é uma **tag aberta**: a tag é fixa e a IA cria os subtemas "
+        "dentro dela, que o relatório mostra como detalhe.\n\n"
+        "Com `!` no começo, a linha é de **alerta crítico**: qualquer menção, mesmo uma "
+        "só, vai para um bloco no topo do relatório. O que não couber vira tema emergente "
+        "ou, com tag aberta, \"Outros\"."
     )
     taxonomia_texto = st.text_area(
         "Taxonomia de temas",
         value=project.get("taxonomia") or "",
         placeholder=(
-            "Atendimento > Cordialidade: tratamento pelo nome, gentileza fora do roteiro\n"
-            "Atendimento > Tempo de espera: fila, demora para ser atendido\n"
-            "Produto > Defeito: item quebrado, com falha ou fora de funcionamento"
+            "! Alerta Crítico: assédio, acidentes graves, furtos\n"
+            "Staff: atendimento na recepção, suporte dos professores\n"
+            "Limpeza: áreas de treino, sanitários e vestiários\n"
+            "Equipamentos > Máquina fora de serviço: parada, quebrada ou em manutenção"
         ),
         height=180,
         label_visibility="collapsed",
@@ -304,21 +313,35 @@ with st.container():
     taxonomia_lida = parse_taxonomia(taxonomia_texto)
     if taxonomia_lida.subtemas:
         categorias_lidas = taxonomia_lida.categorias()
-        n_subtemas, n_categorias = len(taxonomia_lida.subtemas), len(categorias_lidas)
-        st.caption(
-            "{} {} em {} {}.".format(
-                n_subtemas,
-                "subtema" if n_subtemas == 1 else "subtemas",
-                n_categorias,
-                "categoria" if n_categorias == 1 else "categorias",
-            )
-        )
+        fixos = [s for s in taxonomia_lida.subtemas if not s.aberta]
+        n_tags = len(taxonomia_lida.subtemas) - len(fixos)
+        n_categorias = len({s.categoria for s in fixos})
+        partes = []
+        if n_tags:
+            partes.append("{} {}".format(n_tags, "tag aberta" if n_tags == 1 else "tags abertas"))
+        if fixos:
+            partes.append("{} {} em {} {}".format(
+                len(fixos), "subtema fixo" if len(fixos) == 1 else "subtemas fixos",
+                n_categorias, "categoria" if n_categorias == 1 else "categorias",
+            ))
+        if taxonomia_lida.alertas:
+            partes.append("{} de alerta crítico".format(len(taxonomia_lida.alertas)))
+        st.caption(" · ".join(partes) + ".")
         with st.expander("Árvore da taxonomia"):
             arvore = []
             for categoria, subtemas in categorias_lidas.items():
-                arvore.append("**{}**".format(categoria))
+                cabeca = "**{}**".format(categoria)
+                if subtemas[0].aberta:
+                    cabeca += " — tag aberta" + (", alerta crítico" if subtemas[0].alerta else "")
+                    if subtemas[0].definicao:
+                        cabeca += " — _{}_".format(subtemas[0].definicao)
+                    arvore.extend([cabeca, ""])
+                    continue
+                arvore.append(cabeca)
                 for subtema in subtemas:
                     item = "- {}".format(subtema.nome)
+                    if subtema.alerta:
+                        item += " (alerta crítico)"
                     if subtema.definicao:
                         item += " — _{}_".format(subtema.definicao)
                     arvore.append(item)
@@ -333,7 +356,8 @@ with st.container():
         exemplos = taxonomia_lida.linhas_invalidas[:5]
         extras = len(taxonomia_lida.linhas_invalidas) - len(exemplos)
         st.warning(
-            "Fora do formato `Categoria > Subtema`, estas linhas não entram na análise: "
+            "Estas linhas não entram na análise (parte vazia, mais de dois níveis, ou tag "
+            "aberta e subtema fixo da mesma categoria): "
             + "; ".join("`{}`".format(linha) for linha in exemplos)
             + (" e mais {}.".format(extras) if extras else ".")
         )
@@ -355,12 +379,35 @@ with st.container():
     # O que a última classificação achou fora da taxonomia salva, para a equipe
     # decidir com a cliente o que entra na próxima versão.
     if editing and project.get("taxonomia"):
-        versao_salva = versao_taxonomia(parse_taxonomia(project.get("taxonomia")))
-        emergentes = contar_emergentes(
+        taxonomia_salva = parse_taxonomia(project.get("taxonomia"))
+        versao_salva = versao_taxonomia(taxonomia_salva)
+        classificacoes = [
             item["temas"]
             for item in get_audio_temas_for_project(project_id).values()
             if item.get("versao_taxonomia") == versao_salva
-        )
+        ]
+        emergentes = [] if taxonomia_salva.tem_tags_abertas else contar_emergentes(classificacoes)
+        # Com tag aberta, o que não coube vai para Outros: os subtemas que se
+        # repetem viram candidatos a tag nova (spec de Unidades, §4.3).
+        outros = contar_detalhes(classificacoes).get(OUTROS, []) if taxonomia_salva.tem_tags_abertas else []
+        candidatos = [(detalhe, n) for detalhe, n in outros if n >= MIN_CANDIDATO]
+        if outros:
+            with st.expander("Candidatos a tag nova ({})".format(len(candidatos))):
+                st.caption(
+                    "Subtemas de Outros, o que não coube em nenhuma tag, com {} ou mais áudios. "
+                    "Leve à cliente os que pedirem uma tag própria.".format(MIN_CANDIDATO)
+                )
+                if candidatos:
+                    st.markdown("\n".join(
+                        "- **{}** — {} {}".format(detalhe, n, "áudio" if n == 1 else "áudios")
+                        for detalhe, n in candidatos
+                    ))
+                restantes = len(outros) - len(candidatos)
+                if restantes:
+                    st.caption(
+                        "Mais 1 subtema de Outros aparece em menos áudios." if restantes == 1
+                        else "Mais {} subtemas de Outros aparecem em menos áudios.".format(restantes)
+                    )
         if emergentes:
             with st.expander("Temas emergentes ({})".format(len(emergentes))):
                 st.caption(

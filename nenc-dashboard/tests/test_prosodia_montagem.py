@@ -801,7 +801,7 @@ class EscreverRelatorioTests(unittest.TestCase):
         ))
         self.assertIn("| Equipamentos > Máquina fora de serviço | 6/12 (50%) | Padrão | 6 neg |", relatorio.texto)
         self.assertIn("- **A1** · Equipamentos > Máquina fora de serviço · padrão, 6/12", relatorio.texto)
-        self.assertIn("Subtemas da taxonomia sem menção no recorte: {}.".format(PRECO), relatorio.texto)
+        self.assertIn("| {} | 0/12 | — | sem menções espontâneas nesta amostra |".format(PRECO), relatorio.texto)
         self.assertIn("### Apêndice técnico\n\n#### Voz por tema", relatorio.texto)
         self.assertIn("#### Legenda dos áudios", relatorio.texto)
         self.assertNotIn("Não avaliável.\n", relatorio.texto)

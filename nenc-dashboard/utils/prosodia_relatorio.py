@@ -36,6 +36,8 @@ from utils.prosodia_project_types import (
     normalize_project_type,
 )
 from utils.prosodia_temas import (
+    MIN_CANDIDATO,
+    OUTROS,
     TAXONOMIA_PROVISORIA,
     TAXONOMIA_STATUS_LABELS,
     TAXONOMIA_VALIDADA,
@@ -55,6 +57,13 @@ from utils.prosodia_temas import (
 MENCAO_ISOLADA = "Menção isolada"
 SINAL = "Sinal"
 PADRAO = "Padrão"
+# A linha de alerta crítico não tem faixa: uma menção basta, e cada uma vai
+# para o bloco de alertas no topo do relatório (spec de Unidades, §4.4).
+ALERTA = "Alerta crítico"
+SEM_MENCOES = "sem menções espontâneas nesta amostra"
+
+# Subtemas mostrados na célula de cada tag aberta; o resto vira "e mais n".
+_MAX_SUBTEMAS_NA_CELULA = 5
 
 # Respondentes no subtema: 1–2 é menção isolada; 3–4, ou 5 ou mais com menos
 # de 10% de N, é sinal; 5 ou mais e pelo menos 10% de N, padrão.
@@ -380,12 +389,17 @@ def _devolver_emergentes(classificacao: dict, subtemas: Dict[Tuple[str, str], st
 
 
 def _nomes_curtos(taxonomia: Taxonomia) -> Dict[str, str]:
-    """Só o subtema, como na Matriz; o rótulo inteiro quando o nome se repete."""
-    contagem = Counter(chave_rotulo(s.nome) for s in taxonomia.subtemas)
-    return {
-        s.rotulo: s.nome if contagem[chave_rotulo(s.nome)] == 1 else s.rotulo
-        for s in taxonomia.subtemas
-    }
+    """Só o subtema, como na Matriz; o rótulo inteiro quando o nome se repete.
+
+    A tag aberta já é o nome curto dela.
+    """
+    fixos = [s for s in taxonomia.subtemas if not s.aberta]
+    contagem = Counter(chave_rotulo(s.nome) for s in fixos)
+    nomes = {s.rotulo: s.rotulo for s in taxonomia.subtemas if s.aberta}
+    nomes.update(
+        (s.rotulo, s.nome if contagem[chave_rotulo(s.nome)] == 1 else s.rotulo) for s in fixos
+    )
+    return nomes
 
 
 # ---------------------------------------------------------------------------
@@ -773,10 +787,32 @@ class LinhaTema:
     # unidade: quem mandou áudios por unidades diferentes conta em cada uma.
     unidades: Dict[str, int] = field(default_factory=dict)
     com_unidade: int = 0
+    # Na tag aberta e em Outros: os subtemas que a IA identificou, com quantos
+    # respondentes trataram de cada um, do mais citado ao menos.
+    subtemas: List[Tuple[str, int]] = field(default_factory=list)
+    aberta: bool = False
+    alerta: bool = False
 
     @property
     def predominante(self) -> str:
         return predominante(self.polaridades)
+
+
+@dataclass(frozen=True)
+class Alerta:
+    """Uma menção a uma linha de alerta crítico, como o bloco do topo a lista.
+
+    `evidencia` é a paráfrase que a classificação gravou, nunca a fala: ela
+    pode trazer nomes e detalhes do caso.
+    """
+
+    audio_id: int
+    alias: str
+    tema: str
+    unidade: str
+    chegada: str
+    inicio_s: Optional[float]
+    evidencia: str
 
 
 @dataclass
@@ -1272,6 +1308,63 @@ def texto_unidades(tema: "LinhaTema", unidades_no_recorte: int) -> str:
     return "{} de {}".format(len(tema.unidades), unidades_no_recorte)
 
 
+def _detalhes_por_linha(audios: Iterable[AudioDoProjeto], tipo: str) -> Dict[str, List[Tuple[str, int]]]:
+    """Os subtemas de cada tag aberta e de Outros, por respondente.
+
+    O mesmo subtema, sem diferenciar caixa nem acento, conta uma vez por
+    respondente e fica com a primeira grafia. Vai do rótulo da linha à lista
+    (subtema, respondentes), do mais citado ao menos.
+    """
+    quem: Dict[str, Dict[str, Set[str]]] = {}
+    grafia: Dict[Tuple[str, str], str] = {}
+    for audio in audios:
+        respondente = chave_respondente(audio.session_id, tipo)
+        for tema in _lista((audio.classificacao or {}).get("temas")):
+            rotulo = tema.get("subtema")
+            detalhe = " ".join(str(tema.get("detalhe") or "").split())
+            chave = chave_rotulo(detalhe)
+            if not rotulo or not chave:
+                continue
+            grafia.setdefault((rotulo, chave), detalhe)
+            quem.setdefault(rotulo, {}).setdefault(chave, set()).add(respondente)
+    return {
+        rotulo: sorted(
+            ((grafia[(rotulo, chave)], len(pessoas)) for chave, pessoas in por_detalhe.items()),
+            key=lambda item: (-item[1], chave_rotulo(item[0])),
+        )
+        for rotulo, por_detalhe in quem.items()
+    }
+
+
+def _alertas(contados: Iterable[AudioDoProjeto], alertas: Set[str], nomes: Dict[int, str]) -> List[Alerta]:
+    """Cada menção a uma linha de alerta, uma por áudio e linha, na ordem dos aliases."""
+    lista = []
+    for audio in contados:
+        for tema in _lista((audio.classificacao or {}).get("temas")):
+            if tema.get("subtema") not in alertas:
+                continue
+            inicios = [
+                _numero(trecho.get("inicio_s")) for trecho in _lista(tema.get("trechos"))
+                if _numero(trecho.get("inicio_s")) is not None
+            ]
+            lista.append(Alerta(
+                audio.audio_id,
+                nomes[audio.audio_id],
+                tema["subtema"],
+                audio.unidade,
+                audio.chegada,
+                min(inicios) if inicios else None,
+                " ".join(str(tema.get("evidencia") or "").split()),
+            ))
+    vistos = set()
+    unicos = []
+    for alerta in sorted(lista, key=lambda a: (a.audio_id, a.tema)):
+        if (alerta.audio_id, alerta.tema) not in vistos:
+            vistos.add((alerta.audio_id, alerta.tema))
+            unicos.append(alerta)
+    return unicos
+
+
 @dataclass
 class Agregacao:
     """Tudo o que o código calcula para o relatório, sobre os áudios do recorte."""
@@ -1299,6 +1392,21 @@ class Agregacao:
     # nenhuma (chegaram sem QR de unidade): ficam fora da coluna "Unidades".
     unidades: Tuple[str, ...] = ()
     sem_unidade: int = 0
+    # Taxonomia com tag aberta (spec de Unidades, §4): a tabela ganha a coluna
+    # de subtemas e a linha Outros, que reúne o que não coube em nenhuma tag.
+    tags_abertas: bool = False
+    outros: Optional[LinhaTema] = None
+    alertas: List[Alerta] = field(default_factory=list)
+    # Subtemas de Outros com MIN_CANDIDATO respondentes ou mais no projeto.
+    candidatos: List[Tuple[str, int]] = field(default_factory=list)
+    # As falas classificadas em linha de alerta: (audio_id, número da linha) e,
+    # por sessão, o segmento e o tempo de cada uma. Elas ficam fora de todo
+    # lugar que cita fala (trechos da IA, momentos, divergências, ranking de
+    # palavras): o alerta só aparece pela paráfrase do bloco do topo.
+    falas_de_alerta: FrozenSet[Tuple[int, int]] = frozenset()
+    trechos_de_alerta: Dict[str, List[Tuple[Optional[int], Optional[float], Optional[float]]]] = field(
+        default_factory=dict
+    )
 
     @property
     def exploratoria(self) -> bool:
@@ -1354,6 +1462,9 @@ def agregar(
     reguas = reguas_do_projeto(sinc_projeto)
     ocorrencias = _ocorrencias(contados, tipo, nomes, conjunto, sinc_projeto, transcricao_projeto, reguas)
     presenca, unidades_do_recorte, sem_unidade = _presenca_por_unidade(contados, tipo, conjunto)
+    detalhes = _detalhes_por_linha(contados, tipo)
+    abertas = {s.rotulo for s in taxonomia.subtemas if s.aberta}
+    alertas = taxonomia.alertas
 
     temas: List[LinhaTema] = []
     for rotulo in rotulos:
@@ -1365,7 +1476,10 @@ def agregar(
             ((respondente, leitura) for respondente, _, leitura in ocorrencias.get(rotulo, [])),
             predominante(polaridades),
         )
-        linha = LinhaTema(rotulo, curtos[rotulo], n, faixa(n, total), dict(polaridades), voz)
+        linha = LinhaTema(
+            rotulo, curtos[rotulo], n, ALERTA if rotulo in alertas else faixa(n, total), dict(polaridades), voz,
+            subtemas=detalhes.get(rotulo, []), aberta=rotulo in abertas, alerta=rotulo in alertas,
+        )
         por_unidade = presenca.get(rotulo, {})
         linha.unidades = {unidade: len(quem) for unidade, quem in por_unidade.items()}
         linha.com_unidade = len(set().union(*por_unidade.values())) if por_unidade else 0
@@ -1387,10 +1501,48 @@ def agregar(
             tema.novos = sum(1 for m in mencoes_nov.values() if tema.subtema in m.temas)
         delta = Delta(anterior, len(mencoes_ant), len(mencoes_nov), len(set(mencoes_ant) & set(mencoes_nov)))
 
+    # Outros não é linha da taxonomia: conta à parte, sem faixa nem voz.
+    outros = None
+    if taxonomia.tem_tags_abertas:
+        mencoes_outros = _mencoes_por_respondente(contados, tipo, {OUTROS})
+        polaridades = Counter(m.temas[OUTROS] for m in mencoes_outros.values() if OUTROS in m.temas)
+        if polaridades:
+            outros = LinhaTema(
+                OUTROS, OUTROS, sum(polaridades.values()), "", dict(polaridades), LeituraVoz(0),
+                subtemas=detalhes.get(OUTROS, []),
+            )
+    # Candidatos a tag nova contam o projeto inteiro, sem as cópias do mesmo arquivo.
+    classificados = [a for a in audios if a.linhas and a.classificacao is not None]
+    copias = _repetidos(classificados)
+    candidatos = [
+        (detalhe, n)
+        for detalhe, n in _detalhes_por_linha((a for a in classificados if a.audio_id not in copias), tipo).get(OUTROS, [])
+        if n >= MIN_CANDIDATO
+    ]
+
+    # As falas de alerta de todo áudio do recorte com classificação, cópias
+    # inclusive: a fala da cópia também está nos dataframes do recorte.
+    falas_de_alerta: Set[Tuple[int, int]] = set()
+    trechos_de_alerta: Dict[str, List[Tuple[Optional[int], Optional[float], Optional[float]]]] = {}
+    for audio in recorte:
+        for tema in _lista((audio.classificacao or {}).get("temas")):
+            if tema.get("subtema") not in alertas:
+                continue
+            for trecho in _lista(tema.get("trechos")):
+                numero = _inteiro(trecho.get("linha"))
+                if numero is not None:
+                    falas_de_alerta.add((audio.audio_id, numero))
+                trechos_de_alerta.setdefault(str(audio.session_id), []).append((
+                    _inteiro(trecho.get("segmento_idx")), _numero(trecho.get("inicio_s")), _numero(trecho.get("fim_s"))
+                ))
+
+    # A Matriz cita os temas de cada áudio; o de alerta fica no bloco próprio.
     temas_por_audio = {}
     for audio in contados:
         citados_no_audio = {t.get("subtema") for t in _lista(audio.classificacao.get("temas"))}
-        temas_por_audio[audio.audio_id] = tuple(curtos[r] for r in rotulos if r in citados_no_audio)
+        temas_por_audio[audio.audio_id] = tuple(
+            curtos[r] for r in rotulos if r in citados_no_audio and r not in alertas
+        )
     matriz = montar_matriz(
         sinais.indice_combinado_por_grupo(sinc_projeto, reguas.valencia, "session_id"),
         _ativacao_por_audio(sinc_projeto),
@@ -1411,8 +1563,12 @@ def agregar(
         temas=temas,
         sem_mencao=[rotulo for rotulo in rotulos if rotulo not in citados],
         emergentes=_emergentes(mencoes),
+        # A fala de alerta também classificada noutra tag não vai para a IA.
         trechos={
-            tema.subtema: _escolher_trechos(ocorrencias.get(tema.subtema, []))
+            tema.subtema: _escolher_trechos(
+                ocorrencia for ocorrencia in ocorrencias.get(tema.subtema, [])
+                if (ocorrencia[1].audio_id, ocorrencia[1].linha) not in falas_de_alerta
+            )
             for tema in temas
             if tema.faixa in (PADRAO, SINAL)
         },
@@ -1423,7 +1579,38 @@ def agregar(
         repetidos=repetidos,
         unidades=unidades_do_recorte,
         sem_unidade=sem_unidade,
+        tags_abertas=taxonomia.tem_tags_abertas,
+        outros=outros,
+        alertas=_alertas(contados, alertas, nomes),
+        candidatos=candidatos,
+        falas_de_alerta=frozenset(falas_de_alerta),
+        trechos_de_alerta=trechos_de_alerta,
     )
+
+
+def sem_falas_de_alerta(df: Optional[pd.DataFrame], agregacao: "Agregacao") -> Optional[pd.DataFrame]:
+    """O Sincronizado ou a transcrição sem as falas classificadas em alerta.
+
+    Casa pelo segmento do Whisper quando a linha tem um, e senão pelo tempo:
+    as linhas que começam dentro da fala. É o que tira a fala de alerta dos
+    momentos de ativação, das divergências e do ranking de palavras.
+    """
+    if df is None or df.empty or not agregacao.trechos_de_alerta or "session_id" not in df.columns:
+        return df
+    sessoes = df["session_id"].astype(str)
+    segmentos = pd.to_numeric(df["segmento_idx"], errors="coerce") if "segmento_idx" in df.columns else None
+    coluna_inicio = next((c for c in ("start_s", "seconds") if c in df.columns), None)
+    inicios = pd.to_numeric(df[coluna_inicio], errors="coerce") if coluna_inicio else None
+    fora = pd.Series(False, index=df.index)
+    for sessao, trechos in agregacao.trechos_de_alerta.items():
+        na_sessao = sessoes == sessao
+        for segmento, inicio, fim in trechos:
+            if segmento is not None and segmentos is not None and (segmentos[na_sessao] == segmento).any():
+                fora |= na_sessao & (segmentos == segmento)
+            elif inicio is not None and inicios is not None:
+                ate = fim if fim is not None else inicio + _TOLERANCIA_TEMPO
+                fora |= na_sessao & (inicios >= inicio - _TOLERANCIA_TEMPO) & (inicios < ate)
+    return df[~fora].reset_index(drop=True)
 
 
 def snapshot(agregacao: Agregacao, recorte: Recorte) -> dict:
@@ -1450,6 +1637,8 @@ def snapshot(agregacao: Agregacao, recorte: Recorte) -> dict:
             {"rotulo": emergente.rotulo, "respondentes": emergente.respondentes}
             for emergente in agregacao.emergentes
         ],
+        "outros": agregacao.outros.respondentes if agregacao.outros else 0,
+        "alertas": len(agregacao.alertas),
         "termometro": agregacao.termometro.nota,
     }
 
@@ -1520,11 +1709,55 @@ def emergentes_markdown(agregacao: Agregacao) -> str:
     return texto + "."
 
 
-def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True) -> str:
-    """Tabela de taxonomia, emergentes, subtemas sem menção e a nota das faixas.
+def alertas_markdown(agregacao: Agregacao) -> str:
+    """O bloco de alertas críticos, escrito pelo código; vazio sem alerta.
 
-    Na mensagem da IA os emergentes vêm num bloco próprio, depois dos trechos
-    (§9 da spec), e a tabela vai sem eles.
+    Uma linha por menção, fora das faixas de amostra: uma menção basta. A
+    coluna "O que foi relatado" traz a paráfrase da classificação, nunca a
+    fala literal (spec de Unidades, §4.4).
+    """
+    if not agregacao.alertas:
+        return ""
+    n = len(agregacao.alertas)
+    linhas = [
+        [
+            alerta.alias,
+            alerta.tema,
+            alerta.unidade or "—",
+            alerta.chegada or "—",
+            _tempo(alerta.inicio_s) if alerta.inicio_s is not None else "—",
+            alerta.evidencia or "—",
+        ]
+        for alerta in agregacao.alertas
+    ]
+    return "{}, listada{} uma a uma, fora das faixas de amostra: uma menção basta. A última coluna é uma " \
+        "paráfrase do que foi dito, nunca a fala.\n\n{}".format(
+            _plural(n, "menção a tema de alerta crítico", "menções a temas de alerta crítico"),
+            "" if n == 1 else "s",
+            _tabela(["Áudio", "Tema", "Unidade", "Chegada", "Trecho", "O que foi relatado"], linhas),
+        )
+
+
+def texto_subtemas(tema: LinhaTema) -> str:
+    """A célula "Subtemas": os assuntos da tag com os respondentes de cada um."""
+    if not tema.subtemas:
+        return "—"
+    partes = ["{} {}".format(detalhe, n) for detalhe, n in tema.subtemas[:_MAX_SUBTEMAS_NA_CELULA]]
+    resto = len(tema.subtemas) - _MAX_SUBTEMAS_NA_CELULA
+    if resto > 0:
+        partes.append("e mais {}".format(resto))
+    return " · ".join(partes)
+
+
+def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True) -> str:
+    """Tabela de taxonomia com todas as linhas, emergentes e a nota das faixas.
+
+    As linhas citadas vêm primeiro, da mais citada à menos; depois, Outros,
+    na taxonomia com tag aberta; por último, as linhas sem menção, na ordem
+    da taxonomia: a ausência fica à vista, com a ressalva de que ela não diz
+    que o tema é irrelevante (spec de Unidades, §4.3). Na mensagem da IA os
+    emergentes vêm num bloco próprio, depois dos trechos (§9 da spec da v2),
+    e a tabela vai sem eles.
     """
     total = agregacao.n_respondentes
     if not total:
@@ -1532,41 +1765,78 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
     delta = agregacao.delta
     coluna_delta = delta is not None and delta.exibir
     blocos = []
-    if agregacao.temas:
-        cabecalho = ["Categoria > Subtema", "Respondentes", "Faixa", "Texto", "Voz nos trechos"]
+    cabecalho = ["Tema" if agregacao.tags_abertas else "Categoria > Subtema", "Respondentes", "Faixa", "Texto",
+                 "Voz nos trechos"]
+    if agregacao.por_unidade:
+        cabecalho.append("Unidades")
+    if agregacao.tags_abertas:
+        cabecalho.append("Subtemas")
+    if coluna_delta:
+        cabecalho.append("Anteriores → novos")
+
+    def _celulas(primeiras: List[str], unidades: str, subtemas: str, delta_texto: str) -> List[str]:
+        celulas = list(primeiras)
         if agregacao.por_unidade:
-            cabecalho.append("Unidades")
+            celulas.append(unidades)
+        if agregacao.tags_abertas:
+            celulas.append(subtemas)
         if coluna_delta:
-            cabecalho.append("Anteriores → novos")
-        linhas = []
-        for tema in agregacao.temas:
-            celulas = [
+            celulas.append(delta_texto)
+        return celulas
+
+    linhas = []
+    for tema in agregacao.temas:
+        linhas.append(_celulas(
+            [
                 tema.subtema,
                 "{} ({}%)".format(_fracao(tema.respondentes, total), _percentual(tema.respondentes, total)),
                 tema.faixa,
                 texto_polaridades(tema.polaridades),
-                "—" if tema.faixa == MENCAO_ISOLADA else tema.voz.texto(),
-            ]
-            if agregacao.por_unidade:
-                celulas.append(texto_unidades(tema, len(agregacao.unidades)))
-            if coluna_delta:
-                celulas.append("{} → {}".format(
-                    _fracao(tema.anteriores or 0, delta.anteriores), _fracao(tema.novos or 0, delta.novos)
-                ))
-            linhas.append(celulas)
-        blocos.append(_tabela(cabecalho, linhas))
-    else:
-        blocos.append("Nenhum subtema da taxonomia foi citado no recorte.")
+                "—" if tema.faixa in (MENCAO_ISOLADA, ALERTA) else tema.voz.texto(),
+            ],
+            texto_unidades(tema, len(agregacao.unidades)),
+            texto_subtemas(tema) if tema.aberta else "—",
+            "{} → {}".format(
+                _fracao(tema.anteriores or 0, delta.anteriores), _fracao(tema.novos or 0, delta.novos)
+            ) if coluna_delta else "",
+        ))
+    outros = agregacao.outros
+    if outros is not None:
+        linhas.append(_celulas(
+            [
+                OUTROS,
+                "{} ({}%)".format(_fracao(outros.respondentes, total), _percentual(outros.respondentes, total)),
+                "—",
+                texto_polaridades(outros.polaridades),
+                "—",
+            ],
+            "—", texto_subtemas(outros), "—",
+        ))
+    for rotulo in agregacao.sem_mencao:
+        linhas.append(_celulas([rotulo, _fracao(0, total), "—", SEM_MENCOES, ""], "", "", ""))
+    blocos.append(_tabela(cabecalho, linhas))
     if agregacao.emergentes and incluir_emergentes:
         blocos.append(emergentes_markdown(agregacao))
-    if agregacao.sem_mencao:
-        blocos.append("Subtemas da taxonomia sem menção no recorte: {}.".format("; ".join(agregacao.sem_mencao)))
 
     nota = (
         "_Faixas: 1–2 respondentes, menção isolada; 3–4, sinal; 5 ou mais e pelo menos 10% do "
         "total, padrão. O mesmo respondente pode estar em vários subtemas, então as contagens "
         "não se somam."
     )
+    if agregacao.tags_abertas:
+        nota += (
+            " \"Subtemas\" mostra os assuntos que a IA identificou dentro de cada tag, com quantos "
+            "respondentes trataram de cada um; eles não têm faixa própria."
+        )
+    if outros is not None:
+        nota += " \"{}\" reúne o que não coube em nenhuma tag.".format(OUTROS)
+    if any(tema.alerta for tema in agregacao.temas):
+        nota += " Alerta crítico não tem faixa: cada menção está listada no topo do relatório."
+    if agregacao.sem_mencao:
+        nota += (
+            " Numa coleta aberta, a ausência de menções não indica que o tema seja irrelevante: "
+            "ele segue em acompanhamento nas próximas análises."
+        )
     if agregacao.por_unidade:
         nota += (
             " \"Unidades\" diz em quantas das {} unidades do recorte o subtema aparece, ou, quando "
@@ -1924,7 +2194,9 @@ def legenda_markdown(agregacao: Agregacao) -> str:
 
 
 def _secao_voz_por_tema(agregacao: Agregacao) -> str:
-    if not agregacao.temas:
+    # O alerta crítico não tem leitura de voz no relatório: fica fora daqui também.
+    temas = [tema for tema in agregacao.temas if not tema.alerta]
+    if not temas:
         return "Nenhum subtema citado."
     return _tabela(
         ["Subtema", "Respondentes", "Com voz", "Trechos com voz", "Valência (voz)", "Ativação (z)", "Leitura"],
@@ -1938,7 +2210,7 @@ def _secao_voz_por_tema(agregacao: Agregacao) -> str:
                 _decimal(tema.voz.ativacao) if tema.voz.ativacao is not None else "—",
                 tema.voz.texto() + (" (instável)" if tema.voz.instavel else ""),
             ]
-            for tema in agregacao.temas
+            for tema in temas
         ),
     )
 
@@ -2162,12 +2434,24 @@ def apendice_markdown(
     de perguntas com maior ativação da Análise Geral (entrevista);
     `sumarios`, o par (com, sem) de contar_sumarios; e `sumarios_fora`,
     quantos sumários ficaram fora da mensagem da IA pelo limite de tamanho.
+    As falas classificadas em alerta crítico ficam fora de tudo o que cita
+    fala aqui.
     """
+    sinc_projeto = sem_falas_de_alerta(sinc_projeto, agregacao)
+    transcricao_projeto = sem_falas_de_alerta(transcricao_projeto, agregacao)
     sessoes = {str(a.session_id): agregacao.aliases[a.audio_id] for a in agregacao.recorte}
     sinc = _recorte_com_alias(sinc_projeto, sessoes)
     transcricao = _recorte_com_alias(transcricao_projeto, sessoes)
 
     secoes: List[Tuple[str, str]] = [("Voz por tema", _secao_voz_por_tema(agregacao))]
+    if agregacao.tags_abertas:
+        secoes.append((
+            "Candidatos a tag nova",
+            "Subtemas de {} com {} ou mais respondentes no projeto, para levar à cliente: {}.".format(
+                OUTROS, MIN_CANDIDATO, "; ".join("{} ({})".format(d, n) for d, n in agregacao.candidatos)
+            ) if agregacao.candidatos else
+            "Nenhum subtema de {} chegou a {} respondentes no projeto.".format(OUTROS, MIN_CANDIDATO),
+        ))
     if sinc.empty:
         secoes.append(("Métricas acústicas", "Os áudios do recorte não têm o Sincronizado com as métricas de voz."))
     else:
@@ -2183,7 +2467,12 @@ def apendice_markdown(
     if agregacao.tipo_projeto == ENTREVISTA_QUALITATIVA and perguntas_ativacao:
         secoes.append(("Perguntas com maior ativação", _secao_perguntas(perguntas_ativacao)))
 
-    ranking = ranking_palavras(linha.texto for audio in agregacao.recorte for linha in audio.linhas)
+    ranking = ranking_palavras(
+        linha.texto
+        for audio in agregacao.recorte
+        for linha in audio.linhas
+        if (audio.audio_id, linha.numero) not in agregacao.falas_de_alerta
+    )
     secoes.append((
         "Ranking de palavras",
         _tabela(["Palavra", "Menções"], ([p, str(n)] for p, n in ranking)) if ranking
@@ -2319,13 +2608,18 @@ def mensagem_para_ia(
     delta = agregacao.delta
     tarefa = prompts.tarefa_analise_geral(
         achados,
-        linha_final=bool(agregacao.emergentes) or any(t.faixa == MENCAO_ISOLADA for t in agregacao.temas),
+        linha_final=(
+            bool(agregacao.emergentes)
+            or agregacao.outros is not None
+            or any(t.faixa == MENCAO_ISOLADA for t in agregacao.temas)
+        ),
         grupos_matriz=_grupos_a_ler(agregacao),
         termometro_avaliavel=agregacao.termometro.avaliavel,
         exploratoria=total if agregacao.exploratoria else None,
         novos_sem_tendencia=(
             delta.novos if delta is not None and delta.exibir and not delta.sustenta_tendencia else None
         ),
+        alertas=len(agregacao.alertas),
     )
     return prompts.mensagem_analise_geral(
         contexto,
@@ -2335,7 +2629,7 @@ def mensagem_para_ia(
         emergentes_markdown(agregacao) or "Nenhum tema emergente.",
         matriz_markdown(agregacao),
         termometro_markdown(agregacao),
-        divergencias_markdown(agregacao, sinc_projeto, so_respondente=True),
+        divergencias_markdown(agregacao, sem_falas_de_alerta(sinc_projeto, agregacao), so_respondente=True),
         sumarios.texto if sumarios is not None else _SEM_SUMARIOS,
         tarefa,
     )
@@ -2561,8 +2855,10 @@ def montar_relatorio(agregacao: Agregacao, cabecalho: str, texto_da_ia: TextoDaI
     termometro = termometro_markdown(agregacao)
     if textos[LEITURA_TERMOMETRO]:
         termometro += "\n\n" + textos[LEITURA_TERMOMETRO]
-    blocos = [
-        cabecalho.strip(),
+    blocos = [cabecalho.strip()]
+    if agregacao.alertas:
+        blocos.append("### Alertas críticos\n\n" + alertas_markdown(agregacao))
+    blocos += [
         "### Resumo Executivo\n\n" + (textos[RESUMO] or _SEM_TEXTO),
         "### 1. Taxonomia de Temas\n\n" + tabela_temas_markdown(agregacao),
         "### 2. Achados\n\n" + (textos[ACHADOS] or _SEM_TEXTO),
@@ -2718,6 +3014,17 @@ def _tabelas(agregacao: Agregacao) -> _Tabelas:
             (tema.subtema, tema.nome), tema.nome, _fracoes_do_tema(agregacao, tema),
             _fracao(tema.respondentes, total),
         )
+    # Os subtemas das tags abertas e de Outros: a prosa pode citá-los como
+    # "Tag > subtema", com a fração deles.
+    linhas_com_subtemas = list(agregacao.temas) + ([agregacao.outros] if agregacao.outros else [])
+    for tema in linhas_com_subtemas:
+        if tema is agregacao.outros:
+            rotulos.append(_normal(OUTROS))
+            registrar((OUTROS,), OUTROS, {(tema.respondentes, total)}, _fracao(tema.respondentes, total))
+        for detalhe, n in tema.subtemas:
+            completo = "{} > {}".format(tema.subtema, detalhe)
+            rotulos.append(_normal(completo))
+            registrar((completo, detalhe), detalhe, {(n, total)}, _fracao(n, total))
     for rotulo in agregacao.sem_mencao:
         nome = rotulo.split(">", 1)[-1].strip()
         for chave in (_normal(rotulo), _normal(nome)):
@@ -2789,7 +3096,15 @@ def _conferir_achados(
             continue
         citado = " ".join(cabeca.group("subtema").split())
         chave = _normal(re.sub(r"\s*>\s*", " > ", citado))
+        if agregacao.outros is not None and chave == _normal(OUTROS):
+            problemas.append("{} é de {}, que reúne o que não coube nas tags: {} não leva ID.".format(
+                item.ident, OUTROS, OUTROS
+            ))
+            continue
         tema = tabelas.temas.get(chave)
+        if tema is not None and tema.faixa == ALERTA:
+            problemas.append("{} é de {}, alerta crítico: alerta não leva ID.".format(item.ident, tema.nome))
+            continue
         if tema is None:
             onde = "não tem menção no recorte" if chave in tabelas.sem_mencao else "não está na tabela de temas"
             problemas.append('{} cita "{}", que {}.'.format(item.ident, citado, onde))

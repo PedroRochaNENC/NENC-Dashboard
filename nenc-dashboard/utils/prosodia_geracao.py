@@ -271,7 +271,7 @@ def gerar_analise_geral(
     taxonomia = temas.parse_taxonomia(texto_da_taxonomia)
     if texto_da_taxonomia and not taxonomia.subtemas:
         raise TaxonomiaSemSubtema(
-            "A taxonomia do projeto não tem nenhuma linha no formato \"Categoria > Subtema\". "
+            "A taxonomia do projeto não tem nenhuma linha válida (\"Categoria > Subtema\" ou \"Tag\"). "
             "Corrija na Preparação, ou apague o campo para a IA propor uma provisória."
         )
     taxonomia_status = projeto.get("taxonomia_status")
@@ -303,6 +303,12 @@ def gerar_analise_geral(
         (rotulo, categoria)
         for rotulo, categoria, _ in temas.contar_emergentes(item.get("temas") for item in salvas.values())
     ]
+    # Na taxonomia com tag aberta, a IA recebe os subtemas já usados em cada
+    # tag, para repetir o nome em vez de criar outro para o mesmo assunto.
+    subtemas_conhecidos = {
+        rotulo: [detalhe for detalhe, _ in lista]
+        for rotulo, lista in temas.contar_detalhes(item.get("temas") for item in salvas.values()).items()
+    }
     avisar(2, "Áudios do recorte sem classificação válida vão à IA ({}).".format(modelo_da_classificacao))
     resumo = temas.classificar_audios(
         [temas.AudioParaClassificar(audio_id, linhas[audio_id]) for audio_id in sorted(ids) if linhas.get(audio_id)],
@@ -315,6 +321,7 @@ def gerar_analise_geral(
             audio_id, chave, versao, modelo_da_classificacao, classificacao
         ),
         ao_classificar,
+        subtemas_conhecidos=subtemas_conhecidos,
     )
     partes = [
         "{} agora".format(_plural(len(resumo.classificados), "classificado", "classificados")),
