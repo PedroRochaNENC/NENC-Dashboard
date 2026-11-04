@@ -308,6 +308,7 @@ def _audio_do_projeto(
         chegada=overview.entry_text(audio),
         conteudo=(conteudos or {}).get(audio_id),
         unidade=overview.unidade_label(audio) if audio.get("unidade_id") else "",
+        duracao_s=float(audio["duration_seconds"]) if audio.get("duration_seconds") else None,
     )
 
 

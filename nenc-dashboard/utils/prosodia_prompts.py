@@ -478,45 +478,37 @@ ao descrever o perfil de cada grupo.
 
 _ANALISE_GERAL_VOZ = """
 ## Leitura Multimodal: o que foi dito × como foi dito
-A voz chega pronta, como qualificador de cada tema, na coluna "Voz nos trechos": a voz \
-de cada respondente nos trechos em que tratou do tema, com o mesmo peso para cada um, \
-comparada com o habitual do próprio projeto.
+A voz chega pronta, numa frase, na coluna "Sinal emocional" de cada tema: a voz de cada \
+respondente nos trechos em que tratou do tema, com o mesmo peso para cada um, comparada \
+com a do próprio projeto. A regra por trás é do sistema; escreva o sinal como ele vem, \
+sem trocá-lo por termos técnicos.
 
-- **Direção:** "acima do habitual", "no habitual" ou "abaixo do habitual" é a valência \
-vocal desses trechos, do desagradável ao agradável.
-- **Ativação:** "alta", "média" ou "baixa" é a energia da fala nesses trechos. Ativação \
-alta indica mobilização, sem dizer se positiva ou negativa; quem dá o sinal é a direção.
-- **Qualificador:** compara a voz com a polaridade predominante do texto no tema. \
-"Reforça" quando a voz vai no mesmo sentido do texto, "atenua" quando fica no habitual \
-com ativação alta ou baixa, e "contradiz" quando vai no sentido oposto. Voz no habitual \
-com ativação média e tema misto ou neutro levam só a direção. A direção só sai acima ou \
-abaixo do habitual quando se mantém sem qualquer um dos respondentes.
-- **"Não avaliável (n respondentes com voz)":** menos de 5 respondentes com dado de voz \
-nos trechos do tema. Não comente a voz desse tema.
-
-Como ler as combinações:
-- Voz "no habitual, ativação média", sem qualificador, é a voz do próprio projeto, o caso \
-da maioria dos temas: ela não acrescenta nada ao texto. Não a leia como cortesia protocolar, \
+Como ler os sinais:
+- "Sem destaque em relação aos demais relatos" é a voz do próprio projeto, o caso da \
+maioria dos temas: não acrescenta nada ao texto. Não a leia como cortesia protocolar, \
 satisfação morna, entusiasmo contido ou insatisfação normalizada, e não apoie hipótese nela.
-- Crítica que a voz atenua com ativação baixa sugere insatisfação já normalizada: risco \
-maior de abandono silencioso do que uma reclamação exaltada.
-- Elogio que a voz atenua com ativação baixa, ou que a voz contradiz, sugere cortesia \
-protocolar, não satisfação real.
-- Crítica que a voz reforça, com ativação alta, indica irritação mobilizada, candidata a \
-reclamação ativa ou pública.
-- Elogio que a voz reforça, com ativação alta, marca entusiasmo genuíno e é candidato a \
-ponto de lealdade.
+- "Poucos relatos com voz para uma leitura": menos de 5 respondentes com voz no tema. Não \
+comente a voz desse tema.
+- "Crítica dita com resignação, sem irritação na voz" sugere insatisfação já normalizada: \
+risco maior de abandono silencioso do que uma reclamação exaltada.
+- "Elogio dito sem entusiasmo" ou "Tom de voz menos positivo que as palavras" sugere \
+cortesia protocolar, não satisfação real.
+- "Irritação perceptível na voz" indica irritação mobilizada, candidata a reclamação ativa \
+ou pública.
+- "Fala mais animada que a média; confirma o elogio" marca entusiasmo genuíno, candidato \
+a ponto de lealdade.
+- "Tom de voz mais leve que a crítica" pode ser crítica dita em tom de brincadeira ou de \
+alívio: leia os trechos antes de dar peso a ela.
 
-Nos trechos e na Matriz, "texto" é a nota do sentimento do que foi dito, de -1 a +1, \
-dada por um modelo de linguagem; entre -0,2 e +0,2 conta como neutra. É inferência \
-automática e erra com ironia, negação e respostas curtas. Na Matriz, "voz" é a valência \
-vocal do áudio em relação ao projeto, de -1 a +1, e "índice" é metade texto e metade voz.
+Nos trechos, "texto" é a nota do sentimento do que foi dito, de -1 a +1, dada por um \
+modelo de linguagem; entre -0,2 e +0,2 conta como neutra. É inferência automática e erra \
+com ironia, negação e respostas curtas.
 
-A voz qualifica os temas e sustenta hipóteses; nunca é achado isolado. As métricas \
-acústicas (pitch, volume, médias de ativação, emoções) ficam no apêndice técnico: não as \
-cite. A seção <divergencias> lista trechos em que o texto e a voz apontam em sentidos \
-opostos; cada um é candidato a leitura qualitativa (ironia, cortesia protocolar, \
-alívio), não prova.
+O sinal emocional qualifica os temas e sustenta hipóteses; nunca é achado isolado. Não use \
+os termos técnicos da voz (valência, ativação, "habitual", pitch, loudness, arousal) nem \
+cite métricas acústicas: eles ficam no apêndice técnico. A seção <divergencias> lista \
+trechos em que o texto e a voz apontam em sentidos opostos; cada um é candidato a leitura \
+qualitativa (ironia, cortesia protocolar, alívio), não prova.
 """
 
 _ANALISE_GERAL_CX = """
@@ -566,10 +558,13 @@ do texto. "Divergência voz × texto" marca as falas que também estão em <dive
   - **Menção isolada** (1–2 respondentes): entra só na linha final dos Achados, sem ID, \
 sem hipótese nem recomendação própria.
   - **Sinal** (3–4 respondentes, ou 5 ou mais com menos de 10% do total): achado com ID; \
-pode sustentar hipótese e recomendação, sempre chamado de sinal.
-  - **Padrão** (5 ou mais respondentes e pelo menos 10% do total): achado com ID.
+pode sustentar hipótese, sempre chamado de sinal. Não sustenta recomendação: vai para \
+"Para acompanhar", o que observar na próxima análise.
+  - **Padrão** (5 ou mais respondentes e pelo menos 10% do total): achado com ID; pode \
+sustentar recomendação, menos na leitura exploratória.
 - Com menos de 20 respondentes, o cabeçalho traz "Leitura exploratória": descreva esta \
-amostra e não generalize para o público.
+amostra, não generalize para o público e não escreva recomendações. Todos os achados vão \
+para "Para acompanhar e investigar".
 - A coluna "Anteriores → novos", quando vem, compara os respondentes da análise \
 anterior com os que chegaram depois. Com menos de 20 novos, a diferença é variação \
 observada, nunca tendência.
@@ -591,6 +586,16 @@ calibração. Nunca tire dela número, contagem ou achado desta amostra.
 diagnóstico psicológico, prova de estado emocional nem traço de personalidade.
 - Sem evidência para uma afirmação, não a faça. Não escreva seção de limitações: elas \
 ficam no apêndice técnico.
+- A seção "Como ler esta análise" vem pronta e entra no relatório antes do seu texto: não \
+repita os avisos dela nem os contradiga.
+
+## Redação
+- Escreva para quem decide em CX e nas áreas de negócio, sem jargão de análise de voz.
+- Não use superlativo sem número ("principal diferencial", "maior problema"): a ordem vem \
+da fração da tabela.
+- Achado e hipótese não usam "deve"; a hipótese usa "pode indicar" ou "sugere". Só a \
+recomendação prescreve.
+- A ausência de menção não é achado nem base de hipótese.
 """
 
 ESTRUTURA_ANALISE_GERAL = """
@@ -600,15 +605,16 @@ tabelas que você recebeu: o sistema as insere no relatório. Não escreva intro
 conclusão nem limitações.
 
 ### Resumo Executivo
-De 3 a 5 linhas: os três achados mais relevantes e a ação prioritária, citando os IDs.
+De 3 a 5 linhas: os três achados mais relevantes e a ação prioritária (ou, sem \
+recomendação, o que acompanhar primeiro), citando os IDs.
 
 ### Achados
-Um item por subtema em "padrão" ou "sinal", na ordem da tabela:
-- **A<n>** · <Categoria > Subtema> · <faixa>, <n/N> — o que foi dito, com até dois \
-exemplos (Áudio NN, mm:ss). Voz: <leitura da tabela>.
-Use só números e leituras de voz que estão nas tabelas. Não some contagens de temas \
+Um item por tema em "padrão" ou "sinal", na ordem da tabela:
+- **A<n>** · <tema> · <faixa>, <n/N> — o que foi dito, com até dois exemplos (Áudio NN, \
+mm:ss). Sinal emocional: <frase da tabela>.
+Use só números e sinais emocionais que estão nas tabelas. Não some contagens de temas \
 diferentes: o mesmo respondente pode estar nos dois. Feche com uma linha, sem ID, para as \
-menções isoladas e os temas emergentes.
+menções isoladas, os temas emergentes e Outros.
 
 ### Hipóteses
 - **H<n>** — enunciado. *Apoia-se em:* A<n>[, A<n>]. *Como validar:* dado operacional \
@@ -616,17 +622,28 @@ ou pergunta para a próxima coleta.
 Nenhuma hipótese se apoia só em menção isolada.
 
 ### Recomendações
-De três a cinco, em ordem de prioridade, só a partir de temas em "padrão" ou "sinal":
+Só a partir dos achados em "padrão" que a tarefa aponta, de três a cinco, em ordem de \
+prioridade:
 - **R<n>** [Higiene|Encantamento] (Driver: <retenção, aquisição, custo operacional ou \
 reputação> · Área: <área dona>) — ação específica. *Responde a:* A<n>, H<n>. \
 *Como medir:* indicador observável, de preferência a fatia do tema na próxima análise.
-Se os achados não sustentarem três, escreva menos: recomendação sem achado não entra.
+Se os achados não sustentarem três, escreva menos: recomendação sem achado em padrão não \
+entra. Na leitura exploratória, não escreva esta seção.
+
+### Para acompanhar
+Um item por achado que a tarefa manda para cá (os em "sinal" e, na leitura exploratória, \
+todos):
+- **M<n>** · <tema> · <faixa>, <n/N> — o que observar na próxima análise para saber se o \
+sinal se mantém. *Por quê:* A<n>.
+Na leitura exploratória, o título é "Para acompanhar e investigar", e cada item ganha \
+*Como investigar:* um dado operacional ou uma pergunta para a próxima coleta.
 
 ### Matriz de Destaques — leitura
 Para cada grupo da tabela recebida, um parágrafo que começa pelo nome do grupo em \
-negrito: **<grupo>** — *Perfil:* uma ou duas frases. *Ação:* uma frase. Para falar da \
-voz do grupo, use só a linha "Voz no grupo", que conta todos os áudios dele; não \
-generalize a partir de alguns áudios da tabela.
+negrito: **<grupo>** — *Perfil:* uma ou duas frases. *Ação:* uma frase; na leitura \
+exploratória, o que acompanhar nesse grupo. Para falar do tom de voz do grupo, use só a \
+linha "Tom de voz no grupo", que conta todos os áudios dele; não generalize a partir de \
+alguns áudios da tabela.
 
 ### Termômetro — leitura
 Duas ou três frases sobre o que puxa o saldo, citando IDs. Não altere o número.
@@ -640,36 +657,40 @@ título apenas: Não avaliável.
 # montagem põe cada leitura embaixo da tabela do seu grupo.
 EXEMPLO_ANALISE_GERAL = """\
 ### Resumo Executivo
-Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dor dita com ativação alta. A falha de pagamento no app (A3, 11/64) é relatada sem energia na voz e aparece em 5 dos 12 respondentes novos. O encantamento vem do atendente da unidade, citado pelo nome (A2, 13/64). A ação prioritária é mostrar o status da máquina antes do pagamento e estornar automaticamente o ciclo interrompido (R1); em seguida, corrigir o fluxo de pagamento (R2).
+Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dita com irritação perceptível na voz. A falha de pagamento no app (A3, 11/64) é relatada com resignação e aparece em 5 dos 12 respondentes novos. O encantamento vem do atendente da unidade, citado pelo nome (A2, 13/64). A ação prioritária é mostrar o status da máquina antes do pagamento e estornar automaticamente o ciclo interrompido (R1); em seguida, corrigir o fluxo de pagamento (R2).
 
 ### Achados
-- **A1** · Equipamentos > Máquina fora de serviço · padrão, 19/64 — 17 dos 19 descrevem a máquina parada de forma negativa. Os trechos falam em aviso de manutenção recorrente e em ciclo pago e perdido (Áudio 12, 00:14; Áudio 31, 00:09). Voz: abaixo do habitual, com ativação alta — reforça o texto.
-- **A2** · Atendimento > Atendente da unidade · padrão, 13/64 — 12 dos 13 elogiam o atendente. Os trechos o citam pelo nome e falam de uma ajuda fora do roteiro, como ensinar a usar o app na primeira lavagem (Áudio 03, 00:21; Áudio 40, 00:05). Voz: acima do habitual, com ativação alta — reforça.
-- **A3** · Pagamento > Falha no app de pagamento · padrão, 11/64 — as 11 menções são negativas: cobrança que não libera a máquina e estorno demorado (Áudio 08, 00:11; Áudio 45, 00:17). Voz: no habitual, com ativação baixa — atenua. O tema aparece em 5 dos 12 respondentes novos e em 6 dos 52 anteriores, o que é variação observada, não tendência.
-- **A4** · Ambiente > Limpeza da loja · padrão, 9/64 — 8 dos 9 elogiam a limpeza em frases curtas, sem detalhe (Áudio 22, 00:03). Voz: no habitual, com ativação baixa — atenua.
-- **A5** · Ambiente > Espera por máquina livre · sinal, 6/64 (menos de 10% dos respondentes) — as 6 menções são negativas, e os trechos citam sábado e domingo (Áudio 19, 00:08; Áudio 52, 00:12). Voz: abaixo do habitual — reforça.
-- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Leitura de voz não avaliável (4 respondentes com voz).
-- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Leitura de voz não avaliável (3 respondentes com voz).
+- **A1** · Equipamentos > Máquina fora de serviço · padrão, 19/64 — 17 dos 19 descrevem a máquina parada de forma negativa. Os trechos falam em aviso de manutenção recorrente e em ciclo pago e perdido (Áudio 12, 00:14; Áudio 31, 00:09). Sinal emocional: irritação perceptível na voz.
+- **A2** · Atendimento > Atendente da unidade · padrão, 13/64 — 12 dos 13 elogiam o atendente. Os trechos o citam pelo nome e falam de uma ajuda fora do roteiro, como ensinar a usar o app na primeira lavagem (Áudio 03, 00:21; Áudio 40, 00:05). Sinal emocional: fala mais animada que a média; confirma o elogio.
+- **A3** · Pagamento > Falha no app de pagamento · padrão, 11/64 — as 11 menções são negativas: cobrança que não libera a máquina e estorno demorado (Áudio 08, 00:11; Áudio 45, 00:17). Sinal emocional: crítica dita com resignação, sem irritação na voz. O tema aparece em 5 dos 12 respondentes novos e em 6 dos 52 anteriores, o que é variação observada, não tendência.
+- **A4** · Ambiente > Limpeza da loja · padrão, 9/64 — 8 dos 9 elogiam a limpeza em frases curtas, sem detalhe (Áudio 22, 00:03). Sinal emocional: elogio dito sem entusiasmo.
+- **A5** · Ambiente > Espera por máquina livre · sinal, 6/64 (menos de 10% dos respondentes) — as 6 menções são negativas, e os trechos citam sábado e domingo (Áudio 19, 00:08; Áudio 52, 00:12). Sinal emocional: tom de voz mais negativo que a média; confirma a crítica.
+- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Sinal emocional: poucos relatos com voz para uma leitura.
+- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Sinal emocional: poucos relatos com voz para uma leitura.
 - Menções isoladas, sem hipótese própria: Secagem incompleta (2/64) e os emergentes Estacionamento (2/64) e Cheiro do sabão (1/64).
 
 ### Hipóteses
-- **H1** — A falha de pagamento virou atrito normalizado: o cliente relata o problema sem energia na voz, o que combina mais com desistência silenciosa do que com reclamação ativa. *Apoia-se em:* A3. *Como validar:* comparar a recompra em 30 dias de quem teve estorno com a de quem não teve, e perguntar na próxima coleta se o cliente deixou de usar a loja por causa do pagamento.
-- **H2** — Máquina parada é a dor com mais chance de virar reclamação pública: é a mais citada e a única dita com ativação alta e valência abaixo do habitual. *Apoia-se em:* A1. *Como validar:* cruzar, por unidade, as menções ao tema com o tempo médio de reparo e com as reclamações em canais públicos.
-- **H3** — O encantamento depende de pessoas, não de processo: o elogio ao atendente vem com nome e com voz acima do habitual, enquanto a limpeza, item de higiene, recebe elogio protocolar. *Apoia-se em:* A2, A4. *Como validar:* verificar, no recorte por QR code, se os elogios ao atendente se concentram em poucas unidades ou turnos.
+- **H1** — A falha de pagamento pode ter virado atrito normalizado: o cliente relata o problema com resignação, o que combina mais com desistência silenciosa do que com reclamação ativa. *Apoia-se em:* A3. *Como validar:* comparar a recompra em 30 dias de quem teve estorno com a de quem não teve, e perguntar na próxima coleta se o cliente deixou de usar a loja por causa do pagamento.
+- **H2** — Máquina parada sugere a dor com mais chance de virar reclamação pública: é a mais citada e a única dita com irritação perceptível na voz. *Apoia-se em:* A1. *Como validar:* cruzar, por unidade, as menções ao tema com o tempo médio de reparo e com as reclamações em canais públicos.
+- **H3** — O encantamento pode depender de pessoas, não de processo: o elogio ao atendente vem com nome e com fala mais animada que a média, enquanto a limpeza, item de higiene, é elogiada sem entusiasmo. *Apoia-se em:* A2, A4. *Como validar:* verificar, no recorte por unidade, se os elogios ao atendente se concentram em poucas unidades ou turnos.
 
 ### Recomendações
 - **R1** [Higiene] (Driver: Retenção · Área: Manutenção) — Mostrar no app e na própria máquina o status "fora de serviço" antes do pagamento, e estornar automaticamente o ciclo interrompido. *Responde a:* A1, H2. *Como medir:* fatia de respondentes no tema na próxima análise (hoje 19/64) e estornos manuais por unidade.
 - **R2** [Higiene] (Driver: Retenção · Área: Produto digital) — Corrigir o ponto do fluxo em que a cobrança não libera a máquina; até a correção, estornar em até 24 horas com aviso no app. *Responde a:* A3, H1. *Como medir:* menções ao tema entre os respondentes novos (hoje 5/12) e prazo médio de estorno.
-- **R3** [Encantamento] (Driver: Reputação · Área: Operações das unidades) — Transformar o que os atendentes elogiados fazem em rotina de turno (cumprimentar pelo nome, oferecer ajuda na primeira lavagem) e levar a rotina às unidades sem elogio. *Responde a:* A2, H3. *Como medir:* elogios ao atendimento por unidade, no recorte por QR code, na próxima análise.
-- **R4** [Higiene] (Driver: Retenção · Área: Operações) — Mostrar no app a ocupação das máquinas por horário, para o cliente fugir do pico de fim de semana. *Responde a:* A5. *Como medir:* menções a espera na próxima análise e uso fora do pico.
+- **R3** [Encantamento] (Driver: Reputação · Área: Operações das unidades) — Transformar o que os atendentes elogiados fazem em rotina de turno (cumprimentar pelo nome, oferecer ajuda na primeira lavagem) e levar a rotina às unidades sem elogio. *Responde a:* A2, H3. *Como medir:* elogios ao atendimento por unidade na próxima análise.
+
+### Para acompanhar
+- **M1** · Ambiente > Espera por máquina livre · sinal, 6/64 — se a espera continua concentrada no fim de semana e passa de 10% dos respondentes. *Por quê:* A5.
+- **M2** · Pagamento > Preço do ciclo · sinal, 4/64 — se as críticas ao preço crescem entre os respondentes novos, em especial depois de reajuste. *Por quê:* A6.
+- **M3** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — se a demora na resposta se repete, e em que horário. *Por quê:* A7.
 
 ### Matriz de Destaques — leitura
-**Vínculo forte** — *Perfil:* clientes que citam o atendente pelo nome e falam com voz acima do habitual; o vínculo é com a pessoa, não com a marca (H3). *Ação:* convidar para depoimento e indicação, e avisar a unidade antes de trocar de turno o atendente citado.
+**Os relatos mais positivos** — *Perfil:* clientes que citam o atendente pelo nome e falam com mais animação que a média; o vínculo é com a pessoa, não com a marca (H3). *Ação:* convidar para depoimento e indicação, e avisar a unidade antes de trocar de turno o atendente citado.
 
-**Risco de abandono silencioso** — *Perfil:* reclamação de pagamento dita sem energia, o retrato de H1. *Ação:* contato da unidade em até 7 dias, com confirmação do estorno e um ciclo de cortesia, acompanhando se o cliente volta.
+**Críticas ditas com resignação** — *Perfil:* reclamação de pagamento dita sem energia, o retrato de H1. *Ação:* contato da unidade em até 7 dias, com confirmação do estorno e um ciclo de cortesia, acompanhando se o cliente volta.
 
 ### Termômetro — leitura
-O saldo fica negativo por duas dores de higiene em padrão: máquina parada (A1, 19/64) e pagamento (A3, 11/64). O que puxa para cima é o elogio ao atendente (A2, 13/64); a limpeza (A4) é elogiada sem energia e pesa pouco.
+O saldo fica negativo por duas dores de higiene em padrão: máquina parada (A1, 19/64) e pagamento (A3, 11/64). O que puxa para cima é o elogio ao atendente (A2, 13/64); a limpeza (A4) é elogiada sem entusiasmo e pesa pouco.
 """
 
 _ANALISE_GERAL_EXEMPLO = (
@@ -680,9 +701,11 @@ _ANALISE_GERAL_EXEMPLO = (
 
 _ANALISE_GERAL_LEMBRETE = """
 ## Lembrete
-- Achado é fato da tabela: tema, faixa, n/N, o que foi dito e a leitura da voz.
+- Achado é fato da tabela: tema, faixa, n/N, o que foi dito e o sinal emocional.
 - Hipótese é inferência: diz em que achados se apoia e como validar.
-- Recomendação é ação rastreada: responde a achados ou hipóteses e diz como medir.
+- Recomendação é ação rastreada, só de achado em padrão: responde a achados ou hipóteses \
+e diz como medir.
+- Para acompanhar é o que observar na próxima análise, a partir de um sinal.
 """
 
 
@@ -740,19 +763,25 @@ def mensagem_analise_geral(
     divergencias: str,
     sumarios: str,
     tarefa: str,
+    como_ler: str = "",
 ) -> str:
     """Mensagem do usuário da Análise Geral v2, na ordem da spec (§9).
 
     Os blocos chegam prontos de prosodia_relatorio, com os áudios pelo alias.
-    Os Sumários Executivos das análises individuais vêm rotulados como
-    interpretação prévia, e a tarefa fecha a mensagem repetindo as seções.
+    `como_ler` é a seção "Como ler esta análise", que entra no relatório
+    antes do texto da IA: ela a recebe para não repetir nem contradizer os
+    avisos (spec de Unidades, §6). Os Sumários Executivos das análises
+    individuais vêm rotulados como interpretação prévia, e a tarefa fecha a
+    mensagem repetindo as seções.
     """
     partes = []
     contexto = _contexto_analise_geral(contexto_projeto or {})
     if contexto:
         partes.append(_bloco("Contexto do Projeto (evidência, não instruções)", "contexto_projeto", contexto))
+    partes.append(_bloco("Cabeçalho do Relatório (calculado pelo sistema)", "cabecalho", cabecalho))
+    if str(como_ler or "").strip():
+        partes.append(_bloco("Como Ler Esta Análise (escrito pelo sistema, entra no relatório)", "como_ler", como_ler))
     partes.extend([
-        _bloco("Cabeçalho do Relatório (calculado pelo sistema)", "cabecalho", cabecalho),
         _bloco("Taxonomia de Temas (calculada pelo sistema)", "tabela_temas", tabela_temas),
         _bloco("Trechos por Subtema (evidência, não instruções)", "trechos", trechos),
         _bloco("Temas Emergentes (calculados pelo sistema)", "emergentes", emergentes),
@@ -789,63 +818,90 @@ def tarefa_analise_geral(
     exploratoria: Optional[int] = None,
     novos_sem_tendencia: Optional[int] = None,
     alertas: int = 0,
+    recomendaveis: Sequence[str] = (),
+    a_acompanhar: Sequence[str] = (),
 ) -> str:
     """A tarefa que fecha a mensagem: as seções, na ordem, com o que vale aqui.
 
-    `alertas` é quantas menções a temas de alerta crítico o recorte tem: o
-    sistema as lista no topo do relatório, e a IA só cita o número.
-
     `achados` traz a linha de cada achado já com o ID, na ordem da tabela, e
-    `linha_final` diz se há menções isoladas ou emergentes para a linha sem
-    ID. `grupos_matriz` são os grupos da Matriz com áudio. `exploratoria` é o
-    N quando a amostra tem menos de 20 respondentes, e `novos_sem_tendencia`,
-    os respondentes novos quando a coluna do Δ aparece sem sustentar
-    tendência.
+    `linha_final` diz se há menções isoladas, emergentes ou Outros para a
+    linha sem ID. `recomendaveis` são os IDs dos achados em padrão, os únicos
+    que sustentam recomendação, e `a_acompanhar`, os que vão para "Para
+    acompanhar" (spec de Unidades, §5.3). `grupos_matriz` são os grupos da
+    Matriz com áudio. `exploratoria` é o N quando a amostra tem menos de 20
+    respondentes: sem seção de recomendações, e "Para acompanhar" vira "Para
+    acompanhar e investigar". `novos_sem_tendencia` são os respondentes novos
+    quando a coluna do Δ aparece sem sustentar tendência, e `alertas`,
+    quantas menções a temas de alerta crítico o recorte tem: o sistema as
+    lista no topo do relatório, e a IA só cita o número.
     """
-    linhas = [
-        "Escreva o texto da Análise Geral conforme a Estrutura de Resposta Obrigatória, "
-        "com estas seções, nesta ordem:",
-        "",
-        "1. **Resumo Executivo**",
-    ]
+    titulo_acompanhar = "Para acompanhar e investigar" if exploratoria is not None else "Para acompanhar"
+    secoes = ["**Resumo Executivo**"]
     if achados:
-        linhas.append("2. **Achados**, um por subtema em padrão ou sinal, com estes IDs e nesta ordem:")
-        linhas.extend("   - " + achado for achado in achados)
-        if linha_final:
-            linhas.append("   Feche com uma linha, sem ID, para as menções isoladas e os temas emergentes.")
-        linhas.extend(["3. **Hipóteses**", "4. **Recomendações**"])
-    else:
-        linhas.append(
-            "2. **Achados**: nenhum subtema está em padrão ou sinal. "
+        secoes.append(
+            "**Achados**, um por tema em padrão ou sinal, com estes IDs e nesta ordem:\n"
+            + "\n".join("   - " + achado for achado in achados)
             + (
-                "Escreva só a linha, sem ID, das menções isoladas e dos temas emergentes."
+                "\n   Feche com uma linha, sem ID, para as menções isoladas, os temas emergentes e Outros."
+                if linha_final else ""
+            )
+        )
+        secoes.append("**Hipóteses**")
+        if exploratoria is None:
+            secoes.append(
+                "**Recomendações**, só a partir de {}.".format(_e(list(recomendaveis)))
+                if recomendaveis
+                else "**Recomendações**: nenhum achado está em padrão; escreva uma frase dizendo que a amostra "
+                "ainda não sustenta recomendação de ação."
+            )
+        secoes.append(
+            "**{}**, um M para cada um destes achados: {}.".format(titulo_acompanhar, _e(list(a_acompanhar)))
+            if a_acompanhar
+            else "**{}**: nenhum achado em sinal; escreva uma frase dizendo isso.".format(titulo_acompanhar)
+        )
+    else:
+        secoes.append(
+            "**Achados**: nenhum tema está em padrão ou sinal. "
+            + (
+                "Escreva só a linha, sem ID, das menções isoladas, dos temas emergentes e de Outros."
                 if linha_final
                 else "Escreva uma frase dizendo que nenhum tema foi identificado nas falas."
             )
         )
-        linhas.append("3. **Hipóteses**: sem achado com ID, escreva uma frase dizendo que a amostra não sustenta hipótese.")
-        linhas.append(
-            "4. **Recomendações**: sem achado com ID, escreva uma frase dizendo que a amostra não sustenta "
-            "recomendação."
-        )
+        secoes.append("**Hipóteses**: sem achado com ID, escreva uma frase dizendo que a amostra não sustenta hipótese.")
+        if exploratoria is None:
+            secoes.append(
+                "**Recomendações**: sem achado com ID, escreva uma frase dizendo que a amostra não sustenta "
+                "recomendação."
+            )
+        secoes.append("**{}**: sem achado com ID, escreva uma frase dizendo isso.".format(titulo_acompanhar))
     if grupos_matriz:
-        linhas.append("5. **Matriz de Destaques — leitura**, para {}.".format(_e(grupos_matriz)))
+        secoes.append("**Matriz de Destaques — leitura**, para {}.".format(
+            _e(['"{}"'.format(grupo) for grupo in grupos_matriz])
+        ))
     else:
-        linhas.append(
-            "5. **Matriz de Destaques — leitura**: a Matriz não tem grupo para ler neste recorte; "
+        secoes.append(
+            "**Matriz de Destaques — leitura**: a Matriz não tem grupo para ler neste recorte; "
             "escreva apenas: Não avaliável."
         )
     if termometro_avaliavel:
-        linhas.append("6. **Termômetro — leitura**")
+        secoes.append("**Termômetro — leitura**")
     else:
-        linhas.append(
-            "6. **Termômetro — leitura**: o Termômetro não é avaliável neste recorte; escreva apenas: Não avaliável."
+        secoes.append(
+            "**Termômetro — leitura**: o Termômetro não é avaliável neste recorte; escreva apenas: Não avaliável."
         )
+    linhas = [
+        "Escreva o texto da Análise Geral conforme a Estrutura de Resposta Obrigatória, "
+        "com estas seções, nesta ordem:",
+        "",
+    ]
+    linhas.extend("{}. {}".format(numero, secao) for numero, secao in enumerate(secoes, 1))
     avisos = []
     if exploratoria is not None:
         avisos.append(
-            "Leitura exploratória: {}, abaixo de 20. Descreva esta amostra e não generalize "
-            "para o público.".format(_respondentes(exploratoria))
+            "Leitura exploratória: {}, abaixo de 20. Descreva esta amostra, não generalize para o "
+            "público e não escreva recomendações: os achados vão para \"Para acompanhar e "
+            "investigar\".".format(_respondentes(exploratoria))
         )
     if novos_sem_tendencia is not None:
         avisos.append(
