@@ -185,12 +185,14 @@ class AnaliseGeralRecebeOProjetoInteiroTests(unittest.TestCase):
             [a.arg for a in pdf.args.args + pdf.args.kwonlyargs],
             ["project_name", "project_info", "model", "created_at", "text", "citations"],
         )
+        # Duas chamadas: a análise mais recente e a geração por unidade.
         chamadas = [
             no for no in self._nos(ast.Call)
             if isinstance(no.func, ast.Name) and no.func.id == "_build_project_analysis_pdf"
         ]
-        self.assertEqual(len(chamadas), 1)
-        self.assertNotIn("sinc", ast.unparse(chamadas[0]))
+        self.assertEqual(len(chamadas), 2)
+        for chamada in chamadas:
+            self.assertNotIn("sinc", ast.unparse(chamada))
 
 
 if __name__ == "__main__":

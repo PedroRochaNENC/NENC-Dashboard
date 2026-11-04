@@ -573,6 +573,12 @@ amostra e não generalize para o público.
 - A coluna "Anteriores → novos", quando vem, compara os respondentes da análise \
 anterior com os que chegaram depois. Com menos de 20 novos, a diferença é variação \
 observada, nunca tendência.
+- Na taxonomia com tags, a linha da tabela é a tag, e a coluna "Subtemas" mostra os \
+assuntos dentro dela, com quantos respondentes: use-os para dizer o que foi dito, nunca \
+como achado próprio. "Outros" reúne o que não coube em nenhuma tag e entra só na linha \
+final dos Achados, sem ID. Linha com faixa "Alerta crítico" não leva ID nem hipótese.
+- Linha com 0 respondentes é tema sem menção espontânea nesta amostra: numa coleta \
+aberta, isso não diz que o tema é irrelevante. Não conclua nada a partir dela.
 - A coluna "Unidades", quando vem, diz em quantas unidades do recorte o subtema \
 aparece. "Concentrada em <unidade>" aponta um problema daquela unidade: trate-o como \
 local, não o generalize para a rede, e dirija a recomendação à unidade. Os respondentes \
@@ -782,8 +788,12 @@ def tarefa_analise_geral(
     termometro_avaliavel: bool,
     exploratoria: Optional[int] = None,
     novos_sem_tendencia: Optional[int] = None,
+    alertas: int = 0,
 ) -> str:
     """A tarefa que fecha a mensagem: as seções, na ordem, com o que vale aqui.
+
+    `alertas` é quantas menções a temas de alerta crítico o recorte tem: o
+    sistema as lista no topo do relatório, e a IA só cita o número.
 
     `achados` traz a linha de cada achado já com o ID, na ordem da tabela, e
     `linha_final` diz se há menções isoladas ou emergentes para a linha sem
@@ -841,6 +851,12 @@ def tarefa_analise_geral(
         avisos.append(
             "A coluna \"Anteriores → novos\" compara só {}: trate as diferenças como "
             "variação observada, nunca como tendência.".format(_respondentes(novos_sem_tendencia, "novo"))
+        )
+    if alertas:
+        avisos.append(
+            "{} a temas de alerta crítico, que o sistema lista no topo do relatório. No Resumo "
+            "Executivo, diga só quantas são; não descreva o conteúdo, não dê ID a elas nem tire "
+            "hipótese delas.".format("Há 1 menção" if alertas == 1 else "Há {} menções".format(alertas))
         )
     if avisos:
         linhas.extend([""] + avisos)

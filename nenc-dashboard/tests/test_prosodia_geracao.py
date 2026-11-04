@@ -255,14 +255,14 @@ class GeracaoTests(_BancoDescartavel):
         self.assertEqual(resultado.agregacao.n_respondentes, 3)
 
     def test_text_outside_the_format_is_not_replaced_by_a_proposal(self):
-        self._projeto(taxonomia="atendimento, preço e limpeza", status=TAXONOMIA_PROVISORIA)
+        self._projeto(taxonomia="Atendimento > Recepção > Balcão", status=TAXONOMIA_PROVISORIA)
         ia, relatorio = IaFalsa(), RelatorioFalso()
 
         with self.assertRaises(geracao.TaxonomiaSemSubtema):
             self._gerar(ia, relatorio)
 
         self.assertEqual((ia.propostas, ia.classificacoes, relatorio.chamadas), (0, [], []))
-        self.assertEqual(prosodia_db.get_project(self.project_id)["taxonomia"], "atendimento, preço e limpeza")
+        self.assertEqual(prosodia_db.get_project(self.project_id)["taxonomia"], "Atendimento > Recepção > Balcão")
 
     def test_a_failed_audio_stays_out_and_comes_back_next_time(self):
         self._projeto()

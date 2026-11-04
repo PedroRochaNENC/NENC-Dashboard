@@ -798,6 +798,87 @@ class RecorteComUnidadeTests(unittest.TestCase):
         self.assertEqual((com.unidade, sem.unidade), ("Paulista · SP012", ""))
 
 
+class OrdemDasAnalisesTests(_BancoComDuasOrganizacoes):
+    def test_analyses_saved_in_the_same_second_keep_the_saving_order(self):
+        # A geração por unidade salva várias análises seguidas; a de todas as
+        # unidades, a última, tem de ser a mais recente.
+        project_id = prosodia_db.create_project("Piloto")
+        ids = [prosodia_db.save_project_analysis(project_id, "m", texto, []) for texto in ("Paulista", "Moema", "Todas")]
+        conexao = sqlite3.connect(self.database_path)
+        try:
+            with conexao:
+                conexao.execute("UPDATE project_analyses SET created_at = '2026-11-03 10:00:00'")
+        finally:
+            conexao.close()
+
+        self.assertEqual(prosodia_db.get_latest_project_analysis(project_id)["id"], ids[-1])
+        self.assertEqual([a["id"] for a in prosodia_db.get_project_analyses(project_id)], ids[::-1])
+
+
+class ArquivosDaAnaliseGeralTests(unittest.TestCase):
+    """Analise_<Projeto>_<Unidade>_<data>.pdf, pedido em 03/11/2026."""
+
+    def test_file_name_has_no_accents_nor_spaces_and_an_iso_date(self):
+        self.assertEqual(
+            geracao.nome_do_arquivo("Smart Fit — Piloto VoC", "Smart Fit Paulista · SP012", date(2026, 11, 3)),
+            "Analise_Smart_Fit_Piloto_VoC_Smart_Fit_Paulista_SP012_2026-11-03.pdf",
+        )
+        self.assertEqual(
+            geracao.nome_do_arquivo("Ação & Reação", geracao.TODAS_AS_UNIDADES, date(2026, 1, 9), "md"),
+            "Analise_Acao_Reacao_Todas_as_unidades_2026-01-09.md",
+        )
+        self.assertEqual(geracao.nome_do_pacote("Piloto VoC", date(2026, 11, 3)), "Analises_Piloto_VoC_2026-11-03.zip")
+
+    def test_saved_analysis_takes_the_unit_of_its_cut_and_its_own_day(self):
+        uma = {"created_at": "2026-10-28 14:02:00",
+               "temas": {"recorte": rel.Recorte(unidade=("Moema",)).como_dict()}}
+        varias = {"created_at": "2026-10-28 14:02:00",
+                  "temas": {"recorte": rel.Recorte(unidade=("Moema", "Paulista")).como_dict()}}
+        antiga = {"created_at": "2026-09-30 10:00:00", "temas": None}
+
+        self.assertEqual(geracao.nome_da_analise("Piloto", uma), "Analise_Piloto_Moema_2026-10-28.pdf")
+        self.assertEqual(geracao.nome_da_analise("Piloto", varias), "Analise_Piloto_Varias_unidades_2026-10-28.pdf")
+        self.assertEqual(geracao.nome_da_analise("Piloto", antiga, "md"), "Analise_Piloto_Todas_as_unidades_2026-09-30.md")
+
+
+class PlanoPorUnidadeTests(unittest.TestCase):
+    def setUp(self):
+        self.audios = [
+            dict(_linha_de_audio(1, "Paulista", "SP012"), received_at="2026-10-01T12:00:00"),
+            dict(_linha_de_audio(2, "Paulista", "SP012"), received_at="2026-10-20T12:00:00"),
+            dict(_linha_de_audio(3, "Moema"), received_at="2026-10-02T12:00:00"),
+            dict(_linha_de_audio(4), received_at="2026-10-03T12:00:00"),
+            dict(_linha_de_audio(5, "Tijuca"), received_at="2026-10-25T12:00:00"),
+        ]
+        self.limites = (date(2026, 10, 1), date(2026, 10, 25))
+
+    def test_one_analysis_per_unit_and_the_one_with_all_last(self):
+        lote = geracao.planejar_por_unidade(self.audios, self.limites, [], self.limites)
+
+        self.assertEqual(
+            [(item.unidade, item.ids) for item in lote],
+            [
+                ("Paulista · SP012", (1, 2)),
+                ("Moema", (3,)),
+                ("Tijuca", (5,)),
+                (geracao.TODAS_AS_UNIDADES, (1, 2, 3, 4, 5)),
+            ],
+        )
+        self.assertEqual(lote[1].recorte.unidade, ("Moema",))
+        self.assertEqual(lote[1].recorte.descricao, "unidade Moema")
+        self.assertEqual(lote[-1].recorte.unidade, ())
+
+    def test_the_period_filter_applies_and_units_without_audio_are_left_out(self):
+        periodo = (date(2026, 10, 1), date(2026, 10, 10))
+
+        lote = geracao.planejar_por_unidade(self.audios, periodo, [], self.limites)
+
+        self.assertEqual([(item.unidade, item.ids) for item in lote],
+                         [("Paulista · SP012", (1,)), ("Moema", (3,)), (geracao.TODAS_AS_UNIDADES, (1, 3, 4))])
+        self.assertEqual(lote[0].recorte.periodo, ("2026-10-01", "2026-10-10"))
+        self.assertIn("de 01/10/2026 a 10/10/2026", lote[0].recorte.descricao)
+
+
 class ContratoDasPaginasTests(unittest.TestCase):
     def test_every_import_that_saves_the_qr_name_also_saves_the_code(self):
         verificadas = 0
@@ -832,6 +913,15 @@ class ContratoDasPaginasTests(unittest.TestCase):
         self.assertLessEqual(
             {"unidades", "unidades_do_projeto"}, {k.arg for k in chamadas["recorte_da_pagina"].keywords}
         )
+
+    def test_general_analysis_files_follow_the_name_pattern(self):
+        fonte = (PAGES_DIR / "analise_geral.py").read_text(encoding="utf-8")
+
+        self.assertNotIn('file_name=f"analise_geral_', fonte)
+        self.assertEqual(fonte.count("geracao.nome_da_analise("), 2)
+        for chamada in ("geracao.planejar_por_unidade(", "geracao.nome_do_arquivo(", "geracao.nome_do_pacote("):
+            with self.subTest(chamada=chamada):
+                self.assertIn(chamada, fonte)
 
 
 if __name__ == "__main__":

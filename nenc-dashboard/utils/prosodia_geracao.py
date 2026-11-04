@@ -16,6 +16,8 @@ gerador_do_relatorio. Ela cuida só da tela: o progresso, os avisos e o envio
 para a base de conhecimento.
 """
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Collection, Dict, List, Optional, Sequence, Tuple
@@ -142,6 +144,99 @@ def recorte_da_pagina(
     unidade = () if not unidades or set(unidades) == set(unidades_do_projeto) else tuple(sorted(unidades))
     datas = tuple(dia.isoformat() for dia in periodo) if periodo else ()
     return rel.Recorte(qr, origem, datas, descricao or "", unidade)
+
+
+# ---------------------------------------------------------------------------
+# Arquivos e geração por unidade
+# ---------------------------------------------------------------------------
+
+TODAS_AS_UNIDADES = "Todas as unidades"
+VARIAS_UNIDADES = "Varias unidades"
+
+
+def _trecho_do_nome(texto: str) -> str:
+    """Texto para nome de arquivo: sem acento, palavras unidas por "_"."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFKD", str(texto or "")) if not unicodedata.combining(c)
+    )
+    return "_".join(re.findall(r"[A-Za-z0-9]+", sem_acento))
+
+
+def nome_do_arquivo(projeto: str, unidade: str, dia: date, extensao: str = "pdf") -> str:
+    """Analise_<Projeto>_<Unidade>_<data>.<extensão>, sem acento nem espaço.
+
+    A data vai como AAAA-MM-DD, para os arquivos ficarem em ordem. Unidade com
+    código sai com ele, que diferencia unidades de mesmo nome.
+    """
+    partes = [p for p in ("Analise", _trecho_do_nome(projeto), _trecho_do_nome(unidade)) if p]
+    return "{}_{}.{}".format("_".join(partes), dia.isoformat(), extensao)
+
+
+def nome_do_pacote(projeto: str, dia: date) -> str:
+    """Analises_<Projeto>_<data>.zip, o pacote da geração por unidade."""
+    return "_".join(p for p in ("Analises", _trecho_do_nome(projeto), dia.isoformat()) if p) + ".zip"
+
+
+def unidade_do_recorte(recorte: rel.Recorte) -> str:
+    """A unidade que vai no nome do arquivo de uma análise salva."""
+    if len(recorte.unidade) == 1:
+        return recorte.unidade[0]
+    return TODAS_AS_UNIDADES if not recorte.unidade else VARIAS_UNIDADES
+
+
+def nome_da_analise(projeto: str, analise: dict, extensao: str = "pdf") -> str:
+    """O nome do arquivo de uma análise salva: a unidade do recorte e o dia dela.
+
+    Análise sem snapshot (anterior à v2) ou sem filtro de unidade sai como
+    "Todas as unidades".
+    """
+    recorte = rel.Recorte.de_dict((analise.get("temas") or {}).get("recorte"))
+    criada = rel.ler_data(analise.get("created_at"))
+    return nome_do_arquivo(
+        projeto, unidade_do_recorte(recorte), criada.date() if criada else date.today(), extensao
+    )
+
+
+@dataclass(frozen=True)
+class AnaliseDoLote:
+    """Uma análise da geração por unidade: a unidade, os áudios e o recorte gravado."""
+
+    unidade: str
+    ids: Tuple[int, ...]
+    recorte: rel.Recorte
+
+
+def planejar_por_unidade(
+    audios_projeto: Sequence[dict],
+    periodo: Optional[Tuple[date, date]],
+    origens: Sequence[str],
+    limites: Tuple[date, date],
+) -> List[AnaliseDoLote]:
+    """Uma análise para cada unidade com áudio no recorte, e a de todas por último.
+
+    O recorte é o período e a origem da página; QR code e unidade, não, porque
+    é a unidade que muda de uma análise para a outra. A de todas leva também
+    os áudios sem unidade, e fica por último para ser a análise mais recente
+    do projeto, a que a página mostra.
+    """
+    base = overview.filter_audios(audios_projeto, None, periodo, origens)
+    opcoes = overview.unidade_options(audios_projeto)
+    lote = []
+    for unidade in overview.unidade_options(base):
+        if unidade == overview.SEM_UNIDADE:
+            continue
+        ids = tuple(int(a["id"]) for a in base if overview.unidade_label(a) == unidade)
+        descricao = overview.filter_description([], periodo, origens, limites, [unidade])
+        lote.append(AnaliseDoLote(
+            unidade, ids, recorte_da_pagina([], [], periodo, origens, descricao, [unidade], opcoes)
+        ))
+    descricao = overview.filter_description([], periodo, origens, limites)
+    lote.append(AnaliseDoLote(
+        TODAS_AS_UNIDADES,
+        tuple(int(a["id"]) for a in base),
+        recorte_da_pagina([], [], periodo, origens, descricao),
+    ))
+    return lote
 
 
 def contexto_do_projeto(projeto: dict) -> dict:
@@ -271,7 +366,7 @@ def gerar_analise_geral(
     taxonomia = temas.parse_taxonomia(texto_da_taxonomia)
     if texto_da_taxonomia and not taxonomia.subtemas:
         raise TaxonomiaSemSubtema(
-            "A taxonomia do projeto não tem nenhuma linha no formato \"Categoria > Subtema\". "
+            "A taxonomia do projeto não tem nenhuma linha válida (\"Categoria > Subtema\" ou \"Tag\"). "
             "Corrija na Preparação, ou apague o campo para a IA propor uma provisória."
         )
     taxonomia_status = projeto.get("taxonomia_status")
@@ -303,6 +398,12 @@ def gerar_analise_geral(
         (rotulo, categoria)
         for rotulo, categoria, _ in temas.contar_emergentes(item.get("temas") for item in salvas.values())
     ]
+    # Na taxonomia com tag aberta, a IA recebe os subtemas já usados em cada
+    # tag, para repetir o nome em vez de criar outro para o mesmo assunto.
+    subtemas_conhecidos = {
+        rotulo: [detalhe for detalhe, _ in lista]
+        for rotulo, lista in temas.contar_detalhes(item.get("temas") for item in salvas.values()).items()
+    }
     avisar(2, "Áudios do recorte sem classificação válida vão à IA ({}).".format(modelo_da_classificacao))
     resumo = temas.classificar_audios(
         [temas.AudioParaClassificar(audio_id, linhas[audio_id]) for audio_id in sorted(ids) if linhas.get(audio_id)],
@@ -315,6 +416,7 @@ def gerar_analise_geral(
             audio_id, chave, versao, modelo_da_classificacao, classificacao
         ),
         ao_classificar,
+        subtemas_conhecidos=subtemas_conhecidos,
     )
     partes = [
         "{} agora".format(_plural(len(resumo.classificados), "classificado", "classificados")),
