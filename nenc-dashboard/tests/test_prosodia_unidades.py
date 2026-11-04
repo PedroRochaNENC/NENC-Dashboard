@@ -748,8 +748,9 @@ class ColunaUnidadesTests(unittest.TestCase):
 
         texto = rel.matriz_markdown(agregacao)
 
-        self.assertIn("| Respondente | Unidade | Texto | Voz | Índice | Temas |", texto)
+        self.assertIn("| Áudio | Unidade | Temas | Em uma frase |", texto)
         self.assertIn("| Áudio 01 | Paulista |", texto)
+        self.assertIn("| Respondente | Unidade | Texto | Voz | Índice | Temas |", rel.matriz_markdown(agregacao, numeros=True))
 
 
 class RecorteComUnidadeTests(unittest.TestCase):

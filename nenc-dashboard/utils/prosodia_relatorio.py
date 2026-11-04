@@ -107,9 +107,11 @@ _MAX_FALA = 220
 _TOLERANCIA_TEMPO = 0.01
 
 POLARIDADES = ("positiva", "negativa", "mista", "neutra")
+# As polaridades em palavras, como o leitor de negócio fala (spec de Unidades,
+# §4.3): "15 elogios · 3 críticas", e não "15 pos · 3 neg".
 _ABREVIACOES = {
-    "positiva": ("pos", "pos"),
-    "negativa": ("neg", "neg"),
+    "positiva": ("elogio", "elogios"),
+    "negativa": ("crítica", "críticas"),
     "mista": ("mista", "mistas"),
     "neutra": ("neutra", "neutras"),
 }
@@ -253,6 +255,9 @@ class AudioDoProjeto:
     chegada: str = ""
     conteudo: Optional[str] = None
     unidade: str = ""
+    # Duração do áudio em segundos (audios.duration_seconds), para a seção
+    # "Como ler esta análise" avisar quando os relatos são curtos.
+    duracao_s: Optional[float] = None
 
 
 def assinatura_do_conteudo(prosodia_json: Optional[bytes]) -> Optional[str]:
@@ -429,7 +434,7 @@ def predominante(polaridades: Dict[str, int]) -> str:
 
 
 def texto_polaridades(polaridades: Dict[str, int]) -> str:
-    """"17 neg · 2 mistas": da polaridade com mais respondentes à com menos."""
+    """"17 críticas · 2 mistas": da polaridade com mais respondentes à com menos."""
     itens = sorted(
         ((n, POLARIDADES.index(p), p) for p, n in polaridades.items() if n > 0 and p in POLARIDADES),
         key=lambda item: (-item[0], item[1]),
@@ -511,12 +516,58 @@ class LeituraVoz:
         return self.valencia is not None
 
     def texto(self) -> str:
+        """A leitura técnica, que fica no apêndice."""
         if not self.avaliavel:
             return "não avaliável ({} com voz)".format(
                 _plural(self.respondentes, "respondente", "respondentes")
             )
         leitura = self.direcao + (", ativação " + self.nivel if self.nivel else "")
         return leitura + (" → " + self.qualificador if self.qualificador else "")
+
+
+SEM_DESTAQUE = "Sem destaque em relação aos demais relatos"
+SEM_VOZ = "Poucos relatos com voz para uma leitura"
+
+# A leitura da voz em frase de negócio (spec de Unidades, §5.2): a regra por
+# trás é a mesma (limiares, estabilidade, 5 respondentes com voz), e só muda o
+# que o corpo do relatório escreve. Valência, ativação e "habitual" ficam no
+# apêndice. Chave: (polaridade predominante, direção, ativação alta?).
+_SINAIS = {
+    (POSITIVO, ACIMA, True): "Fala mais animada que a média; confirma o elogio",
+    (POSITIVO, ACIMA, False): "Tom de voz mais positivo que a média; confirma o elogio",
+    (POSITIVO, ABAIXO, True): "Tom de voz menos positivo que as palavras",
+    (POSITIVO, ABAIXO, False): "Tom de voz menos positivo que as palavras",
+    (NEGATIVO, ABAIXO, True): "Irritação perceptível na voz",
+    (NEGATIVO, ABAIXO, False): "Tom de voz mais negativo que a média; confirma a crítica",
+    (NEGATIVO, ACIMA, True): "Tom de voz mais leve que a crítica",
+    (NEGATIVO, ACIMA, False): "Tom de voz mais leve que a crítica",
+    (MISTO_OU_NEUTRO, ACIMA, True): "Tom de voz mais positivo que a média",
+    (MISTO_OU_NEUTRO, ACIMA, False): "Tom de voz mais positivo que a média",
+    (MISTO_OU_NEUTRO, ABAIXO, True): "Tom de voz mais negativo que a média",
+    (MISTO_OU_NEUTRO, ABAIXO, False): "Tom de voz mais negativo que a média",
+}
+# Voz no habitual com ativação fora da média: (polaridade, ativação).
+_SINAIS_NO_HABITUAL = {
+    (POSITIVO, "baixa"): "Elogio dito sem entusiasmo",
+    (POSITIVO, "alta"): "Fala mais enérgica que a média, sem tom mais positivo",
+    (NEGATIVO, "baixa"): "Crítica dita com resignação, sem irritação na voz",
+    (NEGATIVO, "alta"): "Crítica dita com energia, sem tom mais negativo",
+    (MISTO_OU_NEUTRO, "baixa"): "Fala com menos energia que a média",
+    (MISTO_OU_NEUTRO, "alta"): "Fala mais enérgica que a média",
+}
+
+
+def sinal_emocional(voz: LeituraVoz, polaridade_predominante: str) -> str:
+    """A leitura da voz de um tema numa frase, sem termo técnico.
+
+    Voz no habitual com ativação média, ou sem dado de ativação, não destaca
+    nada: é a voz do próprio projeto.
+    """
+    if not voz.avaliavel:
+        return SEM_VOZ
+    if voz.direcao == NO_HABITUAL:
+        return _SINAIS_NO_HABITUAL.get((polaridade_predominante, voz.nivel), SEM_DESTAQUE)
+    return _SINAIS.get((polaridade_predominante, voz.direcao, voz.nivel == "alta"), SEM_DESTAQUE)
 
 
 def _media_ponderada(pares: Iterable[Tuple[Optional[float], float]]) -> Optional[float]:
@@ -797,6 +848,11 @@ class LinhaTema:
     def predominante(self) -> str:
         return predominante(self.polaridades)
 
+    @property
+    def sinal(self) -> str:
+        """A leitura da voz do tema numa frase, como o corpo do relatório a mostra."""
+        return sinal_emocional(self.voz, self.predominante)
+
 
 @dataclass(frozen=True)
 class Alerta:
@@ -1011,6 +1067,10 @@ class LinhaMatriz:
     ativacao: Optional[float]
     temas: Tuple[str, ...]
     unidade: str = ""
+    # O que o respondente disse, em uma frase: a evidência da classificação
+    # do primeiro tema do áudio. É a coluna que o corpo mostra no lugar dos
+    # números (spec de Unidades, §5.4).
+    frase: str = ""
 
 
 @dataclass(frozen=True)
@@ -1071,16 +1131,17 @@ def montar_matriz(
     audios_recorte: Sequence[AudioDoProjeto],
     nomes: Dict[int, str],
     temas_por_audio: Dict[int, Tuple[str, ...]],
+    frases_por_audio: Optional[Dict[int, str]] = None,
 ) -> Matriz:
     """Matriz de Destaques, por áudio.
 
     `indice_projeto` é o índice combinado de cada áudio do projeto inteiro
     (indice_combinado_por_grupo por session_id) e `ativacao_projeto`, a
     ativação média de cada um: os terços saem do projeto, a mesma régua do
-    índice, e a tabela lista só os áudios do recorte. Vínculo forte é índice
-    no terço superior e texto acima de +0,2; risco de abandono silencioso é
-    texto abaixo de -0,2 e ativação no terço inferior. Com menos de 10 áudios
-    com índice no projeto, não avaliável.
+    índice, e a tabela lista só os áudios do recorte. O vínculo (VINCULO no
+    relatório) é índice no terço superior e texto acima de +0,2; o risco de
+    abandono silencioso (RISCO) é texto abaixo de -0,2 e ativação no terço
+    inferior. Com menos de 10 áudios com índice no projeto, não avaliável.
     """
     com_indice = indice_projeto.dropna(subset=["indice"]) if not indice_projeto.empty else indice_projeto
     if len(com_indice) < MIN_AUDIOS_MATRIZ:
@@ -1105,6 +1166,7 @@ def montar_matriz(
             ativacao_projeto.get(str(audio.session_id)),
             temas_por_audio.get(audio.audio_id, ()),
             audio.unidade,
+            (frases_por_audio or {}).get(audio.audio_id, ""),
         )
         if linha.indice >= corte_indice and linha.texto > LIMIAR_TEXTO:
             vinculo.append(linha)
@@ -1543,12 +1605,25 @@ def agregar(
         temas_por_audio[audio.audio_id] = tuple(
             curtos[r] for r in rotulos if r in citados_no_audio and r not in alertas
         )
+    # A frase de cada áudio na Matriz: a evidência do primeiro tema que não é
+    # de alerta, porque a do alerta só aparece no bloco do topo.
+    frases_por_audio = {}
+    for audio in contados:
+        frases_por_audio[audio.audio_id] = next(
+            (
+                " ".join(str(tema.get("evidencia") or "").split())
+                for tema in _lista(audio.classificacao.get("temas"))
+                if tema.get("subtema") not in alertas and str(tema.get("evidencia") or "").strip()
+            ),
+            "",
+        )
     matriz = montar_matriz(
         sinais.indice_combinado_por_grupo(sinc_projeto, reguas.valencia, "session_id"),
         _ativacao_por_audio(sinc_projeto),
         tuple(a for a in recorte if a.audio_id not in repetidos),
         nomes,
         temas_por_audio,
+        frases_por_audio,
     )
 
     return Agregacao(
@@ -1709,6 +1784,100 @@ def emergentes_markdown(agregacao: Agregacao) -> str:
     return texto + "."
 
 
+# Os limites da seção "Como ler esta análise" (spec de Unidades, §5.1): ponto de
+# partida, a calibrar com a Smart Fit.
+RELATO_CURTO_S = 30
+SEM_DESTAQUE_NA_MAIORIA = 0.7
+
+
+def _duracao(audio: AudioDoProjeto) -> Optional[float]:
+    """A duração gravada do áudio, ou o fim da última fala transcrita."""
+    if audio.duracao_s:
+        return float(audio.duracao_s)
+    fins = [linha.fim_s if linha.fim_s is not None else linha.inicio_s for linha in audio.linhas]
+    fins = [fim for fim in fins if fim is not None]
+    return max(fins) if fins else None
+
+
+def _mediana(valores: Sequence[float]) -> float:
+    ordenados = sorted(valores)
+    meio = len(ordenados) // 2
+    return ordenados[meio] if len(ordenados) % 2 else (ordenados[meio - 1] + ordenados[meio]) / 2
+
+
+def como_ler_markdown(
+    agregacao: Agregacao, taxonomia_status: Optional[str] = None, taxonomia_da_ia: bool = False
+) -> str:
+    """A seção "Como ler esta análise", escrita pelo código.
+
+    Cada item diz o que observamos e o que isso significa para a leitura, no
+    formato que a cliente pediu, e só entra quando a condição vale: os
+    mesmos avisos saem com as mesmas palavras em toda análise, sem a IA
+    exagerar nem suavizar (spec de Unidades, §5.1).
+    """
+    itens: List[Tuple[str, str]] = []
+    n = agregacao.n_respondentes
+    itens.append((
+        "{}, numa coleta aberta e espontânea.".format(_plural(n, "respondente", "respondentes")),
+        "Os temas descrevem esta amostra: as frações não são a proporção do público.",
+    ))
+    if agregacao.exploratoria:
+        itens.append((
+            "A base ainda é pequena, abaixo de {} respondentes.".format(MIN_RESPONDENTES),
+            "Os resultados são sinais iniciais, a acompanhar nas próximas análises, e não conclusões. "
+            "Por isso esta análise não traz recomendações de ação.",
+        ))
+    contados = set(agregacao.contados)
+    duracoes = [d for d in (_duracao(a) for a in agregacao.recorte if a.audio_id in contados) if d]
+    if duracoes and _mediana(duracoes) < RELATO_CURTO_S:
+        itens.append((
+            "Os relatos são curtos (mediana de {} s).".format(int(round(_mediana(duracoes)))),
+            "Cada relato traz pouco contexto: um tema citado pode ter sido dito de passagem.",
+        ))
+    com_voz = [tema for tema in agregacao.temas if not tema.alerta and tema.voz.avaliavel]
+    if agregacao.temas and not com_voz:
+        itens.append((
+            "Nenhum tema teve relatos com voz suficientes para uma leitura ({} ou mais respondentes).".format(
+                MIN_RESPONDENTES_VOZ
+            ),
+            "Os temas valem pelo que foi dito; o sinal emocional ainda não acrescenta nada a eles.",
+        ))
+    elif com_voz and sum(1 for tema in com_voz if tema.sinal == SEM_DESTAQUE) >= SEM_DESTAQUE_NA_MAIORIA * len(com_voz):
+        itens.append((
+            "O tom de voz varia pouco de um tema para outro.",
+            "Os sinais emocionais devem ser lidos com cautela, e seguimos observando conforme o volume cresce.",
+        ))
+    if agregacao.sem_mencao:
+        linhas = len(agregacao.temas) + len(agregacao.sem_mencao)
+        itens.append((
+            "{} dos {} temas da taxonomia não foram citados.".format(len(agregacao.sem_mencao), linhas),
+            "Numa coleta aberta, a ausência de menções não indica que o tema seja irrelevante.",
+        ))
+    fora = len(agregacao.recorte) - len(agregacao.contados)
+    if fora:
+        itens.append((
+            "{} dos {} áudios recebidos ficaram fora da contagem (sem fala, sem classificação ou cópia de "
+            "outro áudio).".format(fora, len(agregacao.recorte)),
+            "O total de respondentes é menor que o de áudios recebidos; o apêndice detalha os cortes.",
+        ))
+    if agregacao.por_unidade and agregacao.sem_unidade:
+        itens.append((
+            "{} chegaram sem QR code de unidade.".format(
+                _plural(agregacao.sem_unidade, "respondente", "respondentes")
+            ),
+            "A coluna Unidades lê só os demais.",
+        ))
+    if taxonomia_da_ia or taxonomia_status != TAXONOMIA_VALIDADA:
+        itens.append((
+            "Os temas foram propostos pela IA." if taxonomia_da_ia else "A taxonomia ainda não foi validada com a cliente.",
+            "Eles ainda serão revisados com a cliente e podem mudar de nome na próxima análise.",
+        ))
+    return "\n".join(
+        "- **O que observamos:** {} **O que isso significa:** {}".format(observado, significado)
+        for observado, significado in itens
+    )
+
+
 def alertas_markdown(agregacao: Agregacao) -> str:
     """O bloco de alertas críticos, escrito pelo código; vazio sem alerta.
 
@@ -1765,8 +1934,8 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
     delta = agregacao.delta
     coluna_delta = delta is not None and delta.exibir
     blocos = []
-    cabecalho = ["Tema" if agregacao.tags_abertas else "Categoria > Subtema", "Respondentes", "Faixa", "Texto",
-                 "Voz nos trechos"]
+    cabecalho = ["Tema" if agregacao.tags_abertas else "Categoria > Subtema", "Respondentes", "Faixa",
+                 "O que disseram", "Sinal emocional"]
     if agregacao.por_unidade:
         cabecalho.append("Unidades")
     if agregacao.tags_abertas:
@@ -1792,7 +1961,7 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
                 "{} ({}%)".format(_fracao(tema.respondentes, total), _percentual(tema.respondentes, total)),
                 tema.faixa,
                 texto_polaridades(tema.polaridades),
-                "—" if tema.faixa in (MENCAO_ISOLADA, ALERTA) else tema.voz.texto(),
+                "—" if tema.faixa in (MENCAO_ISOLADA, ALERTA) else tema.sinal,
             ],
             texto_unidades(tema, len(agregacao.unidades)),
             texto_subtemas(tema) if tema.aberta else "—",
@@ -1865,7 +2034,7 @@ def tabela_temas_markdown(agregacao: Agregacao, incluir_emergentes: bool = True)
     return "\n\n".join(blocos)
 
 
-def _tabela_grupo(grupo: Optional[GrupoMatriz], cabecalho: Sequence[str], celulas) -> str:
+def _tabela_grupo(grupo: Optional[GrupoMatriz], cabecalho: Sequence[str], celulas, numeros: bool = True) -> str:
     if grupo is None or not grupo.total:
         return "Nenhum áudio do recorte neste grupo."
     partes = [_tabela(cabecalho, (celulas(linha) for linha in grupo.linhas))]
@@ -1878,31 +2047,43 @@ def _tabela_grupo(grupo: Optional[GrupoMatriz], cabecalho: Sequence[str], celula
             "{} ({})".format(tema, _fracao(n, grupo.total)) for tema, n in grupo.temas_mais_citados
         )))
     if grupo.voz_media is not None:
-        partes.append(
-            "Voz no grupo: média {}; {} acima do habitual (a partir de {}) e {} abaixo (até {}).".format(
-                _decimal(grupo.voz_media),
-                _fracao(grupo.voz_acima, grupo.total),
-                _decimal(LIMIAR_VALENCIA),
-                _fracao(grupo.voz_abaixo, grupo.total),
-                _decimal(-LIMIAR_VALENCIA),
+        if numeros:
+            partes.append(
+                "Voz no grupo: média {}; {} acima do habitual (a partir de {}) e {} abaixo (até {}).".format(
+                    _decimal(grupo.voz_media),
+                    _fracao(grupo.voz_acima, grupo.total),
+                    _decimal(LIMIAR_VALENCIA),
+                    _fracao(grupo.voz_abaixo, grupo.total),
+                    _decimal(-LIMIAR_VALENCIA),
+                )
             )
-        )
+        else:
+            partes.append(
+                "Tom de voz no grupo: {} de {} com tom mais positivo que a média do projeto e {} com tom "
+                "mais negativo.".format(grupo.voz_acima, grupo.total, grupo.voz_abaixo)
+            )
     return "\n\n".join(partes)
 
 
-VINCULO = "Vínculo forte"
-RISCO = "Risco de abandono silencioso"
+# Os grupos da Matriz pelo que eles mostram, e não pela conta que os forma
+# (spec de Unidades, §5.4): o critério técnico fica no apêndice. O primeiro
+# soma o que foi dito e o tom de voz, sem olhar a energia: "com entusiasmo"
+# prometia uma energia que o critério não mede.
+VINCULO = "Os relatos mais positivos"
+RISCO = "Críticas ditas com resignação"
 
 
 def _com_audios(grupo: Optional[GrupoMatriz]) -> bool:
     return grupo is not None and grupo.total > 0
 
 
-def _grupos_da_matriz(agregacao: Agregacao) -> List[Tuple[str, str, bool]]:
+def _grupos_da_matriz(agregacao: Agregacao, numeros: bool = False) -> List[Tuple[str, str, bool]]:
     """(grupo, markdown, tem o que ler) de cada grupo da Matriz avaliável.
 
-    O grupo sem áudio do recorte, ou sem dado de ativação no projeto, não
-    pede leitura à IA.
+    O corpo mostra, de cada áudio, a unidade, os temas e uma frase do que foi
+    dito; com `numeros`, que é o apêndice, entram o critério técnico de cada
+    grupo e o texto, a voz, o índice e a ativação. O grupo sem áudio do
+    recorte, ou sem dado de ativação no projeto, não pede leitura à IA.
     """
     matriz = agregacao.matriz
     # Com duas unidades ou mais no recorte, cada linha diz de que unidade é o
@@ -1915,25 +2096,35 @@ def _grupos_da_matriz(agregacao: Agregacao) -> List[Tuple[str, str, bool]]:
     def _celulas(linha, resto):
         return [linha.alias] + ([linha.unidade or "—"] if com_unidade else []) + resto
 
-    grupos = [(
-        VINCULO,
-        "**{}** — índice combinado no terço superior do projeto (a partir de {}) e texto acima de +0,2"
-        "\n\n{}".format(
-            VINCULO,
-            _decimal(matriz.corte_indice),
-            _tabela_grupo(
-                matriz.vinculo,
-                _cabecalho(["Respondente", "Texto", "Voz", "Índice", "Temas"]),
-                lambda l: _celulas(
-                    l, [_decimal(l.texto), _decimal(l.voz), _decimal(l.indice), "; ".join(l.temas) or "—"]
+    def _sem_numeros(linha):
+        return _celulas(linha, ["; ".join(linha.temas) or "—", linha.frase or "—"])
+
+    if numeros:
+        vinculo = "**{}** — índice combinado no terço superior do projeto (a partir de {}) e texto acima de " \
+            "+0,2\n\n{}".format(
+                VINCULO,
+                _decimal(matriz.corte_indice),
+                _tabela_grupo(
+                    matriz.vinculo,
+                    _cabecalho(["Respondente", "Texto", "Voz", "Índice", "Temas"]),
+                    lambda l: _celulas(
+                        l, [_decimal(l.texto), _decimal(l.voz), _decimal(l.indice), "; ".join(l.temas) or "—"]
+                    ),
                 ),
-            ),
-        ),
-        _com_audios(matriz.vinculo),
-    )]
-    if matriz.corte_ativacao is None:
-        grupos.append((RISCO, "**{}** — não avaliável: o projeto não tem dado de ativação.".format(RISCO), False))
+            )
     else:
+        vinculo = "**{}** — os elogios mais fortes do projeto, somando o que foi dito e o tom de voz.\n\n{}".format(
+            VINCULO,
+            _tabela_grupo(matriz.vinculo, _cabecalho(["Áudio", "Temas", "Em uma frase"]), _sem_numeros, False),
+        )
+    grupos = [(VINCULO, vinculo, _com_audios(matriz.vinculo))]
+    if matriz.corte_ativacao is None:
+        grupos.append((
+            RISCO,
+            "**{}** — não avaliável: o projeto não tem dado de energia da voz.".format(RISCO),
+            False,
+        ))
+    elif numeros:
         grupos.append((
             RISCO,
             "**{}** — texto abaixo de -0,2 e ativação no terço inferior do projeto (até {})\n\n{}".format(
@@ -1947,41 +2138,65 @@ def _grupos_da_matriz(agregacao: Agregacao) -> List[Tuple[str, str, bool]]:
             ),
             _com_audios(matriz.risco),
         ))
+    else:
+        grupos.append((
+            RISCO,
+            "**{}** (risco de abandono silencioso) — relatos negativos ditos com menos energia na voz que a "
+            "maioria do projeto.\n\n{}".format(
+                RISCO,
+                _tabela_grupo(matriz.risco, _cabecalho(["Áudio", "Temas", "Em uma frase"]), _sem_numeros, False),
+            ),
+            _com_audios(matriz.risco),
+        ))
     return grupos
 
 
-def matriz_markdown(agregacao: Agregacao) -> str:
-    """As duas tabelas da Matriz de Destaques, com a regra de cada grupo."""
+def matriz_markdown(agregacao: Agregacao, numeros: bool = False) -> str:
+    """As duas tabelas da Matriz de Destaques; com `numeros`, a versão do apêndice."""
     matriz = agregacao.matriz
     if not matriz.avaliavel:
         return "Matriz não avaliável: {} com índice combinado no projeto, menos que os {} necessários.".format(
             _plural(matriz.audios_com_indice, "áudio", "áudios"), MIN_AUDIOS_MATRIZ
         )
-    return "\n\n".join(markdown for _, markdown, _ in _grupos_da_matriz(agregacao))
+    return "\n\n".join(markdown for _, markdown, _ in _grupos_da_matriz(agregacao, numeros))
 
 
 def termometro_markdown(agregacao: Agregacao) -> str:
-    """O número do Termômetro e a conta inteira, à mostra."""
+    """O número do Termômetro e o saldo de respondentes, sem a conta.
+
+    A conta (média × 5 e o arredondamento) fica no apêndice
+    (termometro_conta_markdown).
+    """
     t = agregacao.termometro
     if not t.avaliavel:
         return (
             "**Não avaliável:** nenhum respondente do recorte tem nota do sentimento do texto "
             "(os áudios anteriores ao sentimento do texto não têm)."
         )
-    texto = (
-        "**{}** (de -5 a +5): sentimento médio do texto, {} × 5 = {}, arredondado. "
-        "Respondentes pela média do texto: {}, {} e {}.".format(
-            "{:+d}".format(t.nota) if t.nota else "0",
-            _decimal(t.media),
-            _enxuto(round(t.media * ESCALA_TERMOMETRO, 2)),
-            _plural(t.positivos, "positivo", "positivos"),
-            _plural(t.neutros, "neutro", "neutros"),
-            _plural(t.negativos, "negativo", "negativos"),
-        )
+    texto = "**{}** (de -5 a +5) · {}, {} e {}.".format(
+        "{:+d}".format(t.nota) if t.nota else "0",
+        _plural(t.positivos, "respondente com relato positivo", "respondentes com relato positivo"),
+        _plural(t.neutros, "neutro", "neutros"),
+        _plural(t.negativos, "negativo", "negativos"),
     )
     if t.respondentes < agregacao.n_respondentes:
         texto += " {} dos {} respondentes têm nota do texto.".format(t.respondentes, agregacao.n_respondentes)
-    return texto + " _Leitura do texto; a voz entra pelos qualificadores dos temas._"
+    return texto + " _Leitura do que foi dito; a voz entra pelo sinal emocional dos temas._"
+
+
+def termometro_conta_markdown(agregacao: Agregacao) -> str:
+    """A conta do Termômetro, para o apêndice."""
+    t = agregacao.termometro
+    if not t.avaliavel:
+        return "Termômetro não avaliável: nenhum respondente do recorte tem nota do sentimento do texto."
+    return (
+        "Sentimento médio do texto, com o mesmo peso para cada respondente: {} × 5 = {}, arredondado para {}. "
+        "Respondente com média a partir de +0,2 conta como positivo, e até -0,2, como negativo.".format(
+            _decimal(t.media),
+            _enxuto(round(t.media * ESCALA_TERMOMETRO, 2)),
+            "{:+d}".format(t.nota) if t.nota else "0",
+        )
+    )
 
 
 def trechos_markdown(agregacao: Agregacao) -> str:
@@ -2199,7 +2414,8 @@ def _secao_voz_por_tema(agregacao: Agregacao) -> str:
     if not temas:
         return "Nenhum subtema citado."
     return _tabela(
-        ["Subtema", "Respondentes", "Com voz", "Trechos com voz", "Valência (voz)", "Ativação (z)", "Leitura"],
+        ["Subtema", "Respondentes", "Com voz", "Trechos com voz", "Valência (voz)", "Ativação (z)", "Leitura",
+         "Sinal emocional"],
         (
             [
                 tema.subtema,
@@ -2209,6 +2425,7 @@ def _secao_voz_por_tema(agregacao: Agregacao) -> str:
                 _decimal(tema.voz.valencia) if tema.voz.valencia is not None else "—",
                 _decimal(tema.voz.ativacao) if tema.voz.ativacao is not None else "—",
                 tema.voz.texto() + (" (instável)" if tema.voz.instavel else ""),
+                tema.sinal,
             ]
             for tema in temas
         ),
@@ -2486,6 +2703,10 @@ def apendice_markdown(
         _virgula_decimal(sentimento) or "Os áudios do recorte não têm nota do sentimento do texto.",
     ))
     secoes.append(("Índice combinado", _secao_indice(sinc, agregacao.reguas.valencia, sessoes)))
+    # O corpo mostra a Matriz e o Termômetro sem números; eles ficam aqui.
+    if agregacao.matriz.avaliavel:
+        secoes.append(("Matriz de Destaques — números", matriz_markdown(agregacao, numeros=True)))
+    secoes.append(("Termômetro — conta", termometro_conta_markdown(agregacao)))
     secoes.append(("Divergências voz × texto", divergencias_markdown(agregacao, sinc_projeto)))
     if incluir_legenda:
         secoes.append(("Legenda dos áudios", legenda_markdown(agregacao)))
@@ -2578,6 +2799,21 @@ def achados_esperados(agregacao: Agregacao) -> List[Tuple[str, LinhaTema]]:
     return [("A{}".format(numero), tema) for numero, tema in enumerate(com_id, 1)]
 
 
+def pode_recomendar(agregacao: Agregacao, tema: LinhaTema) -> bool:
+    """Recomendação de ação só sai de tema em padrão, e nunca na leitura exploratória.
+
+    Tema em sinal, ou qualquer tema com menos de 20 respondentes, vai para
+    "Para acompanhar": um sinal inicial, a observar na próxima análise
+    (spec de Unidades, §5.3).
+    """
+    return tema.faixa == PADRAO and not agregacao.exploratoria
+
+
+def achados_a_acompanhar(agregacao: Agregacao) -> List[str]:
+    """Os IDs dos achados que vão para "Para acompanhar", na ordem da tabela."""
+    return [ident for ident, tema in achados_esperados(agregacao) if not pode_recomendar(agregacao, tema)]
+
+
 def _grupos_a_ler(agregacao: Agregacao) -> List[str]:
     """Os grupos da Matriz que pedem leitura à IA: os que têm áudio do recorte."""
     if not agregacao.matriz.avaliavel:
@@ -2591,17 +2827,21 @@ def mensagem_para_ia(
     cabecalho: str,
     sinc_projeto: Optional[pd.DataFrame] = None,
     sumarios: Optional[Sumarios] = None,
+    como_ler: str = "",
 ) -> str:
     """A mensagem do usuário da Análise Geral, com as tabelas prontas.
 
-    A tarefa já traz o ID de cada achado, com o subtema, a faixa, a fração e
-    a leitura da voz que ele repete. Os áudios aparecem só pelo alias, e na
-    entrevista as divergências vêm só com as falas do entrevistado.
+    A tarefa já traz o ID de cada achado, com o subtema, a faixa, a fração, o
+    sinal emocional que ele repete e se ele vai para as recomendações ou
+    para "Para acompanhar". Os áudios aparecem só pelo alias, e na entrevista
+    as divergências vêm só com as falas do entrevistado. `como_ler` é a seção
+    "Como ler esta análise", que a IA recebe para não repetir nem contradizer.
     """
     total = agregacao.n_respondentes
     achados = [
-        "{} · {} · {}, {}. Voz: {}.".format(
-            ident, tema.subtema, tema.faixa.lower(), _fracao(tema.respondentes, total), tema.voz.texto()
+        "{} · {} · {}, {}. Sinal emocional: {}. → {}".format(
+            ident, tema.subtema, tema.faixa.lower(), _fracao(tema.respondentes, total), tema.sinal,
+            "pode sustentar recomendação" if pode_recomendar(agregacao, tema) else "vai para Para acompanhar",
         )
         for ident, tema in achados_esperados(agregacao)
     ]
@@ -2620,6 +2860,8 @@ def mensagem_para_ia(
             delta.novos if delta is not None and delta.exibir and not delta.sustenta_tendencia else None
         ),
         alertas=len(agregacao.alertas),
+        recomendaveis=[ident for ident, tema in achados_esperados(agregacao) if pode_recomendar(agregacao, tema)],
+        a_acompanhar=achados_a_acompanhar(agregacao),
     )
     return prompts.mensagem_analise_geral(
         contexto,
@@ -2632,6 +2874,7 @@ def mensagem_para_ia(
         divergencias_markdown(agregacao, sem_falas_de_alerta(sinc_projeto, agregacao), so_respondente=True),
         sumarios.texto if sumarios is not None else _SEM_SUMARIOS,
         tarefa,
+        como_ler=como_ler,
     )
 
 
@@ -2643,6 +2886,7 @@ RESUMO = "resumo"
 ACHADOS = "achados"
 HIPOTESES = "hipoteses"
 RECOMENDACOES = "recomendacoes"
+ACOMPANHAR = "acompanhar"
 LEITURA_MATRIZ = "matriz"
 LEITURA_TERMOMETRO = "termometro"
 
@@ -2652,12 +2896,17 @@ TITULOS_DA_IA = {
     ACHADOS: "Achados",
     HIPOTESES: "Hipóteses",
     RECOMENDACOES: "Recomendações",
+    ACOMPANHAR: "Para acompanhar",
     LEITURA_MATRIZ: "Matriz de Destaques — leitura",
     LEITURA_TERMOMETRO: "Termômetro — leitura",
 }
+# Na leitura exploratória, "Para acompanhar" ganha o "investigar".
+TITULO_ACOMPANHAR_EXPLORATORIA = "Para acompanhar e investigar"
 
 # Começo do título, sem caixa nem acento nem numeração, de cada seção.
 _INICIO_DO_TITULO = (
+    ("para acompanhar", ACOMPANHAR),
+    ("acompanhar", ACOMPANHAR),
     ("resumo", RESUMO),
     ("achado", ACHADOS),
     ("hipotese", HIPOTESES),
@@ -2765,10 +3014,13 @@ def separar_secoes(texto: Optional[str]) -> TextoDaIA:
 
 
 # O nome do grupo no começo do parágrafo da leitura da Matriz, como título,
-# item ou negrito, com o separador que vier depois.
+# item ou negrito, com o separador que vier depois. Os nomes de antes da Fase 4
+# da spec de Unidades continuam valendo, para a IA que ainda os escreva.
 _ROTULO_DO_GRUPO = re.compile(
     r"^\s*(?:#+\s*|[-*•]\s+)?(?:\*\*|__)?\s*"
-    r"(?P<grupo>v[ií]nculo\s+forte|risco\s+de\s+abandono(?:\s+silencioso)?)"
+    r"(?P<grupo>(?:os\s+)?relatos\s+mais\s+positivos|cr[ií]ticas\s+ditas\s+com\s+resigna[cç][aã]o"
+    r"|v[ií]nculo\s+forte|risco\s+de\s+abandono(?:\s+silencioso)?)"
+    r"(?:\s*(?:\*\*|__))?(?:\s*\(risco\s+de\s+abandono\s+silencioso\))?"
     r"(?:\s*(?:\*\*|__|[:—–-]))*\s*",
     re.IGNORECASE,
 )
@@ -2784,7 +3036,7 @@ def _leituras_da_matriz(texto: str) -> Dict[str, str]:
     for linha in texto.splitlines():
         rotulo = _ROTULO_DO_GRUPO.match(linha)
         if rotulo:
-            atual = VINCULO if chave_rotulo(rotulo.group("grupo")).startswith("vinculo") else RISCO
+            atual = RISCO if chave_rotulo(rotulo.group("grupo")).startswith(("critica", "risco")) else VINCULO
             linha = linha[rotulo.end():]
         partes.setdefault(atual, []).append(linha)
     leituras = {grupo: _aparar(linhas) for grupo, linhas in partes.items()}
@@ -2810,9 +3062,13 @@ def _texto_que_entra(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> Dict[str, 
     """O texto da IA que vai para o relatório, por seção e na ordem delas.
 
     A leitura da Matriz entra só para os grupos com áudio, e a do Termômetro,
-    só com ele avaliável: no resto, o relatório traz só o texto do código.
+    só com ele avaliável: no resto, o relatório traz só o texto do código. Na
+    leitura exploratória, a seção de recomendações não entra (spec de
+    Unidades, §5.3).
     """
-    textos = {secao: texto_da_ia.secao(secao) for secao in (RESUMO, ACHADOS, HIPOTESES, RECOMENDACOES)}
+    textos = {secao: texto_da_ia.secao(secao) for secao in (RESUMO, ACHADOS, HIPOTESES, RECOMENDACOES, ACOMPANHAR)}
+    if agregacao.exploratoria:
+        textos[RECOMENDACOES] = ""
     textos[LEITURA_MATRIZ] = "\n\n".join(_leituras_que_entram(agregacao, texto_da_ia).values())
     textos[LEITURA_TERMOMETRO] = (
         texto_da_ia.secao(LEITURA_TERMOMETRO) if agregacao.termometro.avaliavel else ""
@@ -2841,14 +3097,19 @@ def _matriz_com_leituras(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> str:
     return "\n\n".join(blocos)
 
 
-def montar_relatorio(agregacao: Agregacao, cabecalho: str, texto_da_ia: TextoDaIA, apendice: str) -> str:
-    """O relatório final, na ordem fixa da spec (§8).
+def montar_relatorio(
+    agregacao: Agregacao, cabecalho: str, texto_da_ia: TextoDaIA, apendice: str, como_ler: str = ""
+) -> str:
+    """O relatório final, na ordem da spec de Unidades (§5.5).
 
-    O código põe o cabeçalho, as tabelas e o apêndice, e a IA, o texto de
-    cada seção. A leitura de cada grupo da Matriz vai embaixo da tabela do
-    grupo, sem o nome, que já está no título dele. Seção que a IA não
-    escreveu sai com um aviso no lugar. As referências da base de
-    conhecimento ficam fora do texto, como hoje: a página, o .md e o PDF as
+    Cabeçalho, alertas críticos, "Como ler esta análise", Resumo, as seções
+    numeradas e o apêndice. O código põe o cabeçalho, os avisos, as tabelas e
+    o apêndice, e a IA, o texto de cada seção. Na leitura exploratória não há
+    a seção de recomendações, e "Para acompanhar" vira "Para acompanhar e
+    investigar"; as seções se renumeram. A leitura de cada grupo da Matriz
+    vai embaixo da tabela do grupo, sem o nome, que já está no título dele.
+    Seção que a IA não escreveu sai com um aviso no lugar. As referências da
+    base de conhecimento ficam fora do texto: a página, o .md e o PDF as
     mostram a partir das citações.
     """
     textos = _texto_que_entra(agregacao, texto_da_ia)
@@ -2858,16 +3119,28 @@ def montar_relatorio(agregacao: Agregacao, cabecalho: str, texto_da_ia: TextoDaI
     blocos = [cabecalho.strip()]
     if agregacao.alertas:
         blocos.append("### Alertas críticos\n\n" + alertas_markdown(agregacao))
-    blocos += [
-        "### Resumo Executivo\n\n" + (textos[RESUMO] or _SEM_TEXTO),
-        "### 1. Taxonomia de Temas\n\n" + tabela_temas_markdown(agregacao),
-        "### 2. Achados\n\n" + (textos[ACHADOS] or _SEM_TEXTO),
-        "### 3. Hipóteses\n\n" + (textos[HIPOTESES] or _SEM_TEXTO),
-        "### 4. Recomendações\n\n" + (textos[RECOMENDACOES] or _SEM_TEXTO),
-        "### 5. Matriz de Destaques\n\n" + _matriz_com_leituras(agregacao, texto_da_ia),
-        "### 6. Termômetro de Experiência\n\n" + termometro,
-        "### Apêndice técnico\n\n" + apendice.strip(),
+    if como_ler.strip():
+        blocos.append("### Como ler esta análise\n\n" + como_ler.strip())
+    blocos.append("### Resumo Executivo\n\n" + (textos[RESUMO] or _SEM_TEXTO))
+
+    if achados_a_acompanhar(agregacao):
+        acompanhar = textos[ACOMPANHAR] or _SEM_TEXTO
+    else:
+        acompanhar = textos[ACOMPANHAR] or "Nenhum achado em sinal: não há tema a acompanhar à parte."
+    secoes = [
+        ("Taxonomia de Temas", tabela_temas_markdown(agregacao)),
+        ("Achados", textos[ACHADOS] or _SEM_TEXTO),
+        ("Hipóteses", textos[HIPOTESES] or _SEM_TEXTO),
     ]
+    if not agregacao.exploratoria:
+        secoes.append(("Recomendações", textos[RECOMENDACOES] or _SEM_TEXTO))
+    secoes += [
+        (TITULO_ACOMPANHAR_EXPLORATORIA if agregacao.exploratoria else TITULOS_DA_IA[ACOMPANHAR], acompanhar),
+        ("Matriz de Destaques", _matriz_com_leituras(agregacao, texto_da_ia)),
+        ("Termômetro de Experiência", termometro),
+    ]
+    blocos += ["### {}. {}\n\n{}".format(numero, titulo, corpo) for numero, (titulo, corpo) in enumerate(secoes, 1)]
+    blocos.append("### Apêndice técnico\n\n" + apendice.strip())
     return "\n\n".join(blocos) + "\n"
 
 
@@ -2875,8 +3148,19 @@ def montar_relatorio(agregacao: Agregacao, cabecalho: str, texto_da_ia: TextoDaI
 # Verificação das referências
 # ---------------------------------------------------------------------------
 
-_ID_CITADO = re.compile(r"(?<![\w])([AHR])(\d+)(?![\w])")
-_INICIO_DE_ITEM = re.compile(r"^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\*\*|__)?\s*([AHR])(\d+)(?![\w])")
+# A, H e R, e o M de "Para acompanhar".
+_ID_CITADO = re.compile(r"(?<![\w])([AHRM])(\d+)(?![\w])")
+_INICIO_DE_ITEM = re.compile(r"^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\*\*|__)?\s*([AHRM])(\d+)(?![\w])")
+# Termos da leitura técnica da voz, que ficam no apêndice (spec de Unidades,
+# §5.2). Comparados sem acento.
+_TERMO_TECNICO_DE_VOZ = re.compile(
+    r"\b(valencia|ativacao|(?:acima|abaixo) do habitual|no habitual|pitch|loudness|arousal)\b"
+)
+# Leitura da ausência como irrelevância, que a cliente pediu para evitar.
+_AUSENCIA_COMO_IRRELEVANCIA = re.compile(
+    r"\b(nao (?:e|sao) (?:tema|relevante|prioridade|fonte|um problema|uma preocupacao)|irrelevante"
+    r"|nao (?:incomoda|preocupa|importa)|sem importancia)"
+)
 _LINHA_DE_LISTA = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 # Linha do achado já sem negrito: "- A1 · Categoria > Subtema · faixa, n/N".
 # Aceita os outros separadores de costume entre as partes.
@@ -2906,11 +3190,6 @@ _PARTES_DA_RECOMENDACAO = (
     ('"Como medir"', _COMO_MEDIR),
 )
 
-# A leitura de voz, sem acento, como a tabela a escreve.
-_DIRECOES_DE_VOZ = (("acima do habitual", ACIMA), ("abaixo do habitual", ABAIXO), ("no habitual", NO_HABITUAL))
-_QUALIFICADOR_CITADO = re.compile(r"\b(reforca|atenua|contradiz)\w*")
-_NIVEL_CITADO = re.compile(r"\bativacao\s+(alta|media|baixa)\b")
-_COM_ACENTO = {"reforca": "reforça", "media": "média"}
 
 
 def _limpa_linha(texto: str) -> str:
@@ -3058,30 +3337,6 @@ def _tabelas(agregacao: Agregacao) -> _Tabelas:
     )
 
 
-def _conflitos_de_voz(texto: str, voz: LeituraVoz) -> List[str]:
-    """O que o achado diz da voz e a tabela não diz. `texto` vem sem acento."""
-    rotulos = list(re.finditer(r"\bvoz\s*:", texto))
-    if rotulos:
-        citada = texto[rotulos[-1].end():]
-    else:
-        primeira = re.search(r"\bvoz\b", texto)
-        if primeira is None:
-            return []
-        citada = texto[primeira.end():]
-    qualificadores = sorted({m.group(1) for m in _QUALIFICADOR_CITADO.finditer(citada)})
-    direcoes = [direcao for frase, direcao in _DIRECOES_DE_VOZ if frase in citada]
-    niveis = sorted({m.group(1) for m in _NIVEL_CITADO.finditer(citada)})
-    if voz.avaliavel:
-        qualificadores = [q for q in qualificadores if q != _normal(voz.qualificador)]
-        direcoes = [d for d in direcoes if d != voz.direcao]
-        niveis = [n for n in niveis if n != _normal(voz.nivel)]
-    return (
-        [_COM_ACENTO.get(q, q) for q in qualificadores]
-        + direcoes
-        + ["ativação " + _COM_ACENTO.get(n, n) for n in niveis]
-    )
-
-
 def _conferir_achados(
     agregacao: Agregacao, tabelas: _Tabelas, achados: List[_Item], problemas: List[str]
 ) -> Dict[str, LinhaTema]:
@@ -3126,10 +3381,10 @@ def _conferir_achados(
             problemas.append("{} traz {}, mas a tabela traz {} para {}.".format(
                 item.ident, _fracao(*fracao), _fracao(tema.respondentes, total), tema.nome
             ))
-        conflitos = _conflitos_de_voz(_normal(item.texto), tema.voz)
-        if conflitos:
-            problemas.append('{}: a tabela traz a voz "{}", e o achado diz {}.'.format(
-                item.ident, tema.voz.texto(), _e(['"{}"'.format(c) for c in conflitos])
+        divergencia = _sinal_diferente(item.texto, tema)
+        if divergencia:
+            problemas.append('{}: a tabela traz o sinal emocional "{}", e o achado diz "{}".'.format(
+                item.ident, tema.sinal, divergencia
             ))
     for _, tema in achados_esperados(agregacao):
         if tema.subtema not in achados_do_tema:
@@ -3162,7 +3417,9 @@ def _conferir_hipoteses(hipoteses: List[_Item], problemas: List[str]) -> None:
             problemas.append("{} não se apoia em nenhum achado.".format(item.ident))
 
 
-def _conferir_recomendacoes(recomendacoes: List[_Item], problemas: List[str]) -> None:
+def _conferir_recomendacoes(
+    agregacao: Agregacao, tema_do_achado: Dict[str, LinhaTema], recomendacoes: List[_Item], problemas: List[str]
+) -> None:
     for item in recomendacoes:
         faltam = [nome for nome, marcador in _PARTES_DA_RECOMENDACAO if not marcador.search(item.texto)]
         if faltam:
@@ -3170,6 +3427,41 @@ def _conferir_recomendacoes(recomendacoes: List[_Item], problemas: List[str]) ->
         alvo = _trecho_depois(item.texto, _RESPONDE_A, _COMO_MEDIR)
         if alvo is not None and not any(letra in "AH" for letra, _ in _ID_CITADO.findall(alvo)):
             problemas.append("{} não responde a nenhum achado nem hipótese.".format(item.ident))
+        # Recomendação de ação só sai de tema em padrão (spec de Unidades, §5.3).
+        for letra, numero in _ID_CITADO.findall(alvo or ""):
+            tema = tema_do_achado.get("A" + numero) if letra == "A" else None
+            if tema is not None and not pode_recomendar(agregacao, tema):
+                problemas.append(
+                    "{} responde a A{}, de {}, que está em {}: recomendação de ação só sai de tema em "
+                    "padrão; o sinal vai para \"Para acompanhar\".".format(
+                        item.ident, numero, tema.nome, tema.faixa.lower()
+                    )
+                )
+
+
+def _conferir_acompanhamentos(acompanhamentos: List[_Item], problemas: List[str]) -> None:
+    for item in acompanhamentos:
+        if not any(letra == "A" for letra, _ in _ID_CITADO.findall(item.texto)):
+            problemas.append("{} não diz de que achado vem.".format(item.ident))
+
+
+def _sinal_diferente(texto: str, tema: LinhaTema) -> Optional[str]:
+    """O sinal emocional que o achado cita, quando difere do da tabela.
+
+    Achado que não cita o sinal não diverge. A comparação é sem acento, e o
+    que volta é a frase do achado, como ele a escreveu.
+    """
+    normal = _normal(texto)
+    rotulos = list(re.finditer(r"\bsinal emocional\s*:", normal))
+    if not rotulos:
+        return None
+    inicio = rotulos[-1].end()
+    citado = normal[inicio:].strip(" .")
+    esperado = _normal(tema.sinal).strip(" .")
+    if esperado in citado or citado.startswith(esperado.split(";")[0].strip()):
+        return None
+    frase = re.split(r"(?<=[.!?])\s", texto[inicio:].strip(), maxsplit=1)[0]
+    return _limpa_linha(frase).strip(" .")[:80]
 
 
 def _conferir_linha(
@@ -3257,6 +3549,13 @@ def _rotulo_em_volta(linha: str, inicio: int, fim: int) -> str:
     return "{} > {}".format(" ".join(categoria), " ".join(subtema))
 
 
+def _titulo_da_secao(agregacao: Agregacao, secao: str) -> str:
+    """O título da seção como ela sai no relatório."""
+    if secao == ACOMPANHAR and agregacao.exploratoria:
+        return TITULO_ACOMPANHAR_EXPLORATORIA
+    return TITULOS_DA_IA[secao]
+
+
 def verificar_referencias(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> List[str]:
     """Confere o texto da IA contra as tabelas e devolve os problemas.
 
@@ -3271,9 +3570,19 @@ def verificar_referencias(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> List[
     relatório, e nada aqui impede salvar.
     """
     problemas: List[str] = []
-    for secao in (RESUMO, ACHADOS, HIPOTESES, RECOMENDACOES):
+    esperadas = [RESUMO, ACHADOS, HIPOTESES]
+    if not agregacao.exploratoria:
+        esperadas.append(RECOMENDACOES)
+    if achados_a_acompanhar(agregacao):
+        esperadas.append(ACOMPANHAR)
+    for secao in esperadas:
         if not texto_da_ia.secao(secao):
-            problemas.append('A resposta da IA não trouxe a seção "{}".'.format(TITULOS_DA_IA[secao]))
+            problemas.append('A resposta da IA não trouxe a seção "{}".'.format(_titulo_da_secao(agregacao, secao)))
+    if agregacao.exploratoria and texto_da_ia.secao(RECOMENDACOES):
+        problemas.append(
+            'Com menos de {} respondentes a análise não traz recomendações: a seção "{}" ficou fora do '
+            "relatório.".format(MIN_RESPONDENTES, TITULOS_DA_IA[RECOMENDACOES])
+        )
     a_ler = _grupos_a_ler(agregacao)
     if a_ler and not texto_da_ia.secao(LEITURA_MATRIZ):
         problemas.append('A resposta da IA não trouxe a seção "{}".'.format(TITULOS_DA_IA[LEITURA_MATRIZ]))
@@ -3301,17 +3610,34 @@ def verificar_referencias(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> List[
     achados = _itens(textos[ACHADOS], "A")
     hipoteses = _itens(textos[HIPOTESES], "H")
     recomendacoes = _itens(textos[RECOMENDACOES], "R")
-    for itens in (achados, hipoteses, recomendacoes):
+    acompanhamentos = _itens(textos[ACOMPANHAR], "M")
+    for itens in (achados, hipoteses, recomendacoes, acompanhamentos):
         for ident, vezes in Counter(item.ident for item in itens).items():
             if vezes > 1:
                 problemas.append("{} aparece {} vezes.".format(ident, vezes))
     tema_do_achado = _conferir_achados(agregacao, tabelas, achados, problemas)
     _conferir_hipoteses(hipoteses, problemas)
-    _conferir_recomendacoes(recomendacoes, problemas)
+    _conferir_recomendacoes(agregacao, tema_do_achado, recomendacoes, problemas)
+    _conferir_acompanhamentos(acompanhamentos, problemas)
 
-    definidos = {item.ident for item in achados + hipoteses + recomendacoes}
+    sem_mencao = {_normal(rotulo): rotulo for rotulo in agregacao.sem_mencao}
+    sem_mencao.update({_normal(rotulo.split(">", 1)[-1].strip()): rotulo for rotulo in agregacao.sem_mencao})
+    definidos = {item.ident for item in achados + hipoteses + recomendacoes + acompanhamentos}
     for secao, texto in textos.items():
-        titulo = TITULOS_DA_IA[secao]
+        titulo = _titulo_da_secao(agregacao, secao)
+        normal = _normal(texto)
+        # _normal mantém o comprimento: o termo sai como a IA o escreveu.
+        for termo in sorted({texto[m.start(1):m.end(1)].lower() for m in _TERMO_TECNICO_DE_VOZ.finditer(normal)}):
+            problemas.append('{} usa "{}", termo técnico da voz, que fica no apêndice.'.format(titulo, termo))
+        for frase in re.split(r"(?<=[.;!?])\s+|\n", normal):
+            if not _AUSENCIA_COMO_IRRELEVANCIA.search(frase):
+                continue
+            for nome, rotulo in sem_mencao.items():
+                if nome and re.search(r"(?<!\w){}(?!\w)".format(re.escape(nome)), frase):
+                    problemas.append(
+                        '{} lê a ausência de menções a "{}" como irrelevância: numa coleta aberta, a ausência '
+                        "não diz isso.".format(titulo, rotulo)
+                    )
         for letra, numero in _ID_CITADO.findall(texto):
             if letra + numero not in definidos:
                 problemas.append("{} cita {}{}, que não existe.".format(titulo, letra, numero))
@@ -3395,8 +3721,9 @@ def escrever_relatorio(
         agregacao, str(contexto.get("nome") or ""), recorte, audios_no_projeto, taxonomia_status, taxonomia_da_ia
     )
     sumarios = sumarios_individuais(agregacao, analises_individuais or {})
+    como_ler = como_ler_markdown(agregacao, taxonomia_status, taxonomia_da_ia)
     sistema = prompts.sistema_analise_geral(agregacao.tipo_projeto)
-    mensagem = mensagem_para_ia(agregacao, contexto, cabecalho, sinc_projeto, sumarios)
+    mensagem = mensagem_para_ia(agregacao, contexto, cabecalho, sinc_projeto, sumarios, como_ler)
     resposta = gerar(
         system_prompt=sistema,
         user_prompt=mensagem,
@@ -3417,7 +3744,7 @@ def escrever_relatorio(
         sumarios.fora_do_limite,
     )
     return Relatorio(
-        texto=montar_relatorio(agregacao, cabecalho, separado, apendice),
+        texto=montar_relatorio(agregacao, cabecalho, separado, apendice, como_ler),
         problemas=verificar_referencias(agregacao, separado),
         citacoes=list(resposta.get("citations") or []),
         busca=dict(resposta.get("search") or {}),

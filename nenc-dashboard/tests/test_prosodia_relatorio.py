@@ -333,9 +333,10 @@ class FaixaTests(unittest.TestCase):
 
 class PolaridadesTests(unittest.TestCase):
     def test_text_cell_goes_from_the_largest_count_down(self):
-        self.assertEqual(rel.texto_polaridades({"mista": 2, "negativa": 17}), "17 neg · 2 mistas")
-        self.assertEqual(rel.texto_polaridades({"negativa": 1, "positiva": 8}), "8 pos · 1 neg")
-        self.assertEqual(rel.texto_polaridades({"mista": 1, "positiva": 1, "neutra": 0}), "1 pos · 1 mista")
+        # Em palavras desde a Fase 4 da spec de Unidades: "elogios" e "críticas".
+        self.assertEqual(rel.texto_polaridades({"mista": 2, "negativa": 17}), "17 críticas · 2 mistas")
+        self.assertEqual(rel.texto_polaridades({"negativa": 1, "positiva": 8}), "8 elogios · 1 crítica")
+        self.assertEqual(rel.texto_polaridades({"mista": 1, "positiva": 1, "neutra": 0}), "1 elogio · 1 mista")
         self.assertEqual(rel.texto_polaridades({"neutra": 2}), "2 neutras")
 
     def test_predominant_needs_a_single_winner(self):
@@ -555,8 +556,8 @@ class ContagemTests(unittest.TestCase):
             ],
         )
         self.assertIn(
-            "Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/3, 1 pos · 1 neg · "
-            "Cheiro do sabão (Produtos), 1/3, 1 pos.",
+            "Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/3, 1 elogio · 1 crítica · "
+            "Cheiro do sabão (Produtos), 1/3, 1 elogio.",
             rel.tabela_temas_markdown(agregacao),
         )
 
@@ -735,13 +736,21 @@ class MatrizTests(unittest.TestCase):
         agregacao = _agregar(audios)
         agregacao.matriz = rel.montar_matriz(self.indice, self.ativacao, audios, self.nomes, self.temas)
 
+        # O corpo mostra a Matriz sem números (spec de Unidades, §5.4); o
+        # critério técnico e os números ficam na versão do apêndice.
         texto = rel.matriz_markdown(agregacao)
+        numeros = rel.matriz_markdown(agregacao, numeros=True)
 
-        self.assertIn("**Vínculo forte** — índice combinado no terço superior do projeto (a partir de +0,73)", texto)
-        self.assertIn("| Áudio 12 | +0,50 | +0,10 | +1,10 | Lotação |", texto)
+        self.assertIn("**Os relatos mais positivos** — os elogios mais fortes do projeto", texto)
+        self.assertIn("| Áudio 12 | Lotação | — |", texto)
         self.assertIn("Temas mais citados no grupo: Lotação (3/3).", texto)
-        self.assertIn("Voz no grupo: média +0,10; 0/3 acima do habitual (a partir de +0,15) e 0/3 abaixo (até -0,15).", texto)
-        self.assertIn("| Áudio 01 | -0,50 | 0,00 | — |", texto)
+        self.assertIn("Tom de voz no grupo: 0 de 3 com tom mais positivo que a média do projeto e 0 com tom mais negativo.", texto)
+        self.assertIn("**Críticas ditas com resignação** (risco de abandono silencioso)", texto)
+        self.assertNotIn("+0,", texto)
+        self.assertIn("**Os relatos mais positivos** — índice combinado no terço superior do projeto (a partir de +0,73)", numeros)
+        self.assertIn("| Áudio 12 | +0,50 | +0,10 | +1,10 | Lotação |", numeros)
+        self.assertIn("Voz no grupo: média +0,10; 0/3 acima do habitual (a partir de +0,15) e 0/3 abaixo (até -0,15).", numeros)
+        self.assertIn("| Áudio 01 | -0,50 | 0,00 | — |", numeros)
 
         agregacao.matriz = rel.Matriz(8)
         self.assertEqual(
@@ -803,10 +812,14 @@ class TermometroTests(unittest.TestCase):
             {"session_id": audios[1].session_id, "start_s": 0.0, "end_s": 3.5, "sentimento_texto": 0.0},
         ])
 
-        texto = rel.termometro_markdown(_agregar(audios, transcricao_projeto=transcricao))
+        agregacao = _agregar(audios, transcricao_projeto=transcricao)
+        texto = rel.termometro_markdown(agregacao)
+        conta = rel.termometro_conta_markdown(agregacao)
 
-        self.assertIn("**-1** (de -5 a +5): sentimento médio do texto, -0,18 × 5 = -0,9, arredondado.", texto)
-        self.assertIn("Respondentes pela média do texto: 0 positivos, 1 neutro e 1 negativo.", texto)
+        # O corpo traz o número e o saldo; a conta vai para o apêndice.
+        self.assertIn("**-1** (de -5 a +5) · 0 respondentes com relato positivo, 1 neutro e 1 negativo.", texto)
+        self.assertNotIn("× 5", texto)
+        self.assertIn("-0,18 × 5 = -0,9, arredondado para -1.", conta)
 
 
 def _analise(dias, snapshot=None, texto="Análise geral", analise_id=None):
@@ -975,11 +988,12 @@ class TabelaDeTemasTests(unittest.TestCase):
         tabela = rel.tabela_temas_markdown(_agregar(audios))
 
         self.assertIn(
-            "| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 neg · 2 mistas | "
-            "não avaliável (0 respondentes com voz) |",
+            "| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 críticas · 2 mistas | "
+            "Poucos relatos com voz para uma leitura |",
             tabela,
         )
-        self.assertIn("| Ambiente > Lotação | 2/64 (3%) | Menção isolada | 2 neg | — |", tabela)
+        self.assertIn("| Ambiente > Lotação | 2/64 (3%) | Menção isolada | 2 críticas | — |", tabela)
+        self.assertIn("| O que disseram | Sinal emocional |", tabela.splitlines()[0])
         # Desde a spec de Unidades (§4.3), a linha sem menção fica na tabela,
         # depois das citadas e na ordem da taxonomia, com a ressalva da ausência.
         self.assertIn(

@@ -243,7 +243,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 | Qualquer | no habitual, ativação média | Sem destaque em relação aos demais relatos. |
 | Qualquer | não avaliável | Poucos relatos com voz para uma leitura. |
 
-- O prompt recebe a frase e a leitura técnica, e a orientação de ler cada combinação (`_ANALISE_GERAL_VOZ`, `prosodia_prompts.py:479`) continua, mas a IA escreve no texto só a frase. "Valência", "ativação", "habitual", "pitch" e "loudness" ficam proibidos fora do apêndice.
+- O prompt recebe só a frase, e a orientação de ler cada combinação (`_ANALISE_GERAL_VOZ`) foi reescrita sobre as frases: com a leitura técnica na mensagem, a IA tenderia a repeti-la. "Valência", "ativação", "habitual", "pitch" e "loudness" ficam proibidos fora do apêndice.
 - A tabela "Voz por tema" do apêndice mostra as duas colunas lado a lado.
 
 ### 5.3 Achados, hipóteses, recomendações e "Para acompanhar"
@@ -269,7 +269,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 ### 5.4 Matriz e Termômetro
 
 - **Matriz.** Os grupos ganham um nome descritivo, e o critério técnico vai para o apêndice:
-  - "Vínculo forte" → **Elogios ditos com entusiasmo**;
+  - "Vínculo forte" → **Os relatos mais positivos** (o nome da spec, "Elogios ditos com entusiasmo", mudou na implementação: o critério soma o que foi dito e o tom de voz e não mede a energia);
   - "Risco de abandono silencioso" → **Críticas ditas com resignação** (risco de abandono silencioso).
   A tabela de cada grupo fica com Áudio, Unidade, Tags e "Em uma frase", a evidência da menção mais forte do áudio. Texto, voz, índice e ativação vão para a tabela "Matriz — números" do apêndice. A linha "Voz no grupo" vira frase: "11 dos 15 falam com tom mais positivo que a média".
 - **Termômetro.** O corpo fica com o número e o saldo: "**−1** (de −5 a +5) · 20 respondentes com relato positivo, 19 neutros e 25 negativos. Leitura do que foi dito." A conta (média × 5 e o arredondamento) vai para o apêndice.
@@ -341,7 +341,14 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 1. **Unidade no banco e no cadastro.** Tabelas, colunas, backfill do código do QR, página Unidades, escolha da unidade no QR e correção na página do áudio. **Feita em 23/10/2026.** As regras sem banco ficaram em `utils/prosodia_unidades.py` (só biblioteca padrão), e por enquanto só `get_audio` devolve a unidade; as listas passam a devolvê-la na Fase 2.
 2. **Unidade nas telas e na Análise Geral.** Lista de Áudios, Resumo, exportação, filtro do recorte, Δ com unidade e coluna Unidades, sobre a tabela da v2. **Feita em 26/10/2026.** Filtro e coluna só aparecem quando algum áudio do projeto tem unidade; a coluna Unidades e a da Matriz, com duas unidades ou mais no recorte. O prompt ganhou uma regra para ler "concentrada" como problema local. A exportação leva a última classificação de cada áudio em `Temas_Audio`, com `taxonomia_atual` dizendo se ela foi feita com a taxonomia de agora.
 3. **Taxonomia por tags.** Parse, classificação, Outros, candidatos a tag, todas as tags na tabela, alertas e selo. **Feita em 26/10/2026.** A linha sem menção entra na tabela em toda taxonomia, a da v2 também, e o prompt ganhou duas regras: como ler tag, subtemas, Outros e alerta, e não concluir nada de linha com 0 respondentes. Verificação de ID dado a alerta ou a Outros, e dos subtemas citados como "Tag > subtema" com a fração deles.
-4. **Redação do relatório.** Como ler, Sinal emocional, Matriz e Termômetro sem números, Para acompanhar, regras de redação, prompt, exemplo e verificação.
+4. **Redação do relatório.** Como ler, Sinal emocional, Matriz e Termômetro sem números, Para acompanhar, regras de redação, prompt, exemplo e verificação. **Feita em 04/11/2026.** Notas da implementação:
+   - A polaridade sai em palavras em todas as tabelas: "12 elogios · 1 crítica · 2 mistas".
+   - A seção "Como ler" também vai para a IA, num bloco próprio da mensagem, para ela não repetir os avisos. A duração vem de `audios.duration_seconds` e, sem ela, do fim da última fala transcrita.
+   - "Em uma frase", na Matriz, é a evidência do primeiro tema do áudio que não é alerta.
+   - Sem achado em sinal (e fora da leitura exploratória), "Para acompanhar" sai com uma frase do código.
+   - A verificação aceita os nomes antigos dos grupos da Matriz, das análises salvas antes desta fase.
+   - O exemplo de saída do §10 da spec da v2 foi refeito no formato novo, e o teste segue comparando os blocos [IA] dele com o do prompt.
+   - O primeiro grupo da Matriz se chama **Os relatos mais positivos**, e não "Elogios ditos com entusiasmo" (§5.4): o critério soma o que foi dito e o tom de voz e não mede a energia. Na geração de ponta a ponta, elogios com sinal "Elogio dito sem entusiasmo" entraram no grupo, e o nome antigo os contradizia. O critério não mudou.
 5. **Validação com a Smart Fit.** Cópia de produção, como na validação da v2 (§15 de `SPEC_ANALISE_GERAL.md`), as 16 tags no campo e as unidades cadastradas pela sugestão dos QRs. Gerar o relatório e conferir:
    1. cada ponto do feedback (§1) tem resposta visível no relatório;
    2. nenhuma recomendação sai de tag em sinal nem na leitura exploratória;

@@ -390,95 +390,111 @@ Implementado na fase 4, em `utils/prosodia_prompts.py`: `sistema_analise_geral(t
 
 Os blocos marcados **[código]** são gerados pelo sistema. Os marcados **[IA]** são o que o modelo escreve. O `<exemplo_de_saida>` do prompt leva só os blocos [IA], com os títulos da Estrutura Obrigatória, precedidos de: "Ilustra formato e profundidade num setor fictício. Não reutilize temas, termos nem números."
 
+Atualizado na fase 4 da spec de Unidades e tags (`docs/SPEC_UNIDADES_E_TAGS.md`, §5 e §6): a voz chega como sinal emocional em frase, o código escreve "Como ler esta análise", só achado em padrão sustenta recomendação (os em sinal vão para "Para acompanhar"), a polaridade sai em palavras, e a Matriz e o Termômetro aparecem sem números no corpo, com os números e a conta no apêndice.
+
 ---
 
 **[código]**
 
 > **Rede de lavanderias self-service — Voz do Cliente por QR Code** · 64 respondentes (52 da análise de 30/09 e 12 novos) · taxonomia validada com a cliente
 
+### Como ler esta análise **[código]**
+
+- **O que observamos:** 64 respondentes, numa coleta aberta e espontânea. **O que isso significa:** Os temas descrevem esta amostra: as frações não são a proporção do público.
+- **O que observamos:** Os relatos são curtos (mediana de 12 s). **O que isso significa:** Cada relato traz pouco contexto: um tema citado pode ter sido dito de passagem.
+
 ### Resumo Executivo **[IA]**
 
-Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dor dita com ativação alta. A falha de pagamento no app (A3, 11/64) é relatada sem energia na voz e aparece em 5 dos 12 respondentes novos. O encantamento vem do atendente da unidade, citado pelo nome (A2, 13/64). A ação prioritária é mostrar o status da máquina antes do pagamento e estornar automaticamente o ciclo interrompido (R1); em seguida, corrigir o fluxo de pagamento (R2).
+Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dita com irritação perceptível na voz. A falha de pagamento no app (A3, 11/64) é relatada com resignação e aparece em 5 dos 12 respondentes novos. O encantamento vem do atendente da unidade, citado pelo nome (A2, 13/64). A ação prioritária é mostrar o status da máquina antes do pagamento e estornar automaticamente o ciclo interrompido (R1); em seguida, corrigir o fluxo de pagamento (R2).
 
 ### 1. Taxonomia de Temas **[código]**
 
-| Categoria > Subtema | Respondentes | Faixa | Texto | Voz nos trechos | Anteriores → novos |
+| Categoria > Subtema | Respondentes | Faixa | O que disseram | Sinal emocional | Anteriores → novos |
 |---|---|---|---|---|---|
-| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 neg · 2 mistas | abaixo do habitual, ativação alta → reforça | 13/52 → 6/12 |
-| Atendimento > Atendente da unidade | 13/64 (20%) | Padrão | 12 pos · 1 mista | acima do habitual, ativação alta → reforça | 11/52 → 2/12 |
-| Pagamento > Falha no app de pagamento | 11/64 (17%) | Padrão | 11 neg | no habitual, ativação baixa → atenua | 6/52 → 5/12 |
-| Ambiente > Limpeza da loja | 9/64 (14%) | Padrão | 8 pos · 1 neg | no habitual, ativação baixa → atenua | 8/52 → 1/12 |
-| Ambiente > Espera por máquina livre | 6/64 (9%) | Sinal | 6 neg | abaixo do habitual, ativação média → reforça | 5/52 → 1/12 |
-| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 neg · 1 pos | não avaliável (4 respondentes com voz) | 4/52 → 0/12 |
-| Atendimento > Suporte pelo WhatsApp | 3/64 (5%) | Sinal | 2 neg · 1 pos | não avaliável (3 respondentes com voz) | 2/52 → 1/12 |
-| Equipamentos > Secagem incompleta | 2/64 (3%) | Menção isolada | 2 neg | — | 2/52 → 0/12 |
+| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 críticas · 2 mistas | Irritação perceptível na voz | 13/52 → 6/12 |
+| Atendimento > Atendente da unidade | 13/64 (20%) | Padrão | 12 elogios · 1 mista | Fala mais animada que a média; confirma o elogio | 11/52 → 2/12 |
+| Pagamento > Falha no app de pagamento | 11/64 (17%) | Padrão | 11 críticas | Crítica dita com resignação, sem irritação na voz | 6/52 → 5/12 |
+| Ambiente > Limpeza da loja | 9/64 (14%) | Padrão | 8 elogios · 1 crítica | Elogio dito sem entusiasmo | 8/52 → 1/12 |
+| Ambiente > Espera por máquina livre | 6/64 (9%) | Sinal | 6 críticas | Tom de voz mais negativo que a média; confirma a crítica | 5/52 → 1/12 |
+| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 críticas · 1 elogio | Poucos relatos com voz para uma leitura | 4/52 → 0/12 |
+| Atendimento > Suporte pelo WhatsApp | 3/64 (5%) | Sinal | 2 críticas · 1 elogio | Poucos relatos com voz para uma leitura | 2/52 → 1/12 |
+| Equipamentos > Secagem incompleta | 2/64 (3%) | Menção isolada | 2 críticas | — | 2/52 → 0/12 |
 
-Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 neg · Cheiro do sabão (Produtos), 1/64, 1 pos.
+Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 críticas · Cheiro do sabão (Produtos), 1/64, 1 elogio.
 
-_Faixas: 1–2 respondentes, menção isolada; 3–4, sinal; 5 ou mais e pelo menos 10% do total, padrão. "Anteriores → novos" compara os respondentes da análise de 30/09 com os que chegaram depois; 12 novos não sustentam tendência._
+_Faixas: 1–2 respondentes, menção isolada; 3–4, sinal; 5 ou mais e pelo menos 10% do total, padrão. O mesmo respondente pode estar em vários subtemas, então as contagens não se somam. "Anteriores → novos" compara os respondentes da análise de 30/09 com os que chegaram depois; 12 novos não sustentam tendência._
 
 ### 2. Achados **[IA]**
 
-- **A1** · Equipamentos > Máquina fora de serviço · padrão, 19/64 — 17 dos 19 descrevem a máquina parada de forma negativa. Os trechos falam em aviso de manutenção recorrente e em ciclo pago e perdido (Áudio 12, 00:14; Áudio 31, 00:09). Voz: abaixo do habitual, com ativação alta — reforça o texto.
-- **A2** · Atendimento > Atendente da unidade · padrão, 13/64 — 12 dos 13 elogiam o atendente. Os trechos o citam pelo nome e falam de uma ajuda fora do roteiro, como ensinar a usar o app na primeira lavagem (Áudio 03, 00:21; Áudio 40, 00:05). Voz: acima do habitual, com ativação alta — reforça.
-- **A3** · Pagamento > Falha no app de pagamento · padrão, 11/64 — as 11 menções são negativas: cobrança que não libera a máquina e estorno demorado (Áudio 08, 00:11; Áudio 45, 00:17). Voz: no habitual, com ativação baixa — atenua. O tema aparece em 5 dos 12 respondentes novos e em 6 dos 52 anteriores, o que é variação observada, não tendência.
-- **A4** · Ambiente > Limpeza da loja · padrão, 9/64 — 8 dos 9 elogiam a limpeza em frases curtas, sem detalhe (Áudio 22, 00:03). Voz: no habitual, com ativação baixa — atenua.
-- **A5** · Ambiente > Espera por máquina livre · sinal, 6/64 (menos de 10% dos respondentes) — as 6 menções são negativas, e os trechos citam sábado e domingo (Áudio 19, 00:08; Áudio 52, 00:12). Voz: abaixo do habitual — reforça.
-- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Leitura de voz não avaliável (4 respondentes com voz).
-- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Leitura de voz não avaliável (3 respondentes com voz).
+- **A1** · Equipamentos > Máquina fora de serviço · padrão, 19/64 — 17 dos 19 descrevem a máquina parada de forma negativa. Os trechos falam em aviso de manutenção recorrente e em ciclo pago e perdido (Áudio 12, 00:14; Áudio 31, 00:09). Sinal emocional: irritação perceptível na voz.
+- **A2** · Atendimento > Atendente da unidade · padrão, 13/64 — 12 dos 13 elogiam o atendente. Os trechos o citam pelo nome e falam de uma ajuda fora do roteiro, como ensinar a usar o app na primeira lavagem (Áudio 03, 00:21; Áudio 40, 00:05). Sinal emocional: fala mais animada que a média; confirma o elogio.
+- **A3** · Pagamento > Falha no app de pagamento · padrão, 11/64 — as 11 menções são negativas: cobrança que não libera a máquina e estorno demorado (Áudio 08, 00:11; Áudio 45, 00:17). Sinal emocional: crítica dita com resignação, sem irritação na voz. O tema aparece em 5 dos 12 respondentes novos e em 6 dos 52 anteriores, o que é variação observada, não tendência.
+- **A4** · Ambiente > Limpeza da loja · padrão, 9/64 — 8 dos 9 elogiam a limpeza em frases curtas, sem detalhe (Áudio 22, 00:03). Sinal emocional: elogio dito sem entusiasmo.
+- **A5** · Ambiente > Espera por máquina livre · sinal, 6/64 (menos de 10% dos respondentes) — as 6 menções são negativas, e os trechos citam sábado e domingo (Áudio 19, 00:08; Áudio 52, 00:12). Sinal emocional: tom de voz mais negativo que a média; confirma a crítica.
+- **A6** · Pagamento > Preço do ciclo · sinal, 4/64 — 3 menções negativas e 1 positiva. Sinal emocional: poucos relatos com voz para uma leitura.
+- **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Sinal emocional: poucos relatos com voz para uma leitura.
 - Menções isoladas, sem hipótese própria: Secagem incompleta (2/64) e os emergentes Estacionamento (2/64) e Cheiro do sabão (1/64).
 
 ### 3. Hipóteses **[IA]**
 
-- **H1** — A falha de pagamento virou atrito normalizado: o cliente relata o problema sem energia na voz, o que combina mais com desistência silenciosa do que com reclamação ativa. *Apoia-se em:* A3. *Como validar:* comparar a recompra em 30 dias de quem teve estorno com a de quem não teve, e perguntar na próxima coleta se o cliente deixou de usar a loja por causa do pagamento.
-- **H2** — Máquina parada é a dor com mais chance de virar reclamação pública: é a mais citada e a única dita com ativação alta e valência abaixo do habitual. *Apoia-se em:* A1. *Como validar:* cruzar, por unidade, as menções ao tema com o tempo médio de reparo e com as reclamações em canais públicos.
-- **H3** — O encantamento depende de pessoas, não de processo: o elogio ao atendente vem com nome e com voz acima do habitual, enquanto a limpeza, item de higiene, recebe elogio protocolar. *Apoia-se em:* A2, A4. *Como validar:* verificar, no recorte por QR code, se os elogios ao atendente se concentram em poucas unidades ou turnos.
+- **H1** — A falha de pagamento pode ter virado atrito normalizado: o cliente relata o problema com resignação, o que combina mais com desistência silenciosa do que com reclamação ativa. *Apoia-se em:* A3. *Como validar:* comparar a recompra em 30 dias de quem teve estorno com a de quem não teve, e perguntar na próxima coleta se o cliente deixou de usar a loja por causa do pagamento.
+- **H2** — Máquina parada sugere a dor com mais chance de virar reclamação pública: é a mais citada e a única dita com irritação perceptível na voz. *Apoia-se em:* A1. *Como validar:* cruzar, por unidade, as menções ao tema com o tempo médio de reparo e com as reclamações em canais públicos.
+- **H3** — O encantamento pode depender de pessoas, não de processo: o elogio ao atendente vem com nome e com fala mais animada que a média, enquanto a limpeza, item de higiene, é elogiada sem entusiasmo. *Apoia-se em:* A2, A4. *Como validar:* verificar, no recorte por unidade, se os elogios ao atendente se concentram em poucas unidades ou turnos.
 
 ### 4. Recomendações **[IA]**
 
 - **R1** [Higiene] (Driver: Retenção · Área: Manutenção) — Mostrar no app e na própria máquina o status "fora de serviço" antes do pagamento, e estornar automaticamente o ciclo interrompido. *Responde a:* A1, H2. *Como medir:* fatia de respondentes no tema na próxima análise (hoje 19/64) e estornos manuais por unidade.
 - **R2** [Higiene] (Driver: Retenção · Área: Produto digital) — Corrigir o ponto do fluxo em que a cobrança não libera a máquina; até a correção, estornar em até 24 horas com aviso no app. *Responde a:* A3, H1. *Como medir:* menções ao tema entre os respondentes novos (hoje 5/12) e prazo médio de estorno.
-- **R3** [Encantamento] (Driver: Reputação · Área: Operações das unidades) — Transformar o que os atendentes elogiados fazem em rotina de turno (cumprimentar pelo nome, oferecer ajuda na primeira lavagem) e levar a rotina às unidades sem elogio. *Responde a:* A2, H3. *Como medir:* elogios ao atendimento por unidade, no recorte por QR code, na próxima análise.
-- **R4** [Higiene] (Driver: Retenção · Área: Operações) — Mostrar no app a ocupação das máquinas por horário, para o cliente fugir do pico de fim de semana. *Responde a:* A5. *Como medir:* menções a espera na próxima análise e uso fora do pico.
+- **R3** [Encantamento] (Driver: Reputação · Área: Operações das unidades) — Transformar o que os atendentes elogiados fazem em rotina de turno (cumprimentar pelo nome, oferecer ajuda na primeira lavagem) e levar a rotina às unidades sem elogio. *Responde a:* A2, H3. *Como medir:* elogios ao atendimento por unidade na próxima análise.
 
-### 5. Matriz de Destaques
+### 5. Para acompanhar **[IA]**
 
-**Vínculo forte** — índice combinado no terço superior do projeto e texto acima de +0,2 **[código]**
+- **M1** · Ambiente > Espera por máquina livre · sinal, 6/64 — se a espera continua concentrada no fim de semana e passa de 10% dos respondentes. *Por quê:* A5.
+- **M2** · Pagamento > Preço do ciclo · sinal, 4/64 — se as críticas ao preço crescem entre os respondentes novos, em especial depois de reajuste. *Por quê:* A6.
+- **M3** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — se a demora na resposta se repete, e em que horário. *Por quê:* A7.
 
-| Respondente | Texto | Voz | Índice | Temas |
-|---|---|---|---|---|
-| Áudio 03 | +0,82 | +0,36 | +0,59 | Atendente da unidade; Limpeza da loja |
-| Áudio 11 | +0,74 | +0,28 | +0,51 | Atendente da unidade |
-| Áudio 27 | +0,66 | +0,30 | +0,48 | Atendente da unidade; Preço do ciclo |
-| Áudio 40 | +0,70 | +0,18 | +0,44 | Atendente da unidade; Limpeza da loja |
-| Áudio 58 | +0,61 | +0,23 | +0,42 | Limpeza da loja |
+### 6. Matriz de Destaques
+
+**Os relatos mais positivos** — os elogios mais fortes do projeto, somando o que foi dito e o tom de voz. **[código]**
+
+| Áudio | Temas | Em uma frase |
+|---|---|---|
+| Áudio 03 | Atendente da unidade; Limpeza da loja | "O Carlos me ensinou a usar o app na primeira lavagem." |
+| Áudio 11 | Atendente da unidade | "A moça da tarde sempre ajuda quando a máquina trava." |
+| Áudio 27 | Atendente da unidade; Preço do ciclo | "Vale o preço, e o atendimento é ótimo." |
+| Áudio 40 | Atendente da unidade; Limpeza da loja | "Loja limpa e o Carlos sempre de bom humor." |
+| Áudio 58 | Limpeza da loja | "Sempre limpinha, dá gosto de usar." |
 
 Temas mais citados no grupo: Atendente da unidade (4/5), Limpeza da loja (3/5).
 
-**[IA]** *Perfil:* clientes que citam o atendente pelo nome e falam com voz acima do habitual; o vínculo é com a pessoa, não com a marca (H3). *Ação:* convidar para depoimento e indicação, e avisar a unidade antes de trocar de turno o atendente citado.
+Tom de voz no grupo: 4 de 5 com tom mais positivo que a média do projeto e 0 com tom mais negativo.
 
-**Risco de abandono silencioso** — texto abaixo de −0,2 e ativação no terço inferior do projeto **[código]**
+**[IA]** *Perfil:* clientes que citam o atendente pelo nome e falam com mais animação que a média; o vínculo é com a pessoa, não com a marca (H3). *Ação:* convidar para depoimento e indicação, e avisar a unidade antes de trocar de turno o atendente citado.
 
-| Respondente | Texto | Ativação | Temas |
-|---|---|---|---|
-| Áudio 08 | −0,64 | −0,48 | Falha no app de pagamento |
-| Áudio 19 | −0,52 | −0,41 | Espera por máquina livre; Máquina fora de serviço |
-| Áudio 33 | −0,45 | −0,39 | Falha no app de pagamento; Preço do ciclo |
-| Áudio 45 | −0,58 | −0,44 | Falha no app de pagamento |
+**Críticas ditas com resignação** (risco de abandono silencioso) — relatos negativos ditos com menos energia na voz que a maioria do projeto. **[código]**
+
+| Áudio | Temas | Em uma frase |
+|---|---|---|
+| Áudio 08 | Falha no app de pagamento | "Pagou e não liberou de novo, já nem reclamo mais." |
+| Áudio 19 | Espera por máquina livre; Máquina fora de serviço | "Fim de semana é sempre fila, e uma está sempre parada." |
+| Áudio 33 | Falha no app de pagamento; Preço do ciclo | "O estorno demora, e o ciclo já não é barato." |
+| Áudio 45 | Falha no app de pagamento | "O app cobrou duas vezes; desisti de pedir o estorno." |
 
 Temas mais citados no grupo: Falha no app de pagamento (3/4).
 
+Tom de voz no grupo: 0 de 4 com tom mais positivo que a média do projeto e 3 com tom mais negativo.
+
 **[IA]** *Perfil:* reclamação de pagamento dita sem energia, o retrato de H1. *Ação:* contato da unidade em até 7 dias, com confirmação do estorno e um ciclo de cortesia, acompanhando se o cliente volta.
 
-### 6. Termômetro de Experiência
+### 7. Termômetro de Experiência
 
-**[código]** **−1** (de −5 a +5): sentimento médio do texto, −0,18 × 5 = −0,9, arredondado. Respondentes pela média do texto: 20 positivos, 19 neutros e 25 negativos. _Leitura do texto; a voz entra pelos qualificadores dos temas._
+**[código]** **-1** (de -5 a +5) · 20 respondentes com relato positivo, 19 neutros e 25 negativos. _Leitura do que foi dito; a voz entra pelo sinal emocional dos temas._
 
-**[IA]** O saldo fica negativo por duas dores de higiene em padrão: máquina parada (A1, 19/64) e pagamento (A3, 11/64). O que puxa para cima é o elogio ao atendente (A2, 13/64); a limpeza (A4) é elogiada sem energia e pesa pouco.
+**[IA]** O saldo fica negativo por duas dores de higiene em padrão: máquina parada (A1, 19/64) e pagamento (A3, 11/64). O que puxa para cima é o elogio ao atendente (A2, 13/64); a limpeza (A4) é elogiada sem entusiasmo e pesa pouco.
 
 ### Apêndice técnico **[código]**
 
-Inclui médias acústicas por respondente, distribuição de emoções, momentos de maior ativação, ranking de palavras, sentimento do texto, índice combinado, divergências voz × texto, legenda "Áudio NN → sessão", limitações e cortes aplicados.
+Inclui a voz por tema com a leitura técnica (valência e ativação diante das réguas do projeto, que geram o sinal emocional), a Matriz de Destaques com os números (texto, voz, índice, ativação e os cortes de cada grupo), a conta do Termômetro (-0,18 × 5 = -0,9, arredondado para -1), médias acústicas por respondente, distribuição de emoções, momentos de maior ativação, ranking de palavras, sentimento do texto, índice combinado, divergências voz × texto, legenda "Áudio NN → sessão", limitações e cortes aplicados.
 
 ---
 

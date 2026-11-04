@@ -2,9 +2,11 @@
 
 A IA recebe as tabelas prontas e escreve só o texto. O código separa esse
 texto nas seções, monta o relatório na ordem fixa e confere as referências:
-IDs, áudios, subtemas, frações e a leitura de voz de cada achado. A IA aqui é
-sempre simulada, e o exemplo de saída da spec, que vai no prompt, faz o papel
-de resposta certa.
+IDs, áudios, subtemas, frações e o sinal emocional de cada achado. A IA aqui
+é sempre simulada, e o exemplo de saída da spec, que vai no prompt, faz o
+papel de resposta certa. A redação é a da Fase 4 da spec de Unidades e tags:
+"Como ler esta análise", sinal emocional em frase, recomendação só de padrão
+e "Para acompanhar".
 """
 
 import unittest
@@ -178,9 +180,9 @@ class SistemaTests(unittest.TestCase):
         ]
         self.assertEqual(posicoes, sorted(posicoes))
         self.assertTrue(sistema.rstrip().endswith(
-            "- Recomendação é ação rastreada: responde a achados ou hipóteses e diz como medir."
+            "- Para acompanhar é o que observar na próxima análise, a partir de um sinal."
         ))
-        self.assertEqual(len(sistema.split("## Lembrete", 1)[1].strip().splitlines()), 3)
+        self.assertEqual(len(sistema.split("## Lembrete", 1)[1].strip().splitlines()), 4)
 
     def test_one_prompt_with_an_addendum_per_type(self):
         opiniao = prompts.sistema_analise_geral(PESQUISA_OPINIAO)
@@ -198,18 +200,29 @@ class SistemaTests(unittest.TestCase):
 
         self.assertEqual(sem_adendo(opiniao), sem_adendo(entrevista))
 
-    def test_voice_in_the_habitual_range_does_not_support_a_hypothesis(self):
-        # Na validação com a Smart Fit, "atenua" com ativação média, o caso da
+    def test_voice_without_highlight_does_not_support_a_hypothesis(self):
+        # Na validação com a Smart Fit, a voz do próprio projeto, o caso da
         # maioria dos temas, virou "cortesia protocolar" no relatório inteiro.
         leitura = prompts.sistema_analise_geral(PESQUISA_OPINIAO).split("## Leitura Multimodal", 1)[1]
         leitura = " ".join(leitura.split("## Referencial", 1)[0].split())
 
-        self.assertIn('Voz "no habitual, ativação média", sem qualificador, é a voz do próprio projeto', leitura)
-        self.assertIn('"atenua" quando fica no habitual com ativação alta ou baixa', leitura)
+        self.assertIn('"Sem destaque em relação aos demais relatos" é a voz do próprio projeto', leitura)
+        self.assertIn("Não a leia como cortesia protocolar", leitura)
         self.assertIn("não apoie hipótese nela", leitura)
-        self.assertIn("Elogio que a voz atenua com ativação baixa, ou que a voz contradiz, sugere cortesia", leitura)
-        self.assertNotIn("Elogio que a voz atenua ou contradiz", leitura)
-        self.assertIn('"Não avaliável (n respondentes com voz)": menos de 5 respondentes', leitura.replace("**", ""))
+        self.assertIn('"Poucos relatos com voz para uma leitura": menos de 5 respondentes com voz', leitura)
+        self.assertIn('"Elogio dito sem entusiasmo" ou "Tom de voz menos positivo que as palavras" sugere', leitura)
+
+    def test_the_voice_reaches_the_ai_as_a_phrase_without_technical_terms(self):
+        # Spec de Unidades, §5.2: a cliente pediu o sinal em palavras; a
+        # leitura técnica fica no apêndice.
+        sistema = prompts.sistema_analise_geral(PESQUISA_OPINIAO)
+        leitura = " ".join(sistema.split("## Leitura Multimodal", 1)[1].split("## Referencial", 1)[0].split())
+
+        self.assertIn('na coluna "Sinal emocional" de cada tema', leitura)
+        self.assertIn('Não use os termos técnicos da voz (valência, ativação, "habitual", pitch, loudness, arousal)',
+                      leitura)
+        self.assertIn("Sinal emocional: <frase da tabela>.", sistema)
+        self.assertNotIn("Voz: <", sistema)
 
     def test_own_versions_of_the_shared_blocks(self):
         sistema = prompts.sistema_analise_geral(PESQUISA_OPINIAO)
@@ -238,6 +251,27 @@ class SistemaTests(unittest.TestCase):
             prompts.sistema_analise_geral(PESQUISA_OPINIAO),
         )
 
+    def test_rules_of_the_writing(self):
+        rigor = " ".join(prompts.sistema_analise_geral(PESQUISA_OPINIAO).split("## Rigor", 1)[1].split())
+
+        self.assertIn('Não sustenta recomendação: vai para "Para acompanhar"', rigor)
+        self.assertIn("pode sustentar recomendação, menos na leitura exploratória", rigor)
+        self.assertIn('não escreva recomendações. Todos os achados vão para "Para acompanhar e investigar"', rigor)
+        self.assertIn('Não use superlativo sem número ("principal diferencial", "maior problema")', rigor)
+        self.assertIn('Achado e hipótese não usam "deve"', rigor)
+        self.assertIn("A ausência de menção não é achado nem base de hipótese.", rigor)
+        self.assertIn('A seção "Como ler esta análise" vem pronta', rigor)
+
+    def test_the_example_recommends_only_from_patterns(self):
+        exemplo = prompts.EXEMPLO_ANALISE_GERAL
+        recomendacoes = exemplo.split("### Recomendações\n", 1)[1].split("\n### ", 1)[0]
+
+        self.assertNotIn("A5", recomendacoes)
+        self.assertNotIn("**R4**", exemplo)
+        self.assertIn("*Por quê:* A5.", exemplo.split("### Para acompanhar\n", 1)[1])
+        self.assertNotIn("Voz:", exemplo)
+        self.assertNotIn("habitual", exemplo)
+
     def test_the_example_uses_the_titles_of_the_structure(self):
         titulos = [linha for linha in prompts.EXEMPLO_ANALISE_GERAL.splitlines() if linha.startswith("### ")]
 
@@ -257,22 +291,24 @@ def _projeto_pequeno():
 TEXTO_DO_PROJETO_PEQUENO = """\
 ### Resumo Executivo
 Máquina fora de serviço é a dor de metade dos respondentes (A1, 6/12); o atendente aparece como sinal (A2, 3/12). \
-A ação prioritária é a manutenção preventiva (R1).
+O que acompanhar primeiro é a máquina parada (M1).
 
 ### Achados
 - **A1** · Equipamentos > Máquina fora de serviço · padrão, 6/12 — os seis falam da máquina parada (Áudio 01, \
-00:00). Voz: não avaliável (0 respondentes com voz).
-- **A2** · Atendimento > Atendente da unidade · sinal, 3/12 — elogios ao atendente (Áudio 07, 00:00). Voz: não \
-avaliável (0 respondentes com voz).
+00:00). Sinal emocional: poucos relatos com voz para uma leitura.
+- **A2** · Atendimento > Atendente da unidade · sinal, 3/12 — elogios ao atendente (Áudio 07, 00:00). Sinal \
+emocional: poucos relatos com voz para uma leitura.
 - Menção isolada, sem hipótese própria: Lotação (1/12).
 
 ### Hipóteses
-- **H1** — A máquina parada pesa mais que o atendimento na decisão de voltar. *Apoia-se em:* A1, A2. \
+- **H1** — A máquina parada pode pesar mais que o atendimento na decisão de voltar. *Apoia-se em:* A1, A2. \
 *Como validar:* perguntar na próxima coleta.
 
-### Recomendações
-- **R1** [Higiene] (Driver: Retenção · Área: Manutenção) — Revisar as máquinas toda semana. *Responde a:* A1, H1. \
-*Como medir:* fatia do tema na próxima análise (hoje 6/12).
+### Para acompanhar e investigar
+- **M1** · Equipamentos > Máquina fora de serviço · padrão, 6/12 — se a máquina parada continua em metade dos \
+relatos. *Por quê:* A1. *Como investigar:* cruzar com as ordens de manutenção da unidade.
+- **M2** · Atendimento > Atendente da unidade · sinal, 3/12 — se o elogio ao atendente se repete. *Por quê:* A2. \
+*Como investigar:* perguntar pelo atendimento na próxima coleta.
 
 ### Matriz de Destaques — leitura
 Não avaliável.
@@ -309,15 +345,23 @@ class MensagemTests(unittest.TestCase):
 
         self.assertIn(
             "   - A1 · Equipamentos > Máquina fora de serviço · padrão, 19/64. "
-            "Voz: abaixo do habitual, ativação alta → reforça.",
+            "Sinal emocional: Irritação perceptível na voz. → pode sustentar recomendação",
             tarefa,
         )
-        self.assertIn("   - A7 · Atendimento > Suporte pelo WhatsApp · sinal, 3/64. Voz: não avaliável (3 respondentes com voz).",
-                      tarefa)
+        self.assertIn(
+            "   - A7 · Atendimento > Suporte pelo WhatsApp · sinal, 3/64. "
+            "Sinal emocional: Poucos relatos com voz para uma leitura. → vai para Para acompanhar",
+            tarefa,
+        )
         self.assertNotIn("Secagem incompleta", tarefa)
-        self.assertIn("Feche com uma linha, sem ID, para as menções isoladas e os temas emergentes.", tarefa)
-        self.assertIn("5. **Matriz de Destaques — leitura**, para Vínculo forte e Risco de abandono silencioso.",
-                      tarefa)
+        self.assertNotIn("habitual", tarefa)
+        self.assertIn("Feche com uma linha, sem ID, para as menções isoladas, os temas emergentes e Outros.", tarefa)
+        self.assertIn("4. **Recomendações**, só a partir de A1, A2, A3 e A4.", tarefa)
+        self.assertIn("5. **Para acompanhar**, um M para cada um destes achados: A5, A6 e A7.", tarefa)
+        self.assertIn(
+            '6. **Matriz de Destaques — leitura**, para "Os relatos mais positivos" e "Críticas ditas com resignação".',
+            tarefa,
+        )
         self.assertIn("compara só 12 respondentes novos: trate as diferenças como variação observada", tarefa)
         self.assertNotIn("Leitura exploratória", tarefa)
 
@@ -327,6 +371,9 @@ class MensagemTests(unittest.TestCase):
         tarefa = rel.mensagem_para_ia(agregacao, {}, "cabeçalho").split("## Tarefa", 1)[1]
 
         self.assertIn("Leitura exploratória: 12 respondentes, abaixo de 20.", tarefa)
+        self.assertIn("não escreva recomendações", tarefa)
+        self.assertNotIn("**Recomendações**", tarefa)
+        self.assertIn("4. **Para acompanhar e investigar**, um M para cada um destes achados: A1 e A2.", tarefa)
         self.assertIn("a Matriz não tem grupo para ler neste recorte; escreva apenas: Não avaliável.", tarefa)
         self.assertIn("o Termômetro não é avaliável neste recorte; escreva apenas: Não avaliável.", tarefa)
         self.assertNotIn("Anteriores → novos", tarefa)
@@ -336,10 +383,33 @@ class MensagemTests(unittest.TestCase):
 
         tarefa = rel.mensagem_para_ia(agregacao, {}, "cabeçalho").split("## Tarefa", 1)[1]
 
-        self.assertIn("nenhum subtema está em padrão ou sinal. Escreva só a linha, sem ID", tarefa)
+        self.assertIn("nenhum tema está em padrão ou sinal. Escreva só a linha, sem ID", tarefa)
         self.assertIn("3. **Hipóteses**: sem achado com ID", tarefa)
-        self.assertIn("4. **Recomendações**: sem achado com ID", tarefa)
+        self.assertIn("4. **Para acompanhar e investigar**: sem achado com ID", tarefa)
+        self.assertNotIn("**Recomendações**", tarefa)
         self.assertIn("Leitura exploratória: 2 respondentes", tarefa)
+
+    def test_with_only_signals_there_is_nothing_to_recommend(self):
+        audios = [_audio(i, _tema(MAQUINA)) for i in range(1, 4)]
+        audios += [_audio(i) for i in range(4, 41)]
+        agregacao = _agregar(audios)
+
+        tarefa = rel.mensagem_para_ia(agregacao, {}, "cabeçalho").split("## Tarefa", 1)[1]
+
+        self.assertFalse(agregacao.exploratoria)
+        self.assertIn("4. **Recomendações**: nenhum achado está em padrão; escreva uma frase dizendo que a amostra "
+                      "ainda não sustenta recomendação de ação.", tarefa)
+        self.assertIn("5. **Para acompanhar**, um M para cada um destes achados: A1.", tarefa)
+
+    def test_the_how_to_read_section_reaches_the_ai(self):
+        agregacao = _exemplo()
+
+        mensagem = rel.mensagem_para_ia(agregacao, {}, "cabeçalho", como_ler="- **O que observamos:** x.")
+
+        self.assertIn("<como_ler>\n- **O que observamos:** x.\n</como_ler>", mensagem)
+        self.assertLess(mensagem.index("<cabecalho>"), mensagem.index("<como_ler>"))
+        self.assertLess(mensagem.index("<como_ler>"), mensagem.index("<tabela_temas>"))
+        self.assertNotIn("<como_ler>", rel.mensagem_para_ia(agregacao, {}, "cabeçalho"))
 
     def test_no_session_reaches_the_ai(self):
         audios = _projeto_pequeno()
@@ -495,8 +565,10 @@ class MontagemTests(unittest.TestCase):
         )
 
     def _montar(self, texto=prompts.EXEMPLO_ANALISE_GERAL, agregacao=None):
+        agregacao = agregacao or self.agregacao
         return rel.montar_relatorio(
-            agregacao or self.agregacao, self.cabecalho, rel.separar_secoes(texto), "#### Limitações\n\n- Uma."
+            agregacao, self.cabecalho, rel.separar_secoes(texto), "#### Limitações\n\n- Uma.",
+            como_ler=rel.como_ler_markdown(agregacao, "validada"),
         )
 
     def test_the_spec_example_comes_out_in_the_fixed_order(self):
@@ -504,25 +576,32 @@ class MontagemTests(unittest.TestCase):
 
         self.assertTrue(relatorio.startswith(
             "**Rede de lavanderias self-service — Voz do Cliente por QR Code** · 64 respondentes (52 da análise de "
-            "30/09 e 12 novos) · taxonomia validada com a cliente\n\n### Resumo Executivo\n\nMáquina fora de serviço"
+            "30/09 e 12 novos) · taxonomia validada com a cliente\n\n### Como ler esta análise\n\n"
+            "- **O que observamos:** 64 respondentes, numa coleta aberta e espontânea."
         ))
         titulos = [linha for linha in relatorio.splitlines() if linha.startswith("### ")]
         self.assertEqual(titulos, [
-            "### Resumo Executivo", "### 1. Taxonomia de Temas", "### 2. Achados", "### 3. Hipóteses",
-            "### 4. Recomendações", "### 5. Matriz de Destaques", "### 6. Termômetro de Experiência",
-            "### Apêndice técnico",
+            "### Como ler esta análise", "### Resumo Executivo", "### 1. Taxonomia de Temas", "### 2. Achados",
+            "### 3. Hipóteses", "### 4. Recomendações", "### 5. Para acompanhar", "### 6. Matriz de Destaques",
+            "### 7. Termômetro de Experiência", "### Apêndice técnico",
         ])
+        self.assertIn("### Resumo Executivo\n\nMáquina fora de serviço", relatorio)
         # As linhas de tabela que a spec mostra no exemplo saem do código, iguais.
         for linha in (
-            "| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 neg · 2 mistas | abaixo do "
-            "habitual, ativação alta → reforça | 13/52 → 6/12 |",
-            "| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 neg · 1 pos | não avaliável (4 respondentes com voz) | 4/52 → 0/12 |",
-            "| Equipamentos > Secagem incompleta | 2/64 (3%) | Menção isolada | 2 neg | — | 2/52 → 0/12 |",
-            "Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 neg · Cheiro do sabão "
-            "(Produtos), 1/64, 1 pos.",
-            "| Áudio 03 | +0,82 | +0,36 | +0,59 | Atendente da unidade; Limpeza da loja |",
+            "| Equipamentos > Máquina fora de serviço | 19/64 (30%) | Padrão | 17 críticas · 2 mistas | "
+            "Irritação perceptível na voz | 13/52 → 6/12 |",
+            "| Pagamento > Falha no app de pagamento | 11/64 (17%) | Padrão | 11 críticas | Crítica dita com "
+            "resignação, sem irritação na voz | 6/52 → 5/12 |",
+            "| Pagamento > Preço do ciclo | 4/64 (6%) | Sinal | 3 críticas · 1 elogio | Poucos relatos com voz para "
+            "uma leitura | 4/52 → 0/12 |",
+            "| Equipamentos > Secagem incompleta | 2/64 (3%) | Menção isolada | 2 críticas | — | 2/52 → 0/12 |",
+            "Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 críticas · Cheiro do sabão "
+            "(Produtos), 1/64, 1 elogio.",
+            "| Áudio 03 | Atendente da unidade; Limpeza da loja | — |",
             "Temas mais citados no grupo: Atendente da unidade (4/5), Limpeza da loja (3/5).",
-            "| Áudio 08 | -0,64 | -0,48 | Falha no app de pagamento |",
+            "| Áudio 08 | Falha no app de pagamento | — |",
+            "- **M1** · Ambiente > Espera por máquina livre · sinal, 6/64 — se a espera continua concentrada no fim "
+            "de semana e passa de 10% dos respondentes. *Por quê:* A5.",
         ):
             with self.subTest(linha=linha[:50]):
                 self.assertIn(linha, relatorio.splitlines())
@@ -531,8 +610,8 @@ class MontagemTests(unittest.TestCase):
     def test_each_matrix_reading_goes_under_its_table_without_the_group_name(self):
         relatorio = self._montar()
 
-        matriz = relatorio.split("### 5. Matriz de Destaques", 1)[1].split("### 6.", 1)[0]
-        vinculo, risco = matriz.split("**Risco de abandono silencioso**", 1)
+        matriz = relatorio.split("### 6. Matriz de Destaques", 1)[1].split("### 7.", 1)[0]
+        vinculo, risco = matriz.split("**Críticas ditas com resignação**", 1)
         self.assertIn(
             "Temas mais citados no grupo: Atendente da unidade (4/5), Limpeza da loja (3/5).\n\n"
             "*Perfil:* clientes que citam o atendente pelo nome",
@@ -540,18 +619,20 @@ class MontagemTests(unittest.TestCase):
         )
         self.assertIn("Temas mais citados no grupo: Falha no app de pagamento (3/4).\n\n*Perfil:* reclamação de "
                       "pagamento dita sem energia", risco)
-        self.assertNotIn("**Vínculo forte** — *Perfil:*", relatorio)
-        termometro = relatorio.split("### 6. Termômetro de Experiência\n\n", 1)[1].split("\n\n### ", 1)[0]
-        self.assertTrue(termometro.startswith("**-1** (de -5 a +5)"))
-        self.assertTrue(termometro.endswith("a limpeza (A4) é elogiada sem energia e pesa pouco."))
+        self.assertNotIn("**Os relatos mais positivos** — *Perfil:*", relatorio)
+        self.assertNotIn("+0,", matriz)
+        termometro = relatorio.split("### 7. Termômetro de Experiência\n\n", 1)[1].split("\n\n### ", 1)[0]
+        self.assertTrue(termometro.startswith("**-1** (de -5 a +5) · 20 respondentes com relato positivo"))
+        self.assertNotIn("× 5", termometro)
+        self.assertTrue(termometro.endswith("a limpeza (A4) é elogiada sem entusiasmo e pesa pouco."))
 
     def test_a_reading_without_group_names_goes_after_the_tables(self):
         texto = _trocar(
-            "**Vínculo forte** — *Perfil:* clientes",
+            "**Os relatos mais positivos** — *Perfil:* clientes",
             "*Perfil:* clientes",
-        ).replace("**Risco de abandono silencioso** — *Perfil:*", "*Perfil:*")
+        ).replace("**Críticas ditas com resignação** — *Perfil:*", "*Perfil:*")
 
-        matriz = self._montar(texto).split("### 5. Matriz de Destaques", 1)[1].split("### 6.", 1)[0]
+        matriz = self._montar(texto).split("### 6. Matriz de Destaques", 1)[1].split("### 7.", 1)[0]
 
         self.assertLess(matriz.index("Falha no app de pagamento (3/4)."), matriz.index("*Perfil:* clientes"))
 
@@ -561,8 +642,8 @@ class MontagemTests(unittest.TestCase):
         relatorio = self._montar(agregacao=agregacao)
 
         self.assertIn(
-            "### 5. Matriz de Destaques\n\nMatriz não avaliável: 8 áudios com índice combinado no projeto, menos "
-            "que os 10 necessários.\n\n### 6. Termômetro de Experiência\n\n**Não avaliável:** nenhum respondente",
+            "### 6. Matriz de Destaques\n\nMatriz não avaliável: 8 áudios com índice combinado no projeto, menos "
+            "que os 10 necessários.\n\n### 7. Termômetro de Experiência\n\n**Não avaliável:** nenhum respondente",
             relatorio,
         )
         self.assertNotIn("*Perfil:*", relatorio)
@@ -575,6 +656,32 @@ class MontagemTests(unittest.TestCase):
 
         self.assertIn("### 3. Hipóteses\n\n_A IA não escreveu esta seção._", relatorio)
         self.assertIn("### 4. Recomendações\n\n_A IA não escreveu esta seção._", relatorio)
+        self.assertIn("### 5. Para acompanhar\n\n_A IA não escreveu esta seção._", relatorio)
+
+    def test_without_signals_the_follow_up_section_says_so(self):
+        agregacao = _exemplo()
+        agregacao.temas = [tema for tema in agregacao.temas if tema.faixa != SINAL]
+        texto = prompts.EXEMPLO_ANALISE_GERAL.split("### Para acompanhar", 1)[0]
+
+        relatorio = self._montar(texto, agregacao)
+
+        self.assertIn("### 5. Para acompanhar\n\nNenhum achado em sinal: não há tema a acompanhar à parte.", relatorio)
+
+    def test_the_exploratory_report_has_no_recommendations(self):
+        agregacao = _agregar(_projeto_pequeno())
+        cabecalho = rel.cabecalho_markdown(agregacao, "Demonstração", Recorte(), 12, "provisoria")
+        texto = TEXTO_DO_PROJETO_PEQUENO + "\n### Recomendações\n- **R1** [Higiene] — Revisar as máquinas.\n"
+
+        relatorio = rel.montar_relatorio(agregacao, cabecalho, rel.separar_secoes(texto), "x")
+
+        titulos = [linha for linha in relatorio.splitlines() if linha.startswith("### ")]
+        self.assertEqual(titulos, [
+            "### Resumo Executivo", "### 1. Taxonomia de Temas", "### 2. Achados", "### 3. Hipóteses",
+            "### 4. Para acompanhar e investigar", "### 5. Matriz de Destaques", "### 6. Termômetro de Experiência",
+            "### Apêndice técnico",
+        ])
+        self.assertNotIn("Revisar as máquinas", relatorio)
+        self.assertIn("*Como investigar:* cruzar com as ordens de manutenção da unidade.", relatorio)
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +704,7 @@ class VerificacaoTests(unittest.TestCase):
         texto = (
             _trocar("*Apoia-se em:* A3.", "*Apoia-se em:* H2.")
             .replace("*Apoia-se em:* A1. ", "")
-            .replace("*Responde a:* A5. ", "")
+            .replace("*Responde a:* A2, H3. ", "")
             .replace("*Responde a:* A3, H1.", "*Responde a:* a equipe.")
         )
 
@@ -605,17 +712,79 @@ class VerificacaoTests(unittest.TestCase):
             "H1 não se apoia em nenhum achado.",
             'H2 está sem "Apoia-se em".',
             "R2 não responde a nenhum achado nem hipótese.",
-            'R4 está sem "Responde a".',
+            'R3 está sem "Responde a".',
+        ])
+
+    def test_a_recommendation_only_answers_a_pattern(self):
+        texto = _trocar("*Responde a:* A2, H3.", "*Responde a:* A5, H3.")
+
+        self.assertEqual(_verificar(texto), [
+            'R3 responde a A5, de Espera por máquina livre, que está em sinal: recomendação de ação só sai de '
+            'tema em padrão; o sinal vai para "Para acompanhar".',
+        ])
+
+    def test_the_follow_up_items_say_where_they_come_from(self):
+        texto = _trocar(" *Por quê:* A7.", "").replace("o retrato de H1.", "o retrato de H1 e de M4.")
+
+        self.assertEqual(_verificar(texto), [
+            "M3 não diz de que achado vem.",
+            "Matriz de Destaques — leitura cita M4, que não existe.",
+        ])
+
+    def test_technical_voice_terms_stay_in_the_appendix(self):
+        texto = (
+            _trocar("(A1, 19/64) e a única dita com irritação perceptível na voz.",
+                    "(A1, 19/64) e a única dita com ativação alta e valência abaixo do habitual.")
+            .replace("falam com mais animação que a média", "falam com pitch alto")
+        )
+
+        self.assertEqual(_verificar(texto), [
+            'Resumo Executivo usa "abaixo do habitual", termo técnico da voz, que fica no apêndice.',
+            'Resumo Executivo usa "ativação", termo técnico da voz, que fica no apêndice.',
+            'Resumo Executivo usa "valência", termo técnico da voz, que fica no apêndice.',
+            'Matriz de Destaques — leitura usa "pitch", termo técnico da voz, que fica no apêndice.',
+        ])
+
+    def test_absence_is_not_read_as_irrelevance(self):
+        agregacao = _exemplo()
+        agregacao.sem_mencao = ["Atendimento > Horário de funcionamento"]
+        texto = _trocar(
+            "O saldo fica negativo",
+            "Ninguém citou o horário de funcionamento, então ele não é um problema. O horário de funcionamento "
+            "não aparece nesta amostra. O saldo fica negativo",
+        )
+
+        self.assertEqual(_verificar(texto, agregacao), [
+            'Termômetro — leitura lê a ausência de menções a "Atendimento > Horário de funcionamento" como '
+            "irrelevância: numa coleta aberta, a ausência não diz isso.",
+        ])
+
+    def test_the_exploratory_text_has_no_recommendations_and_follows_up_everything(self):
+        agregacao = _agregar(_projeto_pequeno())
+        antes, depois = TEXTO_DO_PROJETO_PEQUENO.split("### Para acompanhar e investigar", 1)
+        com_recomendacao = (
+            antes
+            + "### Recomendações\n- **R1** [Higiene] (Driver: Retenção · Área: Manutenção) — Revisar as máquinas. "
+            "*Responde a:* A1. *Como medir:* fatia do tema.\n\n"
+            + "### Matriz de Destaques — leitura" + depois.split("### Matriz de Destaques — leitura", 1)[1]
+        )
+
+        self.assertEqual(_verificar(TEXTO_DO_PROJETO_PEQUENO, agregacao), [])
+        self.assertEqual(_verificar(com_recomendacao, agregacao), [
+            'A resposta da IA não trouxe a seção "Para acompanhar e investigar".',
+            'Com menos de 20 respondentes a análise não traz recomendações: a seção "Recomendações" ficou fora '
+            "do relatório.",
+            "Resumo Executivo cita M1, que não existe.",
         ])
 
     def test_recommendation_parts(self):
         texto = _trocar(
-            "- **R4** [Higiene] (Driver: Retenção · Área: Operações) — Mostrar",
-            "- **R4** — Mostrar",
-        ).replace(" *Como medir:* menções a espera na próxima análise e uso fora do pico.", "")
+            "- **R3** [Encantamento] (Driver: Reputação · Área: Operações das unidades) — Transformar",
+            "- **R3** — Transformar",
+        ).replace(" *Como medir:* elogios ao atendimento por unidade na próxima análise.", "")
 
         self.assertEqual(_verificar(texto), [
-            'R4 está sem a classificação [Higiene] ou [Encantamento], "Driver", "Área" e "Como medir".',
+            'R3 está sem a classificação [Higiene] ou [Encantamento], "Driver", "Área" e "Como medir".',
         ])
 
     def test_audios_must_exist_and_be_in_the_cut(self):
@@ -646,7 +815,7 @@ class VerificacaoTests(unittest.TestCase):
         ])
 
     def test_the_finding_line_tolerates_the_usual_variations(self):
-        resto = "— 17 dos 19 falam da máquina parada. Voz: abaixo do habitual, com ativação alta — reforça o texto."
+        resto = "— 17 dos 19 falam da máquina parada. Sinal emocional: irritação perceptível na voz."
         a1 = next(linha for linha in prompts.EXEMPLO_ANALISE_GERAL.splitlines() if linha.startswith("- **A1**"))
         for variante in (
             "- **A1** · Máquina fora de serviço · padrão, 19/64 " + resto,
@@ -675,17 +844,19 @@ class VerificacaoTests(unittest.TestCase):
             "Ambiente > Espera por máquina livre aparece em A5 e A5.",
         ])
 
-    def test_voice_reading_of_a_finding_must_match_the_table(self):
+    def test_the_emotional_signal_of_a_finding_must_match_the_table(self):
         texto = (
-            _trocar("Voz: no habitual, com ativação baixa — atenua. O tema",
-                    "Voz: acima do habitual, com ativação alta — reforça. O tema")
-            .replace("Leitura de voz não avaliável (4 respondentes com voz).", "Voz: abaixo do habitual — reforça.")
+            _trocar("Sinal emocional: crítica dita com resignação, sem irritação na voz. O tema",
+                    "Sinal emocional: irritação perceptível na voz. O tema")
+            .replace("3 menções negativas e 1 positiva. Sinal emocional: poucos relatos com voz para uma leitura.",
+                     "3 menções negativas e 1 positiva. Sinal emocional: tom de voz mais negativo que a média.")
         )
 
         self.assertEqual(_verificar(texto), [
-            'A3: a tabela traz a voz "no habitual, ativação baixa → atenua", e o achado diz "reforça", '
-            '"acima do habitual" e "ativação alta".',
-            'A6: a tabela traz a voz "não avaliável (4 respondentes com voz)", e o achado diz "reforça" e "abaixo do habitual".',
+            'A3: a tabela traz o sinal emocional "Crítica dita com resignação, sem irritação na voz", e o achado '
+            'diz "irritação perceptível na voz".',
+            'A6: a tabela traz o sinal emocional "Poucos relatos com voz para uma leitura", e o achado diz "tom de '
+            'voz mais negativo que a média".',
         ])
 
     def test_fractions_must_match_the_table(self):
@@ -744,9 +915,26 @@ class VerificacaoTests(unittest.TestCase):
         ])
 
     def test_a_named_group_without_reading(self):
-        texto = _trocar("**Risco de abandono silencioso** — ", "")
+        texto = _trocar("**Críticas ditas com resignação** — ", "")
 
-        self.assertEqual(_verificar(texto), ['A leitura da Matriz não trouxe o grupo "Risco de abandono silencioso".'])
+        self.assertEqual(_verificar(texto), ['A leitura da Matriz não trouxe o grupo "Críticas ditas com resignação".'])
+
+    def test_the_old_group_names_still_work(self):
+        # Análises salvas antes da Fase 4 nomeiam os grupos pelo nome antigo.
+        texto = _trocar("**Os relatos mais positivos** — ", "**Vínculo forte** — ").replace(
+            "**Críticas ditas com resignação** — ", "**Risco de abandono silencioso** — "
+        )
+
+        self.assertEqual(_verificar(texto), [])
+
+    def test_the_group_name_without_the_article(self):
+        agregacao = _exemplo()
+        texto = _trocar("**Os relatos mais positivos** — ", "**Relatos mais positivos:** ")
+
+        self.assertEqual(_verificar(texto, agregacao), [])
+        relatorio = rel.montar_relatorio(agregacao, "cabeçalho", rel.separar_secoes(texto), "x")
+        self.assertNotIn("Relatos mais positivos:", relatorio)
+        self.assertIn("(3/5).\n\n*Perfil:* clientes que citam o atendente", relatorio)
 
     def test_text_left_out_of_the_report_is_not_checked(self):
         texto = _trocar("o retrato de H1.", "o retrato de H9 (Áudio 99, 50/64).")
@@ -799,7 +987,13 @@ class EscreverRelatorioTests(unittest.TestCase):
             "**Demonstração** · 12 respondentes · taxonomia provisória, a validar com a cliente\n\n"
             "**Leitura exploratória:** 12 respondentes, abaixo de 20."
         ))
-        self.assertIn("| Equipamentos > Máquina fora de serviço | 6/12 (50%) | Padrão | 6 neg |", relatorio.texto)
+        como_ler = relatorio.texto.split("### Como ler esta análise\n\n", 1)[1].split("\n\n### ", 1)[0]
+        self.assertIn("Por isso esta análise não traz recomendações de ação.", como_ler)
+        self.assertIn("A taxonomia ainda não foi validada com a cliente.", como_ler)
+        self.assertIn("<como_ler>\n" + como_ler + "\n</como_ler>", relatorio.mensagem)
+        self.assertNotIn("### 4. Recomendações", relatorio.texto)
+        self.assertIn("### 4. Para acompanhar e investigar\n\n- **M1**", relatorio.texto)
+        self.assertIn("| Equipamentos > Máquina fora de serviço | 6/12 (50%) | Padrão | 6 críticas |", relatorio.texto)
         self.assertIn("- **A1** · Equipamentos > Máquina fora de serviço · padrão, 6/12", relatorio.texto)
         self.assertIn("| {} | 0/12 | — | sem menções espontâneas nesta amostra |".format(PRECO), relatorio.texto)
         self.assertIn("### Apêndice técnico\n\n#### Voz por tema", relatorio.texto)

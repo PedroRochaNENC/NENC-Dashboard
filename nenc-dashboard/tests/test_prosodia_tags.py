@@ -333,10 +333,10 @@ class AgregacaoComTagsTests(unittest.TestCase):
         tabela = rel.tabela_temas_markdown(self.agregacao)
         cabecalho = tabela.splitlines()[0]
 
-        self.assertIn("| Tema | Respondentes | Faixa | Texto | Voz nos trechos | Subtemas |", cabecalho)
+        self.assertIn("| Tema | Respondentes | Faixa | O que disseram | Sinal emocional | Subtemas |", cabecalho)
         self.assertIn("Cordialidade da recepção 2 · Professor ausente 2", tabela)
-        self.assertIn("| Alerta Crítico | 1/5 (20%) | Alerta crítico | 1 neg | — |", tabela)
-        self.assertIn("| Outros | 3/5 (60%) | — | 3 neg | — | Preço da mensalidade 3 |", tabela)
+        self.assertIn("| Alerta Crítico | 1/5 (20%) | Alerta crítico | 1 crítica | — |", tabela)
+        self.assertIn("| Outros | 3/5 (60%) | — | 3 críticas | — | Preço da mensalidade 3 |", tabela)
         self.assertIn("| Lotação | 0/5 | — | sem menções espontâneas nesta amostra |", tabela)
         self.assertLess(tabela.index("| Outros |"), tabela.index("| Lotação |"))
         self.assertIn("\"Outros\" reúne o que não coube em nenhuma tag.", tabela)
