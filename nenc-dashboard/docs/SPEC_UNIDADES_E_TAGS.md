@@ -358,6 +358,24 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
    6. os checklists da §15 da v2 continuam passando;
    7. leitura humana: o relatório responde "o que isso significa para a Smart Fit" sem exigir que o leitor interprete métricas de voz?
 
+   **Resultado (04/11/2026).** Cópia de produção do mesmo dia, com o código da Fase 4 (main 7725803). Projeto 16: 75 áudios, 72 respondentes, 12 unidades com áudio, todas já cadastradas em produção, com os QRs ligados. As 16 tags entraram como taxonomia validada, a classificação rodou no gpt-4.1-mini e o relatório no gpt-4.1. Foram 13 análises, como o botão "Gerar por unidade" faz: uma por unidade (2 a 12 respondentes, todas exploratórias) e a de todas. O relatório detalhado fica fora do repositório, porque traz falas e nomes de funcionários.
+   - Item 2 passou: nenhuma unidade tem recomendação, e a de todas recomenda só a partir dos 4 temas em padrão. O item 4 também: as 16 tags estão em toda tabela, e nenhuma frase lê a ausência como irrelevância.
+   - Item 3: nenhum número da Matriz ou do Termômetro no corpo. Os termos técnicos falharam na primeira rodada (abaixo).
+   - Item 5: "Relatos curtos" aparece em todas as análises (mediana de 23 a 25 s), o que descreve bem os áudios de QR. "O tom de voz varia pouco" aparece na de todas, em que os 4 temas em padrão saem "Sem destaque". Nenhum tema ficou concentrado numa unidade. Os limiares ficam.
+   - Item 6: regerar a de todas pelo cache, sem IA, devolve a mesma tabela, a mesma Matriz e o mesmo Termômetro. A IA escreveu fração que não está na tabela em 2 das 13, e a verificação apontou as duas.
+   - Item 7 fica com o Pedro.
+   - Mudou na validação:
+     - a IA lia "Sem destaque" como "satisfação funcional, sem encantamento vocal": no Resumo, numa hipótese e no Termômetro da análise de todas, e em 11 das 13. A leitura vinha de dois blocos da mensagem: os Sumários Executivos das análises individuais, que leem a voz de cada áudio em termos técnicos ("baixa ativação… satisfação funcional, sem entusiasmo"), e a tabela de divergências, com a valência e "habitual". Os Sumários passaram a ir sem as frases que leem a voz, as divergências sem a coluna da voz e sem a legenda do z, e a tarefa avisa quando nenhum achado tem sinal com destaque. Regerado com a mesma classificação, a leitura sem base caiu para 1 ou 2 das 13, e a de todas saiu sem ela;
+     - a verificação passou a apontar "vocal", "fora do habitual" e "prosódia", e superlativo sem número ("o principal fator", "principal driver");
+     - na Matriz, o áudio que só fala de Outros mostra "Outros" na coluna Temas, e não mais "—" (7 das 15 linhas da análise de todas).
+   - Fica em aberto:
+     - superlativo sem número aparece em 8 das 13 análises, nas duas rodadas com as correções. Um aviso fixo no fim da tarefa não mudou isso e saiu. A verificação aponta cada caso na tela;
+     - "vocal" ainda aparece em 1 a 3 das 13, sempre apontado. As "Perguntas centrais" e o "Histórico" do projeto, na Preparação, falam em "prosódia", "intensidade vocal" e "ativação", e a IA os repete: vale reescrevê-los em linguagem de negócio;
+     - Outros reúne 37 dos 72 respondentes, quase todos com "satisfação geral" (18) e "experiência pessoal" (15): elogio genérico não cabe em nenhuma das 16 tags. Levar à Smart Fit (§11);
+     - em produção, "Link app", "Banner" e "Cartaz" estão cadastrados como unidades, sem áudio, e nenhuma unidade tem código, cidade e UF;
+     - as unidades com 2 respondentes (Bela Vista II, Caxias Shopping) geram relatórios quase vazios. Decidir se "Gerar por unidade" deve ter um mínimo de respondentes;
+     - as falas citadas trazem nomes de funcionários, sempre em elogio.
+
 A Fase 2 não depende da 3: a coluna Unidades e o filtro funcionam na tabela por subtema da v2 e passam para a tabela por tag quando a Fase 3 entrar.
 
 ## 10. Fora do escopo

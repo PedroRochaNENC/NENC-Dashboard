@@ -439,16 +439,25 @@ def _numero_ou_none(valor):
     return None if pd.isna(numero) else float(numero)
 
 
-def divergencias_texto(div_df: pd.DataFrame, incluir_audio: bool = False, limite: int = 15) -> str:
-    """Tabela das divergências voz × texto para o prompt."""
+def divergencias_texto(
+    div_df: pd.DataFrame, incluir_audio: bool = False, limite: int = 15, com_voz: bool = True
+) -> str:
+    """Tabela das divergências voz × texto para o prompt.
+
+    Sem `com_voz`, a tabela fica sem a coluna da valência e sem a legenda do
+    z: é a versão da Análise Geral, que escreve a voz em frase de negócio e
+    deixa os termos técnicos para o apêndice.
+    """
     if div_df is None or div_df.empty:
+        if not com_voz:
+            return "Nenhuma fala em que o que foi dito e o tom de voz apontem em sentidos opostos."
         return (
             "Nenhuma divergência voz × texto acima dos limiares (|nota do texto| >= "
             "{:.1f} com a valência vocal a {:.0f} desvio-padrão ou mais do habitual do "
             "locutor, no sentido oposto).".format(LIMIAR_SENTIMENTO_TEXTO, LIMIAR_Z_VALENCIA)
         )
     cabecalho = ["Áudio"] if incluir_audio else []
-    cabecalho += ["Tempo", "Locutor", "Fala", "Texto (nota)", "Voz (valência, z)", "Leitura"]
+    cabecalho += ["Tempo", "Locutor", "Fala", "Texto (nota)"] + (["Voz (valência, z)"] if com_voz else []) + ["Leitura"]
     linhas = [
         "| " + " | ".join(cabecalho) + " |",
         "|" + "---|" * len(cabecalho),
@@ -464,20 +473,22 @@ def divergencias_texto(div_df: pd.DataFrame, incluir_audio: bool = False, limite
             _texto(linha["SpeakerName"]) or "?",
             "\"{}\"".format(fala),
             "{:+.2f}{}".format(linha["sentimento_texto"], " — " + justificativa if justificativa else ""),
-            "{:+.2f} (z {:+.1f})".format(linha["valencia_voz"], linha["z_valencia"]),
-            linha["tipo"],
         ]
+        if com_voz:
+            celulas.append("{:+.2f} (z {:+.1f})".format(linha["valencia_voz"], linha["z_valencia"]))
+        celulas.append(linha["tipo"])
         linhas.append("| " + " | ".join(celulas) + " |")
     extras = len(div_df) - limite
     if extras > 0:
         linhas.append("")
         linhas.append("_Mais {} divergência(s) de menor força fora da tabela._".format(extras))
-    linhas.extend([
-        "",
-        "_z: desvios-padrão da valência vocal em relação ao habitual do próprio locutor "
-        "no áudio (ao áudio inteiro, quando ele foi analisado em trechos)._",
-        AVISO_DIVERGENCIA,
-    ])
+    linhas.append("")
+    if com_voz:
+        linhas.append(
+            "_z: desvios-padrão da valência vocal em relação ao habitual do próprio locutor "
+            "no áudio (ao áudio inteiro, quando ele foi analisado em trechos)._"
+        )
+    linhas.append(AVISO_DIVERGENCIA)
     return "\n".join(linhas)
 
 

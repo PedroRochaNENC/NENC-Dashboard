@@ -1599,12 +1599,14 @@ def agregar(
                 ))
 
     # A Matriz cita os temas de cada áudio; o de alerta fica no bloco próprio.
+    # Outros entra pelo nome: sem ele, o áudio que só fala do que não coube em
+    # nenhuma tag saía com "—", e a frase ao lado dizia do que ele tratou.
     temas_por_audio = {}
     for audio in contados:
         citados_no_audio = {t.get("subtema") for t in _lista(audio.classificacao.get("temas"))}
         temas_por_audio[audio.audio_id] = tuple(
             curtos[r] for r in rotulos if r in citados_no_audio and r not in alertas
-        )
+        ) + ((OUTROS,) if OUTROS in citados_no_audio else ())
     # A frase de cada áudio na Matriz: a evidência do primeiro tema que não é
     # de alerta, porque a do alerta só aparece no bloco do topo.
     frases_por_audio = {}
@@ -2373,13 +2375,19 @@ def _com_linha_do_recorte(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def divergencias_markdown(
-    agregacao: Agregacao, sinc_projeto: Optional[pd.DataFrame], so_respondente: bool = False
+    agregacao: Agregacao,
+    sinc_projeto: Optional[pd.DataFrame],
+    so_respondente: bool = False,
+    com_voz: bool = True,
 ) -> str:
     """Divergências voz × texto dos áudios do recorte, pelo alias.
 
     Com `so_respondente`, a entrevista fica só com as falas do entrevistado
     que a classificação apontou: é assim que a tabela vai para a IA, que não
     pode tomar fala do entrevistador como evidência. O apêndice mostra todas.
+    Sem `com_voz`, também como vai para a IA, a tabela perde a coluna da
+    valência e a legenda do z: com elas, a IA repetia "valência" e "habitual"
+    no relatório (validação da Fase 5 da spec de Unidades).
     """
     sessoes = {str(a.session_id): agregacao.aliases[a.audio_id] for a in agregacao.recorte}
     sinc = _recorte_com_alias(sinc_projeto, sessoes)
@@ -2396,7 +2404,7 @@ def divergencias_markdown(
         divergencias = divergencias[(quem == "") | (locutor == quem)]
     if not divergencias.empty:
         divergencias = divergencias.assign(session_id=divergencias["session_id"].astype(str).map(sessoes))
-    return _virgula_decimal(sinais.divergencias_texto(divergencias, incluir_audio=True))
+    return _virgula_decimal(sinais.divergencias_texto(divergencias, incluir_audio=True, com_voz=com_voz))
 
 
 def legenda_markdown(agregacao: Agregacao) -> str:
@@ -2727,6 +2735,25 @@ def apendice_markdown(
 _MAX_SUMARIOS_NA_MENSAGEM = 80000
 _SESSAO_COM_TELEFONE = re.compile(r"wa_\+?\d{8,}(?:_\d+)?")
 _SEM_SUMARIOS = "Nenhuma análise individual dos áudios do recorte traz Sumário Executivo."
+# Frase do Sumário Executivo que lê a voz do áudio isolado, em termos técnicos
+# ("a prosódia indica baixa ativação… satisfação funcional, sem entusiasmo").
+# Comparada sem acento. Na validação da Fase 5 da spec de Unidades, a Análise
+# Geral herdava essa leitura e chamava de "satisfação funcional" temas cujo
+# sinal emocional era "Sem destaque": a voz entra só pelo sinal dos temas.
+_FRASE_DA_VOZ = re.compile(
+    r"\b(valencia|ativacao|arousal|pitch|loudness|dominancia|habitual|vocal|vocais|prosodi\w*|entonacao"
+    r"|na voz|da voz|tom de voz|energia emocional)\b"
+)
+_FIM_DE_FRASE = re.compile(r"(?<=[.!?])\s+")
+
+
+def sem_leitura_da_voz(texto: str) -> str:
+    """O texto sem as frases que leem a voz, com os parágrafos de antes."""
+    paragrafos = []
+    for paragrafo in str(texto or "").split("\n"):
+        frases = [f for f in _FIM_DE_FRASE.split(paragrafo.strip()) if f]
+        paragrafos.append(" ".join(f for f in frases if not _FRASE_DA_VOZ.search(_normal(f))))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(paragrafos)).strip()
 
 
 @dataclass(frozen=True)
@@ -2746,9 +2773,10 @@ def sumarios_individuais(agregacao: Agregacao, analises: Dict[int, Optional[str]
 
     `analises` traz, por audio_id, o texto da análise individual mais
     recente. Cada sumário vai rotulado pelo alias, e a sessão que aparecer
-    no texto vira o alias: ela traz o telefone do respondente. Os sumários
-    dos áudios citados nos trechos de evidência entram primeiro; o bloco sai
-    na ordem dos aliases.
+    no texto vira o alias: ela traz o telefone do respondente. As frases que
+    leem a voz do áudio saem (sem_leitura_da_voz); o sumário que só falava
+    da voz não entra. Os sumários dos áudios citados nos trechos de
+    evidência entram primeiro; o bloco sai na ordem dos aliases.
     """
     contados = set(agregacao.contados)
     nomes = agregacao.aliases
@@ -2768,6 +2796,9 @@ def sumarios_individuais(agregacao: Agregacao, analises: Dict[int, Optional[str]
             sem += 1
             continue
         com += 1
+        sumario = sem_leitura_da_voz(sumario)
+        if not sumario:
+            continue
         for sessao, alias in sessoes:
             sumario = sumario.replace(sessao, alias)
         sumario = _SESSAO_COM_TELEFONE.sub("[sessão]", sumario)
@@ -2812,6 +2843,17 @@ def pode_recomendar(agregacao: Agregacao, tema: LinhaTema) -> bool:
 def achados_a_acompanhar(agregacao: Agregacao) -> List[str]:
     """Os IDs dos achados que vão para "Para acompanhar", na ordem da tabela."""
     return [ident for ident, tema in achados_esperados(agregacao) if not pode_recomendar(agregacao, tema)]
+
+
+def voz_sem_destaque(agregacao: Agregacao) -> bool:
+    """Nenhum achado tem sinal emocional com destaque: a voz não acrescenta nada.
+
+    Na validação da Fase 5 da spec de Unidades, com todos os temas em "Sem
+    destaque", a IA leu a falta de destaque como "satisfação funcional, sem
+    encantamento" no Resumo, numa hipótese e no Termômetro.
+    """
+    achados = achados_esperados(agregacao)
+    return bool(achados) and all(tema.sinal in (SEM_DESTAQUE, SEM_VOZ) for _, tema in achados)
 
 
 def _grupos_a_ler(agregacao: Agregacao) -> List[str]:
@@ -2862,6 +2904,7 @@ def mensagem_para_ia(
         alertas=len(agregacao.alertas),
         recomendaveis=[ident for ident, tema in achados_esperados(agregacao) if pode_recomendar(agregacao, tema)],
         a_acompanhar=achados_a_acompanhar(agregacao),
+        voz_sem_destaque=voz_sem_destaque(agregacao),
     )
     return prompts.mensagem_analise_geral(
         contexto,
@@ -2871,7 +2914,9 @@ def mensagem_para_ia(
         emergentes_markdown(agregacao) or "Nenhum tema emergente.",
         matriz_markdown(agregacao),
         termometro_markdown(agregacao),
-        divergencias_markdown(agregacao, sem_falas_de_alerta(sinc_projeto, agregacao), so_respondente=True),
+        divergencias_markdown(
+            agregacao, sem_falas_de_alerta(sinc_projeto, agregacao), so_respondente=True, com_voz=False
+        ),
         sumarios.texto if sumarios is not None else _SEM_SUMARIOS,
         tarefa,
         como_ler=como_ler,
@@ -3152,9 +3197,17 @@ def montar_relatorio(
 _ID_CITADO = re.compile(r"(?<![\w])([AHRM])(\d+)(?![\w])")
 _INICIO_DE_ITEM = re.compile(r"^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\*\*|__)?\s*([AHRM])(\d+)(?![\w])")
 # Termos da leitura técnica da voz, que ficam no apêndice (spec de Unidades,
-# §5.2). Comparados sem acento.
+# §5.2). Comparados sem acento. "Vocal" e "fora do habitual" entraram na
+# validação da Fase 5: "sem encantamento vocal", "fora do habitual".
 _TERMO_TECNICO_DE_VOZ = re.compile(
-    r"\b(valencia|ativacao|(?:acima|abaixo) do habitual|no habitual|pitch|loudness|arousal)\b"
+    r"\b(valencia|ativacao|(?:acima|abaixo|fora|dentro) do habitual|no habitual|vocal|vocais|prosodia"
+    r"|prosodic[ao]s?|pitch|loudness|arousal)\b"
+)
+# Superlativo sem número ("o principal diferencial"), que a regra de redação
+# proíbe: a ordem dos temas vem da fração da tabela. Comparado sem acento.
+_SUPERLATIVO = re.compile(
+    r"\b(?:principal|maior)\s+(?:diferencial|problema|dor|driver|ponto|fator|motivo|fonte|causa|queixa|elogio"
+    r"|destaque)\b"
 )
 # Leitura da ausência como irrelevância, que a cliente pediu para evitar.
 _AUSENCIA_COMO_IRRELEVANCIA = re.compile(
@@ -3630,6 +3683,11 @@ def verificar_referencias(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> List[
         for termo in sorted({texto[m.start(1):m.end(1)].lower() for m in _TERMO_TECNICO_DE_VOZ.finditer(normal)}):
             problemas.append('{} usa "{}", termo técnico da voz, que fica no apêndice.'.format(titulo, termo))
         for frase in re.split(r"(?<=[.;!?])\s+|\n", normal):
+            superlativo = _SUPERLATIVO.search(frase)
+            if superlativo and not _FRACAO.search(frase):
+                problemas.append('{} usa "{}" sem número: a ordem dos temas vem da fração da tabela.'.format(
+                    titulo, superlativo.group(0)
+                ))
             if not _AUSENCIA_COMO_IRRELEVANCIA.search(frase):
                 continue
             for nome, rotulo in sem_mencao.items():

@@ -486,7 +486,8 @@ sem trocá-lo por termos técnicos.
 Como ler os sinais:
 - "Sem destaque em relação aos demais relatos" é a voz do próprio projeto, o caso da \
 maioria dos temas: não acrescenta nada ao texto. Não a leia como cortesia protocolar, \
-satisfação morna, entusiasmo contido ou insatisfação normalizada, e não apoie hipótese nela.
+satisfação morna, funcional ou estável, entusiasmo contido, falta de encantamento ou \
+insatisfação normalizada, e não apoie hipótese nela.
 - "Poucos relatos com voz para uma leitura": menos de 5 respondentes com voz no tema. Não \
 comente a voz desse tema.
 - "Crítica dita com resignação, sem irritação na voz" sugere insatisfação já normalizada: \
@@ -579,7 +580,8 @@ aparece. "Concentrada em <unidade>" aponta um problema daquela unidade: trate-o 
 local, não o generalize para a rede, e dirija a recomendação à unidade. Os respondentes \
 sem unidade ficam fora dessa coluna.
 - Os Sumários Executivos das análises individuais são interpretação prévia: podem \
-inspirar hipóteses, mas não sustentam achado nem número.
+inspirar hipóteses, mas não sustentam achado nem número. Eles chegam sem as frases \
+que liam a voz de cada áudio: a voz entra só pelo sinal emocional dos temas.
 - A base de conhecimento traz literatura e material do projeto, para contexto e \
 calibração. Nunca tire dela número, contagem ou achado desta amostra.
 - Indicadores de voz e classificações automáticas são sinais probabilísticos, não \
@@ -820,6 +822,7 @@ def tarefa_analise_geral(
     alertas: int = 0,
     recomendaveis: Sequence[str] = (),
     a_acompanhar: Sequence[str] = (),
+    voz_sem_destaque: bool = False,
 ) -> str:
     """A tarefa que fecha a mensagem: as seções, na ordem, com o que vale aqui.
 
@@ -833,7 +836,9 @@ def tarefa_analise_geral(
     acompanhar e investigar". `novos_sem_tendencia` são os respondentes novos
     quando a coluna do Δ aparece sem sustentar tendência, e `alertas`,
     quantas menções a temas de alerta crítico o recorte tem: o sistema as
-    lista no topo do relatório, e a IA só cita o número.
+    lista no topo do relatório, e a IA só cita o número. `voz_sem_destaque`
+    diz que nenhum achado tem sinal emocional com destaque: a IA não comenta
+    a voz fora dos achados e da Matriz.
     """
     titulo_acompanhar = "Para acompanhar e investigar" if exploratoria is not None else "Para acompanhar"
     secoes = ["**Resumo Executivo**"]
@@ -913,6 +918,13 @@ def tarefa_analise_geral(
             "{} a temas de alerta crítico, que o sistema lista no topo do relatório. No Resumo "
             "Executivo, diga só quantas são; não descreva o conteúdo, não dê ID a elas nem tire "
             "hipótese delas.".format("Há 1 menção" if alertas == 1 else "Há {} menções".format(alertas))
+        )
+    if voz_sem_destaque:
+        avisos.append(
+            "Nenhum achado tem sinal emocional com destaque: a voz não acrescenta nada ao que foi dito "
+            "nesta amostra. Repita o sinal de cada achado como está e não comente a voz no Resumo, nas "
+            "Hipóteses, em {} nem no Termômetro. Não leia a falta de destaque como satisfação funcional "
+            "ou estável, nem como falta de entusiasmo ou de encantamento.".format(titulo_acompanhar)
         )
     if avisos:
         linhas.extend([""] + avisos)
