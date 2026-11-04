@@ -1,16 +1,35 @@
-"""Redação do relatório da Análise Geral (Fase 4 da spec de Unidades e tags).
+"""Redação do relatório da Análise Geral (Fases 4 e 5 da spec de Unidades e tags).
 
 O sinal emocional em frase de negócio, a seção "Como ler esta análise",
 escrita pelo código, e a regra de que só tema em padrão sustenta
-recomendação. A montagem e a verificação do texto da IA estão em
-test_prosodia_montagem.py.
+recomendação. Da validação com a Smart Fit (Fase 5): o que vai para a IA
+sem a leitura técnica da voz, o aviso de voz sem destaque, a verificação de
+"vocal" e de superlativo sem número, e Outros na Matriz. A montagem e a
+verificação do texto da IA estão em test_prosodia_montagem.py.
 """
 
 import dataclasses
 import unittest
 
-from tests.test_prosodia_relatorio import ATENDENTE, LOTACAO, MAQUINA, _agregar, _audio, _linhas, _tema
+import pandas as pd
+
+from tests import test_prosodia_tags as tags
+from tests.test_prosodia_montagem import _exemplo, _trocar, _verificar
+from tests.test_prosodia_relatorio import (
+    ATENDENTE,
+    LOTACAO,
+    MAQUINA,
+    _agregar,
+    _audio,
+    _linhas,
+    _tema,
+    _vad,
+)
+from tests.test_prosodia_signals import BASE, sincronizado
 from utils import prosodia_relatorio as rel
+from utils import prosodia_signals as sinais
+from utils.prosodia_project_types import PESQUISA_OPINIAO
+from utils.prosodia_temas import OUTROS
 from utils.prosodia_relatorio import (
     ABAIXO,
     ACIMA,
@@ -162,6 +181,116 @@ class RecomendacaoTests(unittest.TestCase):
         self.assertEqual(agregacao.temas[0].faixa, rel.PADRAO)
         self.assertFalse(rel.pode_recomendar(agregacao, agregacao.temas[0]))
         self.assertEqual(rel.achados_a_acompanhar(agregacao), ["A1"])
+
+
+# ---------------------------------------------------------------------------
+# Validação com a Smart Fit (Fase 5)
+# ---------------------------------------------------------------------------
+
+class VozForaDaMensagemTests(unittest.TestCase):
+    """Na validação, a IA leu "Sem destaque" como "satisfação funcional, sem
+    encantamento vocal": a leitura vinha dos Sumários Executivos e da tabela de
+    divergências, que chegavam com valência, ativação e "habitual"."""
+
+    def test_the_summary_loses_the_sentences_that_read_the_voice(self):
+        texto = (
+            "O aluno elogia a recepção e a energia da academia. A prosódia indica baixa ativação e valência "
+            "neutra, sugerindo satisfação funcional. O tom de voz é contido!\nRecomenda manter a equipe."
+        )
+
+        self.assertEqual(
+            rel.sem_leitura_da_voz(texto),
+            "O aluno elogia a recepção e a energia da academia.\nRecomenda manter a equipe.",
+        )
+
+    def test_a_summary_that_only_read_the_voice_stays_out(self):
+        audios = [_audio(1, _tema(MAQUINA)), _audio(2, _tema(MAQUINA))]
+        agregacao = _agregar(audios)
+        analises = {
+            1: "## Sumário Executivo\nMáquina parada. A fala tem energia emocional baixa, sem entusiasmo vocal.",
+            2: "## Sumário Executivo\nA valência vocal fica abaixo do habitual.",
+        }
+
+        sumarios = rel.sumarios_individuais(agregacao, analises)
+
+        self.assertEqual(sumarios.texto, "### Áudio 01\nMáquina parada.")
+        self.assertEqual((sumarios.com, sumarios.sem), (2, 0))
+
+    def test_divergences_reach_the_ai_without_the_voice_numbers(self):
+        divergencias = sinais.detectar_divergencias(sincronizado(BASE + [-0.6], [0.0] * 9 + [0.8]))
+
+        para_ia = sinais.divergencias_texto(divergencias, com_voz=False)
+        apendice = sinais.divergencias_texto(divergencias)
+
+        self.assertIn("| Tempo | Locutor | Fala | Texto (nota) | Leitura |", para_ia)
+        self.assertIn("texto positivo × voz negativa", para_ia)
+        for termo in ("valência", "habitual", "(z ", "_z:"):
+            with self.subTest(termo=termo):
+                self.assertNotIn(termo, para_ia)
+        self.assertIn("Voz (valência, z)", apendice)
+        self.assertNotIn("valência", sinais.divergencias_texto(pd.DataFrame(), com_voz=False))
+
+
+class VozSemDestaqueTests(unittest.TestCase):
+    def test_without_a_highlighted_signal_the_task_says_to_leave_the_voice_out(self):
+        agregacao = _agregar([_audio(i, _tema(MAQUINA)) for i in range(1, 7)])
+
+        tarefa = rel.mensagem_para_ia(agregacao, {}, "cabeçalho").split("## Tarefa", 1)[1]
+
+        self.assertTrue(rel.voz_sem_destaque(agregacao))
+        self.assertIn("Nenhum achado tem sinal emocional com destaque", tarefa)
+        self.assertIn("não comente a voz no Resumo, nas Hipóteses, em Para acompanhar e investigar nem no "
+                      "Termômetro", tarefa)
+
+    def test_one_highlighted_signal_is_enough_to_talk_about_the_voice(self):
+        agregacao = _exemplo()
+
+        self.assertFalse(rel.voz_sem_destaque(agregacao))
+        self.assertNotIn("Nenhum achado tem sinal emocional", rel.mensagem_para_ia(agregacao, {}, "cabeçalho"))
+        self.assertFalse(rel.voz_sem_destaque(_agregar([_audio(1, _tema(MAQUINA))])))
+
+
+class VerificacaoDaRedacaoTests(unittest.TestCase):
+    def test_vocal_and_outside_the_habitual_are_technical_terms(self):
+        texto = _trocar(
+            "(A1, 19/64) e a única dita com irritação perceptível na voz.",
+            "(A1, 19/64), sem encantamento vocal fora do habitual.",
+        )
+
+        self.assertEqual(_verificar(texto), [
+            'Resumo Executivo usa "fora do habitual", termo técnico da voz, que fica no apêndice.',
+            'Resumo Executivo usa "vocal", termo técnico da voz, que fica no apêndice.',
+        ])
+
+    def test_a_superlative_needs_a_number(self):
+        sem_numero = _trocar("O encantamento pode depender de pessoas", "O atendente pode ser o principal diferencial")
+        com_numero = _trocar(
+            "O encantamento pode depender de pessoas, não de processo:",
+            "O atendente pode ser o principal diferencial (A2, 13/64), e o encantamento depende de pessoas:",
+        )
+
+        self.assertEqual(_verificar(sem_numero), [
+            'Hipóteses usa "principal diferencial" sem número: a ordem dos temas vem da fração da tabela.',
+        ])
+        self.assertEqual(_verificar(com_numero), [])
+
+
+class OutrosNaMatrizTests(unittest.TestCase):
+    def test_an_audio_that_only_talks_about_others_shows_it(self):
+        audios = [tags._audio(i, tags._tema("Staff", "Recepção", "positiva", "Elogia a recepção.")) for i in range(1, 12)]
+        audios.append(tags._audio(12, tags._tema(OUTROS, "Preço da mensalidade", "positiva", "Acha a mensalidade justa.")))
+        vad = []
+        for audio in audios:
+            for linha in _vad(audio.session_id, range(4), valencia=0.02 * audio.audio_id):
+                vad.append(dict(linha, sentimento_texto=0.8))
+
+        agregacao = rel.agregar(audios, [a.audio_id for a in audios], tags.TAXONOMIA, PESQUISA_OPINIAO,
+                                sinc_projeto=pd.DataFrame(vad))
+
+        self.assertTrue(agregacao.matriz.avaliavel)
+        linha = next(l for l in agregacao.matriz.vinculo.linhas if l.audio_id == 12)
+        self.assertEqual(linha.temas, (OUTROS,))
+        self.assertIn("| Áudio 12 | Outros | Acha a mensalidade justa. |", rel.matriz_markdown(agregacao))
 
 
 if __name__ == "__main__":
