@@ -131,7 +131,8 @@ def confirmed_sample_names(project: Dict, model: Dict) -> Dict[str, str]:
     from utils import sensorial_db
 
     saved = sensorial_db.sample_names(project)
-    labels = sensorial_design.condition_labels(model["design"])
+    # O modelo já traz o nome comercial no rótulo; a correspondência usa o rótulo do desenho.
+    labels = {c["codigo"]: c.get("rotulo_desenho") or c["rotulo"] for c in model["design"].get("condicoes") or []}
     return {labels.get(code, code): saved[code] for code in sample_codes(model) if saved.get(code)}
 
 

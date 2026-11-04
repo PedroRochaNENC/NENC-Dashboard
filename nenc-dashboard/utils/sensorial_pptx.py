@@ -4,7 +4,7 @@ Apresentação PPTX da Análise Geral do Teste Sensorial (python-pptx, 16:9).
 Os mesmos números do PDF, com gráficos nativos e editáveis. Com uma análise
 de IA escolhida, ela vem logo depois da capa, e o resto passa a anexos: a
 síntese por amostra e claim, os achados, cada índice por condição e etapa, a
-curva média dos índices com achados (alinhada na primeira cheirada),
+curva média dos índices com achados (alinhada na primeira olfação),
 comparações, teste de associação, topomapas e limitações. Só códigos de
 participante.
 """
@@ -108,7 +108,7 @@ def _curve_slide(deck, model: Dict, measure: str, filters: Dict) -> None:
         series.append((labels.get(condition, condition), [by_time.get(t) for t in times]))
         palette.append(colors.get(condition, ACCENT))
     name = model["index_names"].get(measure, measure)
-    slide = deck.slide("{} no tempo".format(name), "Curva média por condição, segundos desde a 1ª cheirada")
+    slide = deck.slide("{} no tempo".format(name), "Curva média por condição, segundos desde a 1ª olfação")
     pptx_kit.line_chart(slide, _box(), ["{:g}".format(t) for t in times], series, palette,
                         number_format=_number_format(series), label_every=max(1, len(times) // 12))
 
@@ -136,9 +136,9 @@ def build_pptx(project: Dict, model: Dict, metrics: Dict, *, recorte: str = "", 
         deck.table_slides("Síntese por amostra e claim", headers, rows,
                           [3.4] + [(12.1 - 3.4) / (len(headers) - 1)] * (len(headers) - 1),
                           subtitle="Validado: teste explícito + cérebro ou corpo no sentido esperado")
-    items = [("h", "Diferenças (Holm)")] + [("b", f["texto"]) for f in findings if f["tipo"] == "diferença"]
+    items = [("h", "Diferenças (p < 0,05)")] + [("b", f["texto"]) for f in findings if f["tipo"] == "diferença"]
     if len(items) == 1:
-        items.append(("p", "Nenhuma comparação passou na correção de Holm."))
+        items.append(("p", "Nenhuma comparação com p < 0,05."))
     trends = [f["texto"] for f in findings if f["tipo"] == "tendência"]
     if trends:
         items += [("h", "Tendências")] + [("b", text) for text in trends[:12]]

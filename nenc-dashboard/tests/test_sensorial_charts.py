@@ -51,6 +51,21 @@ class ChartTests(BundleBase):
                       charts.score_bars(association.iloc[0:0], self.design, settings["faixas"])):
             self.assertEqual(len(empty.data), 0)
 
+    def test_comparisons_answer_the_study_and_the_charts_say_ic95(self):
+        table = self.metrics["eeg"]["comparacoes"]
+        fai = table[table["medida"] == "FAI"]
+        self.assertTrue((fai["tipo"] == "vs_basal").any())
+        figure = charts.comparison_chart(fai, {"N": "Neutro", "A": "Zinger"}, {}, "Atratividade")
+        shown = [label for bar in figure.data for label in bar.y]
+        self.assertTrue(shown)
+        self.assertTrue(all("× Basal" not in label for label in shown))  # a condição basal fica só na tabela
+        self.assertTrue(all(bar.orientation == "h" and bar.error_x.array is not None for bar in figure.data))
+        self.assertIn("Atratividade", figure.layout.xaxis.title.text)
+        notes = [a.text for a in figure.layout.annotations]
+        self.assertTrue(any("IC 95%" in note for note in notes))
+        bars = charts.condition_stage_bars(self.metrics["eeg"]["resumo"], "FAI", self.design, "Atratividade")
+        self.assertTrue(any("IC 95%" in a.text for a in bars.layout.annotations))
+
     def test_the_results_matrix_marks_direction_and_result(self):
         table = pd.DataFrame({"medida": ["FAI", "FAI", "PPI"], "condicao_a": ["A", "A", "A"],
                               "condicao_b": ["N", "Basal", "N"], "etapa": ["Olfacao"] * 3,

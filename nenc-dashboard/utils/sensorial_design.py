@@ -27,13 +27,16 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "desenho": {},
     "indices": {
         "nomes": {},  # código -> nome de negócio do projeto
-        "ppi": {"modo": "z", "pesos": {"FAI": 0.4, "ATTENTION_IDX_MID": 0.3, "MEMORY_IDX": 0.3}},
+        # Como na sintaxe da Aline (Sintaxe-EEG-atualizada.sps): soma dos componentes crus.
+        "ppi": {"modo": "spss", "pesos": {"FAI": 0.4, "ATTENTION_IDX_MID": 0.3, "MEMORY_IDX": 0.3}},
     },
     "limpeza": {
-        # A BASE LIMPA do SPSS, quando enviada, decide as janelas e tentativas de cada camada.
+        # A BASE LIMPA do SPSS, quando enviada, decide as janelas dos periféricos e as tentativas do
+        # teste de associação; no EEG ela só é conferida contra a regra abaixo.
         "usar_base_limpa": True,
-        # Regra de outliers da sintaxe do SPSS (ln, z, Mahalanobis), desligada por padrão.
-        "regra_spss": False,
+        # Regra de outliers da sintaxe da Aline (Sintaxe_OUTLIER.sps: ln, z, Mahalanobis), aplicada ao EEG
+        # de todo projeto: a mesma limpeza em todos os estudos.
+        "regra_spss": True,
         "z": 3.29,
         "p_mahalanobis": 0.001,
         "min_marcas": 5,
@@ -48,36 +51,42 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "faixas": {"muito_alta": 0.2, "alta": 0.0, "baixa": -0.1},
         # Quadrantes: adesão explícita (% de "Sim") × convicção (CR médio do "Sim").
         "quadrantes": {"pct_sim": 0.5, "cr": 0.0},
+        # Tempo de resposta acima disto vira o teto antes do CR, como na BASE LIMPA da Aline.
+        "rt_teto_ms": 3000,
     },
     # Claim -> indicadores que o confirmam: [{"palavra", "indicadores", "corpo"}]. Um "-" na
     # frente do código (ex.: "-AROUSAL_FRONT") diz que o esperado é o índice cair.
     "claims": [],
-    "estatistica": {"min_pares": 5, "alfa": 0.05},
+    # Critério da Aline: "diferença" com p < alfa, sem correção; "tendência" até `alfa_tendencia`.
+    # O teste é o Wilcoxon pareado até a Aline confirmar o dela.
+    "estatistica": {"min_pares": 5, "alfa": 0.05, "alfa_tendencia": 0.10, "teste": "wilcoxon"},
 }
 
-# Índices do relatório, calculados do PSD por janela (utils/sensorial_indices.py).
+# Os 10 índices da sintaxe da Aline (Sintaxe-EEG-atualizada.sps), calculados do PSD por janela
+# (utils/sensorial_indices.py), com os nomes do relatório do estudo. São os únicos que a plataforma mostra:
+# as outras colunas do pipeline ficam guardadas, fora das telas, da IA e das exportações.
 INDEX_CATALOG = (
-    {"codigo": "FAI", "nome": "Valência emocional",
+    {"codigo": "FAI", "nome": "Atratividade sensorial",
      "descricao": "Assimetria frontal de alfa, log10(F4) − log10(F3): positivo indica aproximação e atratividade."},
-    {"codigo": "TEMP_ASYM", "nome": "Memória olfativa",
+    {"codigo": "TEMP_ASYM", "nome": "Sensação de bem-estar",
      "descricao": "Assimetria temporal de alfa, log10(T4) − log10(T3): processamento límbico e memória olfativa."},
     {"codigo": "ALPHA_THETA", "nome": "Relaxamento",
      "descricao": "Razão alfa/teta em C3, C4, P3 e P4: relaxamento e cognição passiva."},
-    {"codigo": "BETA_GAMMA", "nome": "Processamento posterior",
+    {"codigo": "BETA_GAMMA", "nome": "Engajamento cognitivo",
      "descricao": "Razão beta/gama em P3, P4 e T3 a T6: engajamento cognitivo posterior."},
     {"codigo": "ATTENTION_IDX", "nome": "Atenção",
      "descricao": "Média de beta e gama sobre a de alfa e teta em F3, F4, P3 e P4: foco."},
-    {"codigo": "ATTENTION_IDX_MID", "nome": "Atenção integrada",
+    {"codigo": "ATTENTION_IDX_MID", "nome": "Foco e concentração",
      "descricao": "O índice de atenção com Fz e Cz da linha média."},
-    {"codigo": "MEMORY_IDX", "nome": "Memória e associação",
+    {"codigo": "MEMORY_IDX", "nome": "Fixação na memória",
      "descricao": "Média de teta e gama em P3, P4, T5 e T6 (potência absoluta)."},
-    {"codigo": "AROUSAL_FRONT", "nome": "Energia e prontidão",
+    {"codigo": "AROUSAL_FRONT", "nome": "Efeito energizante",
      "descricao": "Razão beta/alfa em Fp1, Fp2, F3, F4 e Fz: ativação cortical anterior."},
-    {"codigo": "MIDLINE_AROUSAL", "nome": "Alerta e foco",
+    {"codigo": "MIDLINE_AROUSAL", "nome": "Alerta de linha média",
      "descricao": "Razão beta/alfa em Fz e Cz."},
-    {"codigo": "PPI", "nome": "Índice preditivo geral",
-     "descricao": "0,4 × valência + 0,3 × atenção integrada + 0,3 × memória, com os componentes padronizados "
-                  "(ou como na sintaxe do SPSS, se o projeto pedir)."},
+    {"codigo": "PPI", "nome": "PPI – nota final",
+     "descricao": "0,4 × atratividade + 0,3 × foco e concentração + 0,3 × fixação na memória, como na sintaxe "
+                  "do SPSS (ou com os componentes padronizados, se o projeto pedir)."},
 )
 INDEX_CODES = tuple(item["codigo"] for item in INDEX_CATALOG)
 
@@ -89,15 +98,6 @@ PERIPHERAL_CATALOG = (
     {"codigo": "Comfort_Score", "nome": "Conforto", "camada": "fc"},
 )
 PERIPHERAL_CODES = tuple(item["codigo"] for item in PERIPHERAL_CATALOG)
-
-# Nomes legíveis para as colunas mais usadas dos indicadores do pipeline.
-PIPELINE_LABELS = {
-    "atencao": "Atenção (pipeline)",
-    "WTP": "Disposição a pagar (pipeline)",
-    "engagement_score": "Engajamento (pipeline)",
-    "AWI_frontal": "Assimetria frontal AWI (pipeline)",
-    "Memoria": "Memória (pipeline)",
-}
 
 _STAGE_LABELS = {"basal": "Basal", "olfacao": "Olfação", "posolfacao": "Pós-olfação"}
 _SAMPLE_CODE = re.compile(r"^[A-Za-z]+\d*")
@@ -126,7 +126,6 @@ def index_names(settings: Dict[str, Any]) -> Dict[str, str]:
     """Código -> nome de negócio (o do projeto, ou o do catálogo)."""
     names = {item["codigo"]: item["nome"] for item in INDEX_CATALOG}
     names.update({item["codigo"]: item["nome"] for item in PERIPHERAL_CATALOG})
-    names.update(PIPELINE_LABELS)
     names.update({str(k): str(v) for k, v in (settings.get("indices", {}).get("nomes") or {}).items() if v})
     return names
 

@@ -314,7 +314,7 @@ tela de Uploads.
   limitações), EEG, Periféricos, Associação, Amostra e qualidade, IA e
   Exportar. O recorte e a comparação por perfil valem para todas as seções.
 - **Sinais**: curva média por condição, alinhada ao início da etapa ou à
-  primeira cheirada, com o basal de referência; e a linha do tempo de uma
+  primeira olfação, com o basal de referência; e a linha do tempo de uma
   sessão.
 - **Participantes**: matriz participante × condição com completude e
   qualidade por camada, janelas que saíram, incluir/excluir com motivo e o

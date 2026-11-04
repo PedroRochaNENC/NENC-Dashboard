@@ -4,8 +4,8 @@ Teste Sensorial — Sinais.
 O tempo dentro das etapas:
 
 - Curva média: cada condição janela a janela (média das médias por
-  participante, ± erro padrão), alinhada no início da etapa ou na primeira
-  cheirada, com o basal de referência;
+  participante, com IC 95%), alinhada no início da etapa ou na primeira
+  olfação, com o basal de referência;
 - Linha do tempo individual: uma sessão de um participante, com as etapas da
   análise em sequência e as janelas que ficaram de fora em cinza.
 """
@@ -52,7 +52,7 @@ with tab_curve:
     c1, c2 = st.columns([3, 2])
     measure = c1.selectbox("Medida", measures, format_func=_measure_label, key="ts_si_measure")
     alignment = c2.radio("Alinhar em", ["etapa", "olfacao"], horizontal=True, key="ts_si_alignment",
-                         format_func=lambda a: "início da etapa" if a == "etapa" else "1ª cheirada")
+                         format_func=lambda a: "início da etapa" if a == "etapa" else "1ª olfação")
     conditions = [c["codigo"] for c in design.get("condicoes") or [] if c["papel"] != "basal"]
     chosen = st.multiselect("Condições", conditions, default=conditions, format_func=lambda c: labels.get(c, c),
                             key="ts_si_conditions")
@@ -67,7 +67,7 @@ with tab_curve:
                          index=stages.index(exposure) if exposure else 0, key="ts_si_stage") if stages else None
         curve = curve[curve["etapa"] == stage] if stage else curve
     elif result["sem_cheirada"]:
-        st.caption("{} sessão(ões) sem o evento da 1ª cheirada: alinhadas no início da exposição.".format(
+        st.caption("{} sessão(ões) sem o evento da 1ª olfação: alinhadas no início da exposição.".format(
             result["sem_cheirada"]))
     st.plotly_chart(charts.curve_chart(curve, result["referencia"], design, names.get(measure, measure), alignment),
                     width="stretch", key="ts_si_curve")

@@ -10,12 +10,19 @@ from utils import sensorial_design, sensorial_metrics, sensorial_stats
 
 
 class StatsTests(unittest.TestCase):
-    def test_holm_matches_the_step_down_rule(self):
-        self.assertEqual([round(p, 6) for p in sensorial_stats.holm([0.01, 0.04, math.nan, 0.03])][:2],
-                         [0.03, 0.06])
-        adjusted = sensorial_stats.holm([0.01, 0.04, math.nan, 0.03])
-        self.assertTrue(math.isnan(adjusted[2]))
-        self.assertAlmostEqual(adjusted[3], 0.06)
+    def test_the_verdict_is_the_report_criterion_without_correction(self):
+        self.assertEqual(sensorial_stats.verdict(0.049), sensorial_stats.DIFFERENCE)
+        self.assertEqual(sensorial_stats.verdict(0.07), sensorial_stats.TREND)
+        self.assertEqual(sensorial_stats.verdict(0.2), sensorial_stats.NO_DIFFERENCE)
+        self.assertEqual(sensorial_stats.verdict(math.nan), sensorial_stats.DESCRIPTIVE)
+        self.assertEqual(sensorial_stats.verdict(0.07, alpha=0.05, alpha_trend=0.06), sensorial_stats.NO_DIFFERENCE)
+
+    def test_the_95_ci_uses_student_t_like_spss(self):
+        from scipy.stats import t
+
+        described = sensorial_stats.describe([1.0, 2.0, 3.0, 4.0])
+        self.assertAlmostEqual(described["ic95"], t.ppf(0.975, 3) * described["dp"] / 2)
+        self.assertTrue(math.isnan(sensorial_stats.describe([1.0])["ic95"]))
 
     def test_paired_wilcoxon_effect_and_the_descriptive_floor(self):
         from scipy.stats import wilcoxon
@@ -26,8 +33,21 @@ class StatsTests(unittest.TestCase):
         self.assertAlmostEqual(result["p"], wilcoxon(a, b).pvalue)
         self.assertEqual(result["r"], 1.0)  # todas as diferenças positivas
         self.assertEqual(sensorial_stats.paired_test(a[:4], b[:4])["metodo"], sensorial_stats.DESCRIPTIVE)
-        self.assertEqual(sensorial_stats.verdict(0.01, 0.2), sensorial_stats.TREND)
-        self.assertEqual(sensorial_stats.verdict(0.01, 0.03), sensorial_stats.DIFFERENCE)
+        self.assertAlmostEqual(result["diferenca_media"], 1.5)
+        self.assertLess(result["ic_inf"], 1.5)
+        self.assertGreater(result["ic_sup"], 1.5)
+        self.assertEqual(result["metodo"], "wilcoxon")
+
+    def test_the_paired_t_is_ready_for_the_switch(self):
+        from scipy.stats import ttest_rel
+
+        a = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+        b = [4.0, 4.5, 6.0, 6.0, 8.5, 7.0]
+        result = sensorial_stats.paired_test(a, b, test="t_pareado")
+        self.assertAlmostEqual(result["p"], ttest_rel(a, b).pvalue)
+        self.assertEqual(result["metodo"], "t_pareado")
+        with self.assertRaises(ValueError):
+            sensorial_stats.paired_test(a, b, test="anova")
 
 
 class AssociationTests(unittest.TestCase):
@@ -69,6 +89,14 @@ class ComputeAllTests(BundleBase):
         curve = sensorial_metrics.curves(model, "FAI", "olfacao")
         self.assertFalse(curve["curva"].empty)
         self.assertIsNotNone(curve["referencia"])
+        self.assertIn("ic95", curve["curva"])
+
+    def test_data_warnings_stay_out_of_the_limitations(self):
+        sessions = [("s{}".format(i), "P{:02d}".format(i), "2001A", "A") for i in range(1, 7)] +                    [("x1", None, "2001A", "A")]
+        self._file("eeg_psd", _windows(sessions, per_stage=3))
+        result = sensorial_metrics.compute_all(self._model())
+        self.assertTrue(any("sem código de participante" in note for note in result["qualidade_dados"]))
+        self.assertFalse(any("sem código de participante" in note for note in result["limitacoes"]))
 
 
 if __name__ == "__main__":
