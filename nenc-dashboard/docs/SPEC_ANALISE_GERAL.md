@@ -390,7 +390,7 @@ Implementado na fase 4, em `utils/prosodia_prompts.py`: `sistema_analise_geral(t
 
 Os blocos marcados **[código]** são gerados pelo sistema. Os marcados **[IA]** são o que o modelo escreve. O `<exemplo_de_saida>` do prompt leva só os blocos [IA], com os títulos da Estrutura Obrigatória, precedidos de: "Ilustra formato e profundidade num setor fictício. Não reutilize temas, termos nem números."
 
-Atualizado na fase 4 da spec de Unidades e tags (`docs/SPEC_UNIDADES_E_TAGS.md`, §5 e §6): a voz chega como sinal emocional em frase, o código escreve "Como ler esta análise", só achado em padrão sustenta recomendação (os em sinal vão para "Para acompanhar"), a polaridade sai em palavras, e a Matriz e o Termômetro aparecem sem números no corpo, com os números e a conta no apêndice.
+Atualizado na fase 4 da spec de Unidades e tags (`docs/SPEC_UNIDADES_E_TAGS.md`, §5 e §6): a voz chega como sinal emocional em frase, o código escreve "Como ler esta análise", só achado em padrão sustenta recomendação (os em sinal vão para "Para acompanhar"), a polaridade sai em palavras, e a Matriz e o Termômetro aparecem sem números no corpo, com os números e a conta no apêndice. Em 11/11/2026 entrou o Resumo por tema (§5.6 da spec de Unidades), logo depois da Taxonomia, e a IA o escreve depois de "Para acompanhar".
 
 ---
 
@@ -424,7 +424,29 @@ Temas emergentes (fora da taxonomia): Estacionamento (Ambiente), 2/64, 2 crític
 
 _Faixas: 1–2 respondentes, menção isolada; 3–4, sinal; 5 ou mais e pelo menos 10% do total, padrão. O mesmo respondente pode estar em vários subtemas, então as contagens não se somam. "Anteriores → novos" compara os respondentes da análise de 30/09 com os que chegaram depois; 12 novos não sustentam tendência._
 
-### 2. Achados **[IA]**
+### 2. Resumo por tema
+
+Um bloco por tema em padrão (spec de Unidades, §5.6). Em cada bloco, o cabeçalho e o Termômetro do tema são do código, e as três linhas, da IA. Aqui, só os dois primeiros blocos; os de A3 e A4 seguem o mesmo formato.
+
+_Um bloco por tema em padrão, na ordem da tabela: o achado, a hipótese e a recomendação, em uma frase cada, e o Termômetro só com o que foi dito sobre o tema. O detalhe está nas seções seguintes._
+
+#### A1 · Equipamentos > Máquina fora de serviço · padrão, 19/64
+
+**Termômetro do tema:** **-3** (de -5 a +5) · 1 respondente com relato positivo, 2 neutros e 14 negativos. 17 dos 19 respondentes do tema têm nota do texto.
+
+- *Achado:* a máquina parada é quase sempre criticada, com ciclo pago e perdido.
+- *Hipótese:* é a dor com mais chance de virar reclamação pública (H2).
+- *Recomendação:* mostrar o status da máquina antes do pagamento e estornar o ciclo interrompido (R1).
+
+#### A2 · Atendimento > Atendente da unidade · padrão, 13/64
+
+**Termômetro do tema:** **+4** (de -5 a +5) · 12 respondentes com relato positivo, 1 neutro e 0 negativos.
+
+- *Achado:* o atendente é elogiado pelo nome, por uma ajuda fora do roteiro.
+- *Hipótese:* o encantamento pode depender de pessoas, não de processo (H3).
+- *Recomendação:* transformar o que os atendentes elogiados fazem em rotina de turno (R3).
+
+### 3. Achados **[IA]**
 
 - **A1** · Equipamentos > Máquina fora de serviço · padrão, 19/64 — 17 dos 19 descrevem a máquina parada de forma negativa. Os trechos falam em aviso de manutenção recorrente e em ciclo pago e perdido (Áudio 12, 00:14; Áudio 31, 00:09). Sinal emocional: irritação perceptível na voz.
 - **A2** · Atendimento > Atendente da unidade · padrão, 13/64 — 12 dos 13 elogiam o atendente. Os trechos o citam pelo nome e falam de uma ajuda fora do roteiro, como ensinar a usar o app na primeira lavagem (Áudio 03, 00:21; Áudio 40, 00:05). Sinal emocional: fala mais animada que a média; confirma o elogio.
@@ -435,25 +457,25 @@ _Faixas: 1–2 respondentes, menção isolada; 3–4, sinal; 5 ou mais e pelo me
 - **A7** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — 2 menções negativas, sobre demora na resposta (Áudio 37, 00:10), e 1 positiva. Sinal emocional: poucos relatos com voz para uma leitura.
 - Menções isoladas, sem hipótese própria: Secagem incompleta (2/64) e os emergentes Estacionamento (2/64) e Cheiro do sabão (1/64).
 
-### 3. Hipóteses **[IA]**
+### 4. Hipóteses **[IA]**
 
 - **H1** — A falha de pagamento pode ter virado atrito normalizado: o cliente relata o problema com resignação, o que combina mais com desistência silenciosa do que com reclamação ativa. *Apoia-se em:* A3. *Como validar:* comparar a recompra em 30 dias de quem teve estorno com a de quem não teve, e perguntar na próxima coleta se o cliente deixou de usar a loja por causa do pagamento.
 - **H2** — Máquina parada sugere a dor com mais chance de virar reclamação pública: é a mais citada e a única dita com irritação perceptível na voz. *Apoia-se em:* A1. *Como validar:* cruzar, por unidade, as menções ao tema com o tempo médio de reparo e com as reclamações em canais públicos.
 - **H3** — O encantamento pode depender de pessoas, não de processo: o elogio ao atendente vem com nome e com fala mais animada que a média, enquanto a limpeza, item de higiene, é elogiada sem entusiasmo. *Apoia-se em:* A2, A4. *Como validar:* verificar, no recorte por unidade, se os elogios ao atendente se concentram em poucas unidades ou turnos.
 
-### 4. Recomendações **[IA]**
+### 5. Recomendações **[IA]**
 
 - **R1** [Higiene] (Driver: Retenção · Área: Manutenção) — Mostrar no app e na própria máquina o status "fora de serviço" antes do pagamento, e estornar automaticamente o ciclo interrompido. *Responde a:* A1, H2. *Como medir:* fatia de respondentes no tema na próxima análise (hoje 19/64) e estornos manuais por unidade.
 - **R2** [Higiene] (Driver: Retenção · Área: Produto digital) — Corrigir o ponto do fluxo em que a cobrança não libera a máquina; até a correção, estornar em até 24 horas com aviso no app. *Responde a:* A3, H1. *Como medir:* menções ao tema entre os respondentes novos (hoje 5/12) e prazo médio de estorno.
 - **R3** [Encantamento] (Driver: Reputação · Área: Operações das unidades) — Transformar o que os atendentes elogiados fazem em rotina de turno (cumprimentar pelo nome, oferecer ajuda na primeira lavagem) e levar a rotina às unidades sem elogio. *Responde a:* A2, H3. *Como medir:* elogios ao atendimento por unidade na próxima análise.
 
-### 5. Para acompanhar **[IA]**
+### 6. Para acompanhar **[IA]**
 
 - **M1** · Ambiente > Espera por máquina livre · sinal, 6/64 — se a espera continua concentrada no fim de semana e passa de 10% dos respondentes. *Por quê:* A5.
 - **M2** · Pagamento > Preço do ciclo · sinal, 4/64 — se as críticas ao preço crescem entre os respondentes novos, em especial depois de reajuste. *Por quê:* A6.
 - **M3** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — se a demora na resposta se repete, e em que horário. *Por quê:* A7.
 
-### 6. Matriz de Destaques
+### 7. Matriz de Destaques
 
 **Os relatos mais positivos** — os elogios mais fortes do projeto, somando o que foi dito e o tom de voz. **[código]**
 
@@ -486,7 +508,7 @@ Tom de voz no grupo: 0 de 4 com tom mais positivo que a média do projeto e 3 co
 
 **[IA]** *Perfil:* reclamação de pagamento dita sem energia, o retrato de H1. *Ação:* contato da unidade em até 7 dias, com confirmação do estorno e um ciclo de cortesia, acompanhando se o cliente volta.
 
-### 7. Termômetro de Experiência
+### 8. Termômetro de Experiência
 
 **[código]** **-1** (de -5 a +5) · 20 respondentes com relato positivo, 19 neutros e 25 negativos. _Leitura do que foi dito; a voz entra pelo sinal emocional dos temas._
 
@@ -494,7 +516,7 @@ Tom de voz no grupo: 0 de 4 com tom mais positivo que a média do projeto e 3 co
 
 ### Apêndice técnico **[código]**
 
-Inclui a voz por tema com a leitura técnica (valência e ativação diante das réguas do projeto, que geram o sinal emocional), a Matriz de Destaques com os números (texto, voz, índice, ativação e os cortes de cada grupo), a conta do Termômetro (-0,18 × 5 = -0,9, arredondado para -1), médias acústicas por respondente, distribuição de emoções, momentos de maior ativação, ranking de palavras, sentimento do texto, índice combinado, divergências voz × texto, legenda "Áudio NN → sessão", limitações e cortes aplicados.
+Inclui a voz por tema com a leitura técnica (valência e ativação diante das réguas do projeto, que geram o sinal emocional), a Matriz de Destaques com os números (texto, voz, índice, ativação e os cortes de cada grupo), a conta do Termômetro (-0,18 × 5 = -0,9, arredondado para -1), a conta do Termômetro de cada tema do Resumo por tema, médias acústicas por respondente, distribuição de emoções, momentos de maior ativação, ranking de palavras, sentimento do texto, índice combinado, divergências voz × texto, legenda "Áudio NN → sessão", limitações e cortes aplicados.
 
 ---
 
