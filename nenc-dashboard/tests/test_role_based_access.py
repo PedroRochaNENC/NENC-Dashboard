@@ -607,11 +607,16 @@ class PeerAdministratorScopeTests(unittest.TestCase):
             actor=self.second_admin,
             database_path=self.database_path,
         )
-        self.assertFalse(auth.can_manage_user(self.first_admin, other_reader))
-        self.assertFalse(auth.can_manage_user(self.first_admin, self.second_admin))
-        self.assertTrue(auth.can_manage_user(self.second_admin, other_reader))
-        self.assertTrue(auth.can_manage_user(self.first_admin, self.reader))
-        self.assertTrue(auth.can_manage_user(self.platform_admin, other_reader))
+        # A guarda de autoria consulta o autor no banco: sem database_path o
+        # predicado leria o banco padrao do app, nao o deste teste.
+        def can_manage(actor, target):
+            return auth.can_manage_user(actor, target, self.database_path)
+
+        self.assertFalse(can_manage(self.first_admin, other_reader))
+        self.assertFalse(can_manage(self.first_admin, self.second_admin))
+        self.assertTrue(can_manage(self.second_admin, other_reader))
+        self.assertTrue(can_manage(self.first_admin, self.reader))
+        self.assertTrue(can_manage(self.platform_admin, other_reader))
 
     def test_promotion_is_allowed_but_closes_the_door_afterwards(self):
         promoted = auth.update_user(
