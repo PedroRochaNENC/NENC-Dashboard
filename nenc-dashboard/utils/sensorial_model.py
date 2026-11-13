@@ -449,7 +449,7 @@ def build_model(bundle: Dict) -> Dict[str, Any]:
         "deduced_design": deduced,
         "index_names": sensorial_design.index_names(settings),
         "indices": [code for code in sensorial_design.INDEX_CODES if code in eeg],
-        # Só os 10 índices da Aline são medidas: as outras colunas do pipeline (Memoria_log, AWI_F3_F4…)
+        # Só os 12 índices da Aline são medidas: as outras colunas do pipeline (Memoria_log, AWI_F3_F4…)
         # ficam guardadas em `pipeline_columns`, fora das telas, da IA e das exportações.
         "pipeline_indicators": [],
         "pipeline_columns": indicator_columns,

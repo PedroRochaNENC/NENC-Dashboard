@@ -62,9 +62,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "estatistica": {"min_pares": 5, "alfa": 0.05, "alfa_tendencia": 0.10, "teste": "wilcoxon"},
 }
 
-# Os 10 índices da sintaxe da Aline (Sintaxe-EEG-atualizada.sps), calculados do PSD por janela
-# (utils/sensorial_indices.py), com os nomes do relatório do estudo. São os únicos que a plataforma mostra:
-# as outras colunas do pipeline ficam guardadas, fora das telas, da IA e das exportações.
+# Os 12 índices das sintaxes da Aline (Sintaxe-EEG-atualizada.sps e Sintaxe-Indicador de Energia.sps),
+# calculados do PSD por janela (utils/sensorial_indices.py), com os nomes do relatório do estudo. São os únicos
+# que a plataforma mostra: as outras colunas do pipeline ficam guardadas, fora das telas, da IA e das exportações.
 INDEX_CATALOG = (
     {"codigo": "FAI", "nome": "Atratividade sensorial",
      "descricao": "Assimetria frontal de alfa, log10(F4) − log10(F3): positivo indica aproximação e atratividade."},
@@ -87,6 +87,12 @@ INDEX_CATALOG = (
     {"codigo": "PPI", "nome": "PPI – nota final",
      "descricao": "0,4 × atratividade + 0,3 × foco e concentração + 0,3 × fixação na memória, como na sintaxe "
                   "do SPSS (ou com os componentes padronizados, se o projeto pedir)."},
+    {"codigo": "CompA_Energia", "nome": "Energia mental",
+     "descricao": "Indicador de Energia, componente A: (beta + gama) / (teta + alfa) nos canais frontais e "
+                  "centrais (Fp1, Fp2, F3, F4, Fz, F7, F8, C3, C4, Cz): energia e ativação global."},
+    {"codigo": "CompB_Revital", "nome": "Revitalização mental (EEG)",
+     "descricao": "Indicador de Energia, componente B: (beta + gama) / alfa nos mesmos canais: revitalização "
+                  "mental e engajamento."},
 )
 INDEX_CODES = tuple(item["codigo"] for item in INDEX_CATALOG)
 

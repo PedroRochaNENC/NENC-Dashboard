@@ -2,7 +2,7 @@
 Métricas de um projeto do Teste Sensorial, a partir do modelo.
 
 - **Médias por participante**: cada participante vira um valor por condição e
-  etapa (a média das janelas incluídas), para o EEG (os 10 índices da sintaxe
+  etapa (a média das janelas incluídas), para o EEG (os 12 índices das sintaxes
   da Aline) e para os periféricos;
 - **Comparações por etapa**, pareadas por participante: amostra × basal (a
   etapa de referência do basal), amostra × controle e amostra × amostra, com o

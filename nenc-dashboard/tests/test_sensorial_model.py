@@ -39,6 +39,17 @@ class IndexTests(unittest.TestCase):
         self.assertAlmostEqual(indices["MEMORY_IDX"], (5.0 + 4.0) / 2)
         self.assertAlmostEqual(indices["MIDLINE_AROUSAL"], 2.0)
 
+    def test_the_energy_indicator_components(self):
+        energy = ("Fp1", "Fp2", "F3", "F4", "Fz", "F7", "F8", "C3", "C4", "Cz")
+        row = _psd_row()
+        for channel in energy:
+            row.update({channel + "_Theta": 1.0, channel + "_Alpha": 3.0, channel + "_Beta": 4.0,
+                        channel + "_Gamma": 2.0})
+        row["Cz_Alpha"] = 13.0  # alfa médio (9 × 3 + 13) / 10 = 4
+        indices = sensorial_indices.compute_indices(pd.DataFrame([row])).iloc[0]
+        self.assertAlmostEqual(indices["CompA_Energia"], (4.0 + 2.0) / (1.0 + 4.0))
+        self.assertAlmostEqual(indices["CompB_Revital"], (4.0 + 2.0) / 4.0)
+
     def test_missing_channels_zero_denominators_and_the_log_floor(self):
         rows = pd.DataFrame([
             _psd_row(C3_Alpha=np.nan, C4_Alpha=2.0, P3_Alpha=2.0, P4_Alpha=2.0),
@@ -73,12 +84,14 @@ class CleaningTests(unittest.TestCase):
         frame = pd.DataFrame(np.exp(generator.normal(size=(300, 6))), columns=columns)
         frame.loc[0, columns] = math.exp(8.0)  # 6 marcas positivas
         frame.loc[1, "c0"] = math.exp(6.0)  # 1 marca
-        frame.loc[2, "c1"] = 0.0  # sem ln: fora da contagem e da Mahalanobis
+        frame.loc[2, "c1"] = 0.0  # LN(0 + 1) = 0: a potência zero entra, como na sintaxe de 7/10
+        frame.loc[3, "c2"] = -1.0  # negativo não tem LN(x + 1) definido: fora da contagem e da Mahalanobis
         flags = sensorial_cleaning.outlier_flags(frame, columns, min_marks=5)
         self.assertEqual(flags.loc[0, "marcas_positivas"], 6)
         self.assertFalse(flags.loc[0, "valida"])
-        self.assertTrue(math.isnan(flags.loc[2, "mahalanobis"]))
-        logs = np.log(frame.drop(index=2)[columns])
+        self.assertFalse(math.isnan(flags.loc[2, "mahalanobis"]))
+        self.assertTrue(math.isnan(flags.loc[3, "mahalanobis"]))
+        logs = np.log1p(frame.drop(index=3)[columns])
         inverse = np.linalg.inv(np.cov(logs.to_numpy(), rowvar=False))
         expected = mahalanobis(logs.loc[1], logs.mean(), inverse) ** 2
         self.assertAlmostEqual(flags.loc[1, "mahalanobis"], expected, places=6)
