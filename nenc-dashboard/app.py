@@ -16,7 +16,8 @@ o menu sempre no topo da barra lateral e nada pode ficar acima dele. Com um
 A Jornada de Compra segue o mesmo desenho: lista de projetos e base de
 conhecimento sem projeto aberto; Análise Geral, Participantes, Uploads,
 Dados do Projeto e Entrevistas na seção do projeto. O Teste Sensorial também:
-lista de projetos sem projeto aberto, e as páginas do estudo na seção dele.
+lista de projetos e o Painel de efeitos (da organização) sem projeto aberto,
+e as páginas do estudo na seção dele.
 """
 
 import importlib
@@ -272,6 +273,11 @@ def _sensorial_pages(user: auth.User) -> dict[str, list]:
         module_pages.append(
             _page("modules/teste_sensorial/preparacao.py", "Novo projeto", "plus")
         )
+    # Da organização, não do projeto: compara as amostras de todos os estudos.
+    module_pages.append(
+        _page("modules/teste_sensorial/painel_efeitos.py",
+              "Painel de efeitos", "chart-bar")
+    )
     module_pages.append(
         _page("modules/teste_sensorial/base_conhecimento.py",
               "Base de Conhecimento", "books")

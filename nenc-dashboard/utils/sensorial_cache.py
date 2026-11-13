@@ -8,6 +8,9 @@ escrita que muda os dados ou o desenho sobe a versão na mesma transação, ent�
 a chave muda sozinha. Os nomes comerciais confirmados das amostras não sobem a
 versão (não mudam as contas), mas entram na chave: são o rótulo de tudo.
 
+Os efeitos de cada projeto para o Painel de efeitos ficam num cache próprio,
+com a mesma chave: o painel lê todos os projetos da organização de uma vez.
+
 A autorização acontece antes: quem chama já obteve o projeto por
 `sensorial_db.get_project` (que respeita a organização ativa) e passa o dict
 dele. A organização que entra na chave é a DO PROJETO.
@@ -72,6 +75,23 @@ def get_curves(project: Dict[str, Any], measure: str, alignment: str = "etapa",
                filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Curva média de uma medida por condição (ver `sensorial_metrics.curves`)."""
     return _curves(*_model_key(project), str(measure), str(alignment), _filters_json(filters))
+
+
+@st.cache_data(max_entries=64, ttl=_TTL_SECONDS, show_spinner=False)
+def _effects(project_id: int, organization_id: int, data_version: int, names: str) -> Dict[str, Any]:
+    from utils.sensorial_effects import project_effects
+
+    # Monta o modelo sem passar pelo `_model`: o painel lê todos os projetos da organização e não deve
+    # tirar do cache (4 entradas) o modelo do projeto aberto. O que fica guardado é só a tabela de efeitos.
+    return project_effects(build_model(sensorial_db.load_project_bundle(project_id, organization_id)))
+
+
+def get_project_effects(project: Dict[str, Any]) -> Dict[str, Any]:
+    """Efeitos de cada amostra contra o controle, para o Painel de efeitos (ver `sensorial_effects`).
+
+    A ficha da amostra não entra na chave: o painel a junta depois, e editá-la não recalcula nada.
+    """
+    return _effects(*_model_key(project))
 
 
 @st.cache_data(max_entries=128, ttl=_TTL_SECONDS, show_spinner=False)

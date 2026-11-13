@@ -32,7 +32,7 @@ class SensorialPagesTests(unittest.TestCase):
         """Glob vazio passaria os outros testes por vacuidade."""
         names = {path.name for path in _pages()}
         self.assertTrue({"projetos.py", "preparacao.py", "analise_geral.py", "sinais.py", "participantes.py",
-                         "uploads.py"} <= names)
+                         "uploads.py", "painel_efeitos.py"} <= names)
 
     def test_every_page_goes_through_the_module_guard(self):
         for path in _pages():

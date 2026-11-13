@@ -9,7 +9,9 @@ define a análise, em abas:
 - Desenho: o que cada sessão é (basal, controle, amostra) e as etapas que
   entram, deduzidos dos dados e corrigíveis aqui; e o nome comercial de cada
   amostra para a Análise Geral por IA, sugerido pelo relatório do estudo e
-  confirmado pela equipe;
+  confirmado pela equipe; e a ficha de cada amostra (base/fragrância,
+  categoria e claims-alvo), que o Painel de efeitos usa para comparar
+  amostras entre projetos;
 - Índices: nome de negócio de cada índice e o modo do PPI;
 - Limpeza: BASE LIMPA, regra de outliers do SPSS e qualidade dos periféricos;
 - Claims: o que confirma cada claim no cérebro e no corpo, as faixas do
@@ -19,8 +21,8 @@ define a análise, em abas:
   por IA (utils/sensorial_taxonomia.py);
 - Estatística: mínimo de pares e alfa.
 
-Toda mudança de Desenho a Estatística, menos Temas, os nomes comerciais e a
-conclusão do relatório, sobe a versão dos dados: a análise é recalculada e as
+Toda mudança de Desenho a Estatística, menos Temas, os nomes comerciais, a
+ficha das amostras e a conclusão do relatório, sobe a versão dos dados: a análise é recalculada e as
 análises de IA anteriores ficam marcadas como de dados antigos.
 """
 
@@ -500,9 +502,48 @@ def _render_sample_names(model: dict) -> None:
             st.rerun()
 
 
+def _render_sample_sheets(model: dict) -> None:
+    samples = [c for c in model["design"].get("condicoes") or [] if c.get("papel") == "amostra"]
+    if not samples:
+        return
+    st.divider()
+    st.markdown("**Ficha de cada amostra** — o que o Painel de efeitos usa para comparar amostras entre os "
+                "projetos da organização: a base ou fragrância, a categoria e os claims-alvo (separados por `;`).")
+    saved = sensorial_db.sample_sheets(project)
+    claims = [c["palavra"] for c in model["claims"]]
+    if claims:
+        st.caption("Claims deste projeto: " + "; ".join(claims))
+    table = pd.DataFrame([{
+        "codigo": c["codigo"], "amostra": c["rotulo"],
+        "base": (saved.get(c["codigo"]) or {}).get("base", ""),
+        "categoria": (saved.get(c["codigo"]) or {}).get("categoria") or project.get("categoria") or "",
+        "claims_alvo": "; ".join((saved.get(c["codigo"]) or {}).get("claims_alvo") or []),
+    } for c in samples])
+    edited = st.data_editor(
+        table, hide_index=True, width="stretch", disabled=True if not pode_editar else ["codigo", "amostra"],
+        column_config={"codigo": st.column_config.TextColumn("Código"),
+                       "amostra": st.column_config.TextColumn("Amostra"),
+                       "base": st.column_config.TextColumn("Base/fragrância"),
+                       "categoria": st.column_config.TextColumn("Categoria"),
+                       "claims_alvo": st.column_config.TextColumn("Claims-alvo", width="large")},
+        key="ts_sample_sheets_{}".format(project["id"]))
+    if pode_editar and st.button("Salvar ficha", type="primary", key="ts_save_sheets"):
+        sheets = {row["codigo"]: {"base": row["base"], "categoria": row["categoria"],
+                                  "claims_alvo": sensorial_db.split_claims(row["claims_alvo"])}
+                  for _, row in edited.iterrows()}
+        try:
+            sensorial_db.update_project(project["id"], ficha_amostras=sheets)
+        except (auth.AuthorizationError, ValueError) as error:
+            st.error(str(error))
+        else:
+            st.toast("Ficha salva.")
+            st.rerun()
+
+
 def _render_design_and_names(model: dict) -> None:
     _render_design(model)
     _render_sample_names(model)
+    _render_sample_sheets(model)
 
 
 def _render_themes(model: dict) -> None:

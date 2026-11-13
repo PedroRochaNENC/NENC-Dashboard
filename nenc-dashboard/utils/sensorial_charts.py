@@ -12,7 +12,8 @@ from typing import Dict, List, Optional, Sequence
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils.chart_kit import BRAND_SEQUENCE, DEEMPHASIS, INK, MUTED, OTHER_COLOR, bar_height, empty_figure, layout
+from utils.chart_kit import (BRAND_SEQUENCE, DEEMPHASIS, INK, MUTED, OTHER_COLOR, SURFACE, bar_height, empty_figure,
+                             layout)
 
 DIFFERENCE_COLOR = "#3987e5"
 TREND_COLOR = "#c98500"
@@ -255,3 +256,39 @@ def results_matrix(comparisons: pd.DataFrame, names: Dict[str, str], labels: Dic
     matrix = matrix.reindex([m for m in measures if m in matrix.index])
     matrix.index = [names.get(m, m) for m in matrix.index]
     return matrix.fillna("").reset_index().rename(columns={"index": "medida"})
+
+
+def effects_forest(rows: pd.DataFrame, name: str, scale: str = "dz") -> go.Figure:
+    """Painel de efeitos: o efeito de cada amostra contra o controle num índice, com o IC 95%, por etapa.
+
+    Uma linha por projeto e amostra, um ponto por etapa (cor da etapa); ponto cheio quando o projeto deu
+    "diferença" (p < alfa dele), vazado no resto. `scale`: "dz" (padronizado) ou "bruta".
+    """
+    if rows.empty:
+        return empty_figure("Sem amostra com este índice no recorte.")
+    effect, lower, upper = (("dz", "dz_inf", "dz_sup") if scale == "dz"
+                            else ("diferenca_media", "ic_inf", "ic_sup"))
+    rows = rows.copy()
+    rows["linha"] = rows["projeto"] + " · " + rows["amostra"]
+    order = list(dict.fromkeys(rows["linha"]))
+    figure = go.Figure()
+    for index, (stage, part) in enumerate(rows.groupby("etapa_rotulo", sort=False)):
+        color = BRAND_SEQUENCE[index % len(BRAND_SEQUENCE)]
+        significant = part["resultado"] == "diferença"
+        figure.add_scatter(
+            name=stage, orientation="h", mode="markers", x=part[effect], y=part["linha"],
+            marker=dict(color=[color if s else SURFACE for s in significant], size=10,
+                        line=dict(color=color, width=2)),
+            error_x=dict(type="data", symmetric=False, array=(part[upper] - part[effect]).fillna(0),
+                         arrayminus=(part[effect] - part[lower]).fillna(0), color=color, thickness=1.4, width=0),
+            customdata=part[["n", "p", lower, upper, "resultado", "controle"]],
+            hovertemplate="%{y} · " + stage + "<br>efeito %{x:.3g} (IC 95%: %{customdata[2]:.3g} a "
+                          "%{customdata[3]:.3g})<br>contra %{customdata[5]} · n = %{customdata[0]} · "
+                          "p = %{customdata[1]:.3g} · %{customdata[4]}<extra></extra>")
+    figure.add_vline(x=0, line=dict(color=MUTED, width=1))
+    _ci_note(figure, "ponto cheio: p < alfa do projeto · traço: IC 95%")
+    title = "dz pareado contra o controle" if scale == "dz" else "diferença média contra o controle"
+    figure = layout(figure, bar_height(len(order), 40, 130), xaxis_title="{} — {}".format(title, name),
+                    yaxis=dict(categoryorder="array", categoryarray=order, autorange="reversed", automargin=True),
+                    scattermode="group", scattergap=0.5)
+    return figure
