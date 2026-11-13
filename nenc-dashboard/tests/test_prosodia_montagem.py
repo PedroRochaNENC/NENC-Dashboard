@@ -310,6 +310,12 @@ relatos. *Por quê:* A1. *Como investigar:* cruzar com as ordens de manutenção
 - **M2** · Atendimento > Atendente da unidade · sinal, 3/12 — se o elogio ao atendente se repete. *Por quê:* A2. \
 *Como investigar:* perguntar pelo atendimento na próxima coleta.
 
+### Resumo por tema
+**A1 · Equipamentos > Máquina fora de serviço**
+- *Achado:* metade dos respondentes fala da máquina parada.
+- *Hipótese:* a máquina parada pode pesar mais que o atendimento na decisão de voltar (H1).
+- *Para acompanhar e investigar:* se a máquina parada continua em metade dos relatos (M1).
+
 ### Matriz de Destaques — leitura
 Não avaliável.
 
@@ -359,7 +365,12 @@ class MensagemTests(unittest.TestCase):
         self.assertIn("4. **Recomendações**, só a partir de A1, A2, A3 e A4.", tarefa)
         self.assertIn("5. **Para acompanhar**, um M para cada um destes achados: A5, A6 e A7.", tarefa)
         self.assertIn(
-            '6. **Matriz de Destaques — leitura**, para "Os relatos mais positivos" e "Críticas ditas com resignação".',
+            "6. **Resumo por tema**, um bloco para cada um destes achados em padrão, nesta ordem: A1, A2, A3 e A4. "
+            "A última linha de cada bloco é *Recomendação:*, com o ID da recomendação que responde ao achado.",
+            tarefa,
+        )
+        self.assertIn(
+            '7. **Matriz de Destaques — leitura**, para "Os relatos mais positivos" e "Críticas ditas com resignação".',
             tarefa,
         )
         self.assertIn("compara só 12 respondentes novos: trate as diferenças como variação observada", tarefa)
@@ -581,9 +592,10 @@ class MontagemTests(unittest.TestCase):
         ))
         titulos = [linha for linha in relatorio.splitlines() if linha.startswith("### ")]
         self.assertEqual(titulos, [
-            "### Como ler esta análise", "### Resumo Executivo", "### 1. Taxonomia de Temas", "### 2. Achados",
-            "### 3. Hipóteses", "### 4. Recomendações", "### 5. Para acompanhar", "### 6. Matriz de Destaques",
-            "### 7. Termômetro de Experiência", "### Apêndice técnico",
+            "### Como ler esta análise", "### Resumo Executivo", "### 1. Taxonomia de Temas",
+            "### 2. Resumo por tema", "### 3. Achados", "### 4. Hipóteses", "### 5. Recomendações",
+            "### 6. Para acompanhar", "### 7. Matriz de Destaques", "### 8. Termômetro de Experiência",
+            "### Apêndice técnico",
         ])
         self.assertIn("### Resumo Executivo\n\nMáquina fora de serviço", relatorio)
         # As linhas de tabela que a spec mostra no exemplo saem do código, iguais.
@@ -610,7 +622,7 @@ class MontagemTests(unittest.TestCase):
     def test_each_matrix_reading_goes_under_its_table_without_the_group_name(self):
         relatorio = self._montar()
 
-        matriz = relatorio.split("### 6. Matriz de Destaques", 1)[1].split("### 7.", 1)[0]
+        matriz = relatorio.split("### 7. Matriz de Destaques", 1)[1].split("### 8.", 1)[0]
         vinculo, risco = matriz.split("**Críticas ditas com resignação**", 1)
         self.assertIn(
             "Temas mais citados no grupo: Atendente da unidade (4/5), Limpeza da loja (3/5).\n\n"
@@ -621,7 +633,7 @@ class MontagemTests(unittest.TestCase):
                       "pagamento dita sem energia", risco)
         self.assertNotIn("**Os relatos mais positivos** — *Perfil:*", relatorio)
         self.assertNotIn("+0,", matriz)
-        termometro = relatorio.split("### 7. Termômetro de Experiência\n\n", 1)[1].split("\n\n### ", 1)[0]
+        termometro = relatorio.split("### 8. Termômetro de Experiência\n\n", 1)[1].split("\n\n### ", 1)[0]
         self.assertTrue(termometro.startswith("**-1** (de -5 a +5) · 20 respondentes com relato positivo"))
         self.assertNotIn("× 5", termometro)
         self.assertTrue(termometro.endswith("a limpeza (A4) é elogiada sem entusiasmo e pesa pouco."))
@@ -632,7 +644,7 @@ class MontagemTests(unittest.TestCase):
             "*Perfil:* clientes",
         ).replace("**Críticas ditas com resignação** — *Perfil:*", "*Perfil:*")
 
-        matriz = self._montar(texto).split("### 6. Matriz de Destaques", 1)[1].split("### 7.", 1)[0]
+        matriz = self._montar(texto).split("### 7. Matriz de Destaques", 1)[1].split("### 8.", 1)[0]
 
         self.assertLess(matriz.index("Falha no app de pagamento (3/4)."), matriz.index("*Perfil:* clientes"))
 
@@ -642,8 +654,8 @@ class MontagemTests(unittest.TestCase):
         relatorio = self._montar(agregacao=agregacao)
 
         self.assertIn(
-            "### 6. Matriz de Destaques\n\nMatriz não avaliável: 8 áudios com índice combinado no projeto, menos "
-            "que os 10 necessários.\n\n### 7. Termômetro de Experiência\n\n**Não avaliável:** nenhum respondente",
+            "### 7. Matriz de Destaques\n\nMatriz não avaliável: 8 áudios com índice combinado no projeto, menos "
+            "que os 10 necessários.\n\n### 8. Termômetro de Experiência\n\n**Não avaliável:** nenhum respondente",
             relatorio,
         )
         self.assertNotIn("*Perfil:*", relatorio)
@@ -654,9 +666,14 @@ class MontagemTests(unittest.TestCase):
 
         relatorio = self._montar(texto)
 
-        self.assertIn("### 3. Hipóteses\n\n_A IA não escreveu esta seção._", relatorio)
-        self.assertIn("### 4. Recomendações\n\n_A IA não escreveu esta seção._", relatorio)
-        self.assertIn("### 5. Para acompanhar\n\n_A IA não escreveu esta seção._", relatorio)
+        self.assertIn("### 4. Hipóteses\n\n_A IA não escreveu esta seção._", relatorio)
+        self.assertIn("### 5. Recomendações\n\n_A IA não escreveu esta seção._", relatorio)
+        self.assertIn("### 6. Para acompanhar\n\n_A IA não escreveu esta seção._", relatorio)
+        # Cada bloco do Resumo por tema sai com o cabeçalho e o Termômetro do código, e o aviso no lugar do texto.
+        self.assertIn(
+            "#### A4 · Ambiente > Limpeza da loja · padrão, 9/64\n\n**Termômetro do tema:**", relatorio
+        )
+        self.assertEqual(relatorio.split("### 3. Achados", 1)[0].count("_A IA não escreveu esta seção._"), 4)
 
     def test_without_signals_the_follow_up_section_says_so(self):
         agregacao = _exemplo()
@@ -665,7 +682,7 @@ class MontagemTests(unittest.TestCase):
 
         relatorio = self._montar(texto, agregacao)
 
-        self.assertIn("### 5. Para acompanhar\n\nNenhum achado em sinal: não há tema a acompanhar à parte.", relatorio)
+        self.assertIn("### 6. Para acompanhar\n\nNenhum achado em sinal: não há tema a acompanhar à parte.", relatorio)
 
     def test_the_exploratory_report_has_no_recommendations(self):
         agregacao = _agregar(_projeto_pequeno())
@@ -676,12 +693,17 @@ class MontagemTests(unittest.TestCase):
 
         titulos = [linha for linha in relatorio.splitlines() if linha.startswith("### ")]
         self.assertEqual(titulos, [
-            "### Resumo Executivo", "### 1. Taxonomia de Temas", "### 2. Achados", "### 3. Hipóteses",
-            "### 4. Para acompanhar e investigar", "### 5. Matriz de Destaques", "### 6. Termômetro de Experiência",
-            "### Apêndice técnico",
+            "### Resumo Executivo", "### 1. Taxonomia de Temas", "### 2. Resumo por tema", "### 3. Achados",
+            "### 4. Hipóteses", "### 5. Para acompanhar e investigar", "### 6. Matriz de Destaques",
+            "### 7. Termômetro de Experiência", "### Apêndice técnico",
         ])
         self.assertNotIn("Revisar as máquinas", relatorio)
         self.assertIn("*Como investigar:* cruzar com as ordens de manutenção da unidade.", relatorio)
+        resumo = relatorio.split("### 2. Resumo por tema\n\n", 1)[1].split("\n\n### ", 1)[0]
+        self.assertIn("o achado, a hipótese e o que acompanhar e investigar, em uma frase cada", resumo)
+        self.assertIn("- *Para acompanhar e investigar:* se a máquina parada continua em metade dos relatos (M1).",
+                      resumo)
+        self.assertNotIn("A2 ·", resumo)
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +794,7 @@ class VerificacaoTests(unittest.TestCase):
         self.assertEqual(_verificar(TEXTO_DO_PROJETO_PEQUENO, agregacao), [])
         self.assertEqual(_verificar(com_recomendacao, agregacao), [
             'A resposta da IA não trouxe a seção "Para acompanhar e investigar".',
+            'A resposta da IA não trouxe a seção "Resumo por tema".',
             'Com menos de 20 respondentes a análise não traz recomendações: a seção "Recomendações" ficou fora '
             "do relatório.",
             "Resumo Executivo cita M1, que não existe.",
@@ -991,8 +1014,9 @@ class EscreverRelatorioTests(unittest.TestCase):
         self.assertIn("Por isso esta análise não traz recomendações de ação.", como_ler)
         self.assertIn("A taxonomia ainda não foi validada com a cliente.", como_ler)
         self.assertIn("<como_ler>\n" + como_ler + "\n</como_ler>", relatorio.mensagem)
-        self.assertNotIn("### 4. Recomendações", relatorio.texto)
-        self.assertIn("### 4. Para acompanhar e investigar\n\n- **M1**", relatorio.texto)
+        self.assertNotIn("Recomendações\n", relatorio.texto)
+        self.assertIn("### 5. Para acompanhar e investigar\n\n- **M1**", relatorio.texto)
+        self.assertIn("#### Termômetro por tema — conta", relatorio.texto)
         self.assertIn("| Equipamentos > Máquina fora de serviço | 6/12 (50%) | Padrão | 6 críticas |", relatorio.texto)
         self.assertIn("- **A1** · Equipamentos > Máquina fora de serviço · padrão, 6/12", relatorio.texto)
         self.assertIn("| {} | 0/12 | — | sem menções espontâneas nesta amostra |".format(PRECO), relatorio.texto)

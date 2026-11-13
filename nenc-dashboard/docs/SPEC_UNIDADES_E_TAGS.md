@@ -281,14 +281,38 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 3. Como ler esta análise (código)
 4. Resumo Executivo (IA)
 5. Taxonomia de temas (código)
-6. Achados (IA)
-7. Hipóteses (IA)
-8. Recomendações (IA, só fora da leitura exploratória)
-9. Para acompanhar (IA)
-10. Matriz de Destaques (tabelas do código, leitura da IA)
-11. Termômetro de Experiência (número do código, leitura da IA)
-12. Apêndice técnico (código)
-13. Referências da base de conhecimento
+6. Resumo por tema (cabeçalho e Termômetro de cada bloco do código, três linhas da IA; §5.6)
+7. Achados (IA)
+8. Hipóteses (IA)
+9. Recomendações (IA, só fora da leitura exploratória)
+10. Para acompanhar (IA)
+11. Matriz de Destaques (tabelas do código, leitura da IA)
+12. Termômetro de Experiência (número do código, leitura da IA)
+13. Apêndice técnico (código)
+14. Referências da base de conhecimento
+
+### 5.6 Resumo por tema
+
+Pedido do Pedro em 11/11/2026: uma versão curta de achado, hipótese, o que acompanhar e Termômetro para cada tema grande da Taxonomia. Ele escolheu:
+
+- **Quais temas:** só os em padrão. Sinal e menção isolada continuam só nas seções completas.
+- **Onde:** seção nova logo depois da Taxonomia de Temas. Achados, Hipóteses, Recomendações e Para acompanhar continuam completos depois dela.
+- **Última linha do bloco:** fora da leitura exploratória, a recomendação (o tema em padrão é o que sustenta recomendação, §5.3); na leitura exploratória, "Para acompanhar e investigar".
+
+Cada bloco:
+
+```
+#### A1 · Staff · padrão, 45/72                        ← código
+**Termômetro do tema:** +3 (de -5 a +5) · ...           ← código
+- *Achado:* uma frase.                                  ← IA
+- *Hipótese:* uma frase, com o H que se apoia em A1.     ← IA
+- *Recomendação:* uma frase, com o R que responde a A1.  ← IA (exploratória: *Para acompanhar e investigar:*, com o M)
+```
+
+- **Termômetro do tema:** a mesma conta do Termômetro geral, só com os trechos classificados no tema: a média simples da nota do texto dos trechos de cada respondente, cada respondente com o mesmo peso, × 5, arredondada. O mesmo trecho citado em dois subtemas da tag conta uma vez. A conta de cada tema vai para o apêndice ("Termômetro por tema — conta"). O número não vai para a IA: ela não escreve número no bloco.
+- **A IA** escreve a seção depois de "Para acompanhar", porque ela resume as anteriores; a montagem a põe depois da Taxonomia. O cabeçalho que a IA escreve em cada bloco (`**A1 · Staff**`) não entra: o do relatório é do código.
+- **Verificação:** um bloco por tema em padrão; bloco de tema em sinal, repetido ou com ID que não existe fica fora, com aviso; cada bloco tem as três linhas; a hipótese citada se apoia no achado do bloco, a recomendação responde a ele (ou a uma hipótese que se apoia nele) e o item M vem dele. Sem citação, o bloco só passa quando nenhuma se liga ao achado. O texto do bloco passa pelas mesmas regras do resto (termos técnicos da voz, superlativo, frações, áudios).
+- Sem tema em padrão, a seção diz isso numa frase.
 
 ## 6. Prompt
 
@@ -296,6 +320,7 @@ A regra da v2 (`prosodia_relatorio.py:109-121`, limiares, estabilidade e mínimo
 - O exemplo de saída (`EXEMPLO_ANALISE_GERAL`) passa para o formato com tags, Sinal emocional e "Para acompanhar", no mesmo setor fictício de lavanderias.
 - `tarefa_analise_geral` diz, por achado, se ele pode gerar recomendação ou vai para "Para acompanhar", e manda o número de alertas críticos.
 - A mensagem recebe a seção "Como ler esta análise" já pronta, como contexto, para a IA não repetir os avisos nem contradizê-los.
+- Em 11/11/2026, a Estrutura, o exemplo e a tarefa ganham o "Resumo por tema" (§5.6): a tarefa lista os IDs dos achados em padrão e diz qual é a última linha de cada bloco.
 
 ## 7. Mudanças por arquivo
 

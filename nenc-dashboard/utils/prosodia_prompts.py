@@ -640,6 +640,20 @@ sinal se mantém. *Por quê:* A<n>.
 Na leitura exploratória, o título é "Para acompanhar e investigar", e cada item ganha \
 *Como investigar:* um dado operacional ou uma pergunta para a próxima coleta.
 
+### Resumo por tema
+Um bloco por achado em "padrão", na ordem da tabela, que resume o que as seções acima \
+dizem dele, em uma frase por linha:
+**A<n> · <tema>**
+- *Achado:* o que foi dito.
+- *Hipótese:* a hipótese que se apoia neste achado, com o ID; sem nenhuma, "nenhuma \
+hipótese se apoia neste tema".
+- *Recomendação:* a recomendação que responde a ele, com o ID; sem nenhuma, "nenhuma \
+recomendação responde a este tema".
+Na leitura exploratória não há recomendação: o bloco não tem a linha *Recomendação:*, e a \
+última linha é *Para acompanhar e investigar:* o item deste achado, com o ID (M<n>). Não \
+escreva a fração nem o Termômetro do tema: o sistema os põe no bloco. Não traga nada que \
+as seções acima não digam.
+
 ### Matriz de Destaques — leitura
 Para cada grupo da tabela recebida, um parágrafo que começa pelo nome do grupo em \
 negrito: **<grupo>** — *Perfil:* uma ou duas frases. *Ação:* uma frase; na leitura \
@@ -685,6 +699,27 @@ Máquina fora de serviço é a dor mais citada (A1, 19/64) e a única dita com i
 - **M1** · Ambiente > Espera por máquina livre · sinal, 6/64 — se a espera continua concentrada no fim de semana e passa de 10% dos respondentes. *Por quê:* A5.
 - **M2** · Pagamento > Preço do ciclo · sinal, 4/64 — se as críticas ao preço crescem entre os respondentes novos, em especial depois de reajuste. *Por quê:* A6.
 - **M3** · Atendimento > Suporte pelo WhatsApp · sinal, 3/64 — se a demora na resposta se repete, e em que horário. *Por quê:* A7.
+
+### Resumo por tema
+**A1 · Equipamentos > Máquina fora de serviço**
+- *Achado:* a máquina parada é quase sempre criticada, com ciclo pago e perdido.
+- *Hipótese:* é a dor com mais chance de virar reclamação pública (H2).
+- *Recomendação:* mostrar o status da máquina antes do pagamento e estornar o ciclo interrompido (R1).
+
+**A2 · Atendimento > Atendente da unidade**
+- *Achado:* o atendente é elogiado pelo nome, por uma ajuda fora do roteiro.
+- *Hipótese:* o encantamento pode depender de pessoas, não de processo (H3).
+- *Recomendação:* transformar o que os atendentes elogiados fazem em rotina de turno (R3).
+
+**A3 · Pagamento > Falha no app de pagamento**
+- *Achado:* cobrança que não libera a máquina e estorno demorado, sem nenhuma menção positiva.
+- *Hipótese:* a falha pode ter virado atrito normalizado, relatado com resignação (H1).
+- *Recomendação:* corrigir o fluxo de pagamento e estornar em até 24 horas até a correção (R2).
+
+**A4 · Ambiente > Limpeza da loja**
+- *Achado:* a limpeza é elogiada em frases curtas, sem detalhe.
+- *Hipótese:* item de higiene, elogiado sem entusiasmo, ao contrário do atendente (H3).
+- *Recomendação:* nenhuma recomendação responde a este tema.
 
 ### Matriz de Destaques — leitura
 **Os relatos mais positivos** — *Perfil:* clientes que citam o atendente pelo nome e falam com mais animação que a média; o vínculo é com a pessoa, não com a marca (H3). *Ação:* convidar para depoimento e indicação, e avisar a unidade antes de trocar de turno o atendente citado.
@@ -823,6 +858,7 @@ def tarefa_analise_geral(
     recomendaveis: Sequence[str] = (),
     a_acompanhar: Sequence[str] = (),
     voz_sem_destaque: bool = False,
+    por_tema: Sequence[str] = (),
 ) -> str:
     """A tarefa que fecha a mensagem: as seções, na ordem, com o que vale aqui.
 
@@ -838,7 +874,8 @@ def tarefa_analise_geral(
     quantas menções a temas de alerta crítico o recorte tem: o sistema as
     lista no topo do relatório, e a IA só cita o número. `voz_sem_destaque`
     diz que nenhum achado tem sinal emocional com destaque: a IA não comenta
-    a voz fora dos achados e da Matriz.
+    a voz fora dos achados e da Matriz. `por_tema` são os IDs dos achados em
+    padrão, que ganham bloco no Resumo por tema.
     """
     titulo_acompanhar = "Para acompanhar e investigar" if exploratoria is not None else "Para acompanhar"
     secoes = ["**Resumo Executivo**"]
@@ -880,6 +917,18 @@ def tarefa_analise_geral(
                 "recomendação."
             )
         secoes.append("**{}**: sem achado com ID, escreva uma frase dizendo isso.".format(titulo_acompanhar))
+    if por_tema:
+        secoes.append(
+            "**Resumo por tema**, um bloco para cada um destes achados em padrão, nesta ordem: {}. {}".format(
+                _e(list(por_tema)),
+                "Sem recomendação nesta leitura, o bloco não tem a linha *Recomendação:*: a última linha é *Para "
+                "acompanhar e investigar:*, com o ID do item M que você escreveu para o achado."
+                if exploratoria is not None else
+                "A última linha de cada bloco é *Recomendação:*, com o ID da recomendação que responde ao achado.",
+            )
+        )
+    else:
+        secoes.append("**Resumo por tema**: nenhum achado está em padrão; escreva apenas: Nenhum tema em padrão.")
     if grupos_matriz:
         secoes.append("**Matriz de Destaques — leitura**, para {}.".format(
             _e(['"{}"'.format(grupo) for grupo in grupos_matriz])

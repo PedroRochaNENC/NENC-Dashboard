@@ -1021,6 +1021,20 @@ def calcular_termometro(medias: Iterable[Optional[float]]) -> Termometro:
     return Termometro(len(medias), media, nota, positivos, len(medias) - positivos - negativos, negativos)
 
 
+def termometro_do_tema(ocorrencias: Iterable[Tuple[str, "Trecho", LeituraTrecho]]) -> Termometro:
+    """O Termômetro de um tema, só com os trechos classificados nele.
+
+    A mesma conta do Termômetro geral: cada respondente pesa igual, pela
+    média simples da nota do texto dos trechos dele no tema. O mesmo trecho
+    citado duas vezes conta uma, e trecho sem nota do texto fica de fora.
+    """
+    notas: Dict[str, Dict[Tuple[int, int], float]] = {}
+    for respondente, trecho, leitura in ocorrencias:
+        if leitura.nota_texto is not None:
+            notas.setdefault(respondente, {}).setdefault((trecho.audio_id, trecho.linha), leitura.nota_texto)
+    return calcular_termometro(sum(por_trecho.values()) / len(por_trecho) for por_trecho in notas.values())
+
+
 def _medias_do_texto(
     transcricao: Optional[pd.DataFrame],
     sinc: Optional[pd.DataFrame],
@@ -1469,6 +1483,9 @@ class Agregacao:
     trechos_de_alerta: Dict[str, List[Tuple[Optional[int], Optional[float], Optional[float]]]] = field(
         default_factory=dict
     )
+    # O Termômetro de cada tema citado, só com os trechos dele: vai para o
+    # Resumo por tema.
+    termometro_por_tema: Dict[str, Termometro] = field(default_factory=dict)
 
     @property
     def exploratoria(self) -> bool:
@@ -1662,6 +1679,9 @@ def agregar(
         candidatos=candidatos,
         falas_de_alerta=frozenset(falas_de_alerta),
         trechos_de_alerta=trechos_de_alerta,
+        termometro_por_tema={
+            tema.subtema: termometro_do_tema(ocorrencias.get(tema.subtema, [])) for tema in temas if not tema.alerta
+        },
     )
 
 
@@ -2163,6 +2183,16 @@ def matriz_markdown(agregacao: Agregacao, numeros: bool = False) -> str:
     return "\n\n".join(markdown for _, markdown, _ in _grupos_da_matriz(agregacao, numeros))
 
 
+def _saldo_do_termometro(t: Termometro) -> str:
+    """A nota e o saldo de respondentes: "**+3** (de -5 a +5) · 8 respondentes com relato positivo, ..."."""
+    return "**{}** (de -5 a +5) · {}, {} e {}.".format(
+        "{:+d}".format(t.nota) if t.nota else "0",
+        _plural(t.positivos, "respondente com relato positivo", "respondentes com relato positivo"),
+        _plural(t.neutros, "neutro", "neutros"),
+        _plural(t.negativos, "negativo", "negativos"),
+    )
+
+
 def termometro_markdown(agregacao: Agregacao) -> str:
     """O número do Termômetro e o saldo de respondentes, sem a conta.
 
@@ -2175,12 +2205,7 @@ def termometro_markdown(agregacao: Agregacao) -> str:
             "**Não avaliável:** nenhum respondente do recorte tem nota do sentimento do texto "
             "(os áudios anteriores ao sentimento do texto não têm)."
         )
-    texto = "**{}** (de -5 a +5) · {}, {} e {}.".format(
-        "{:+d}".format(t.nota) if t.nota else "0",
-        _plural(t.positivos, "respondente com relato positivo", "respondentes com relato positivo"),
-        _plural(t.neutros, "neutro", "neutros"),
-        _plural(t.negativos, "negativo", "negativos"),
-    )
+    texto = _saldo_do_termometro(t)
     if t.respondentes < agregacao.n_respondentes:
         texto += " {} dos {} respondentes têm nota do texto.".format(t.respondentes, agregacao.n_respondentes)
     return texto + " _Leitura do que foi dito; a voz entra pelo sinal emocional dos temas._"
@@ -2198,6 +2223,74 @@ def termometro_conta_markdown(agregacao: Agregacao) -> str:
             _enxuto(round(t.media * ESCALA_TERMOMETRO, 2)),
             "{:+d}".format(t.nota) if t.nota else "0",
         )
+    )
+
+
+def temas_do_resumo(agregacao: Agregacao) -> List[Tuple[str, LinhaTema]]:
+    """Os achados que ganham bloco no Resumo por tema: os em padrão, na ordem da tabela.
+
+    Em 11/11/2026 o Pedro pediu, para cada tema em padrão, uma versão curta
+    de achado, hipótese, recomendação (ou, na leitura exploratória, o que
+    acompanhar e investigar) e Termômetro.
+    """
+    return [(ident, tema) for ident, tema in achados_esperados(agregacao) if tema.faixa == PADRAO]
+
+
+def termometro_do_tema_markdown(agregacao: Agregacao, tema: LinhaTema) -> str:
+    """A linha do Termômetro no bloco do tema."""
+    t = agregacao.termometro_por_tema.get(tema.subtema, Termometro())
+    if not t.avaliavel:
+        return "**Termômetro do tema:** não avaliável: nenhum trecho do tema tem nota do sentimento do texto."
+    texto = "**Termômetro do tema:** " + _saldo_do_termometro(t)
+    if t.respondentes < tema.respondentes:
+        texto += " {} dos {} respondentes do tema têm nota do texto.".format(t.respondentes, tema.respondentes)
+    return texto
+
+
+def resumo_por_tema_markdown(agregacao: Agregacao, blocos: Optional[Dict[str, str]] = None) -> str:
+    """A seção "Resumo por tema": um bloco por tema em padrão.
+
+    O código põe o cabeçalho de cada bloco (ID, tema, faixa e fração) e o
+    Termômetro do tema; `blocos` traz, por ID, as três linhas que a IA
+    escreveu (blocos_por_tema). Bloco que a IA não escreveu sai com um aviso.
+    """
+    temas = temas_do_resumo(agregacao)
+    if not temas:
+        return (
+            "Nenhum tema em padrão nesta amostra (5 ou mais respondentes e pelo menos 10% do total): "
+            "não há tema para resumir à parte."
+        )
+    ultima = "o que acompanhar e investigar" if agregacao.exploratoria else "a recomendação"
+    partes = [
+        "_Um bloco por tema em padrão, na ordem da tabela: o achado, a hipótese e {}, em uma frase cada, "
+        "e o Termômetro só com o que foi dito sobre o tema. O detalhe está nas seções seguintes._".format(ultima)
+    ]
+    total = agregacao.n_respondentes
+    for ident, tema in temas:
+        partes.append("#### {} · {} · {}, {}\n\n{}\n\n{}".format(
+            ident, tema.subtema, tema.faixa.lower(), _fracao(tema.respondentes, total),
+            termometro_do_tema_markdown(agregacao, tema),
+            (blocos or {}).get(ident) or _SEM_TEXTO,
+        ))
+    return "\n\n".join(partes)
+
+
+def termometro_por_tema_conta_markdown(agregacao: Agregacao) -> str:
+    """A conta do Termômetro de cada tema do Resumo por tema, para o apêndice."""
+    linhas = []
+    for ident, tema in temas_do_resumo(agregacao):
+        t = agregacao.termometro_por_tema.get(tema.subtema, Termometro())
+        if t.avaliavel:
+            linhas.append("- {} · {}: {} × 5 = {}, arredondado para {} ({} com nota do texto).".format(
+                ident, tema.subtema, _decimal(t.media), _enxuto(round(t.media * ESCALA_TERMOMETRO, 2)),
+                "{:+d}".format(t.nota) if t.nota else "0",
+                _plural(t.respondentes, "respondente", "respondentes"),
+            ))
+        else:
+            linhas.append("- {} · {}: não avaliável, nenhum trecho com nota do texto.".format(ident, tema.subtema))
+    return (
+        "A mesma conta do Termômetro geral, só com os trechos classificados em cada tema: a média simples da "
+        "nota do texto dos trechos de cada respondente, com o mesmo peso para cada um.\n\n" + "\n".join(linhas)
     )
 
 
@@ -2715,6 +2808,8 @@ def apendice_markdown(
     if agregacao.matriz.avaliavel:
         secoes.append(("Matriz de Destaques — números", matriz_markdown(agregacao, numeros=True)))
     secoes.append(("Termômetro — conta", termometro_conta_markdown(agregacao)))
+    if temas_do_resumo(agregacao):
+        secoes.append(("Termômetro por tema — conta", termometro_por_tema_conta_markdown(agregacao)))
     secoes.append(("Divergências voz × texto", divergencias_markdown(agregacao, sinc_projeto)))
     if incluir_legenda:
         secoes.append(("Legenda dos áudios", legenda_markdown(agregacao)))
@@ -2905,6 +3000,7 @@ def mensagem_para_ia(
         recomendaveis=[ident for ident, tema in achados_esperados(agregacao) if pode_recomendar(agregacao, tema)],
         a_acompanhar=achados_a_acompanhar(agregacao),
         voz_sem_destaque=voz_sem_destaque(agregacao),
+        por_tema=[ident for ident, _ in temas_do_resumo(agregacao)],
     )
     return prompts.mensagem_analise_geral(
         contexto,
@@ -2932,16 +3028,20 @@ ACHADOS = "achados"
 HIPOTESES = "hipoteses"
 RECOMENDACOES = "recomendacoes"
 ACOMPANHAR = "acompanhar"
+POR_TEMA = "por_tema"
 LEITURA_MATRIZ = "matriz"
 LEITURA_TERMOMETRO = "termometro"
 
-# Os títulos da Estrutura de Resposta Obrigatória, na ordem.
+# Os títulos da Estrutura de Resposta Obrigatória, na ordem. O Resumo por tema
+# vem depois de "Para acompanhar" porque resume as seções anteriores, mas no
+# relatório ele entra logo depois da Taxonomia de Temas.
 TITULOS_DA_IA = {
     RESUMO: "Resumo Executivo",
     ACHADOS: "Achados",
     HIPOTESES: "Hipóteses",
     RECOMENDACOES: "Recomendações",
     ACOMPANHAR: "Para acompanhar",
+    POR_TEMA: "Resumo por tema",
     LEITURA_MATRIZ: "Matriz de Destaques — leitura",
     LEITURA_TERMOMETRO: "Termômetro — leitura",
 }
@@ -2952,6 +3052,8 @@ TITULO_ACOMPANHAR_EXPLORATORIA = "Para acompanhar e investigar"
 _INICIO_DO_TITULO = (
     ("para acompanhar", ACOMPANHAR),
     ("acompanhar", ACOMPANHAR),
+    ("resumo por tema", POR_TEMA),
+    ("por tema", POR_TEMA),
     ("resumo", RESUMO),
     ("achado", ACHADOS),
     ("hipotese", HIPOTESES),
@@ -3103,15 +3205,65 @@ def _leituras_que_entram(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> Dict[s
     return {"": leituras[""]} if "" in leituras else {}
 
 
+# A linha que abre o bloco de um tema no Resumo por tema: o ID do achado, como
+# título, item ou negrito ("**A1 · Staff**", "#### A1 · Staff", "- **A1** · Staff").
+_CABECA_DO_BLOCO = re.compile(r"^\s*(?:#+\s*|[-*•]\s+)?(?:\*\*|__)?\s*A(\d+)(?![\w])")
+
+
+def _blocos_da_ia(texto: str) -> List[Tuple[str, str]]:
+    """Os blocos do Resumo por tema, na ordem em que a IA os escreveu.
+
+    Cada bloco vai da linha com o ID até a do ID seguinte. A linha do ID fica
+    de fora, porque o cabeçalho do bloco é do código, e o texto antes do
+    primeiro ID também.
+    """
+    blocos: List[Tuple[str, List[str]]] = []
+    for linha in texto.splitlines():
+        cabeca = _CABECA_DO_BLOCO.match(linha)
+        if cabeca:
+            blocos.append(("A" + cabeca.group(1), []))
+        elif blocos:
+            blocos[-1][1].append(linha.strip())
+    return [(ident, _aparar(linhas)) for ident, linhas in blocos]
+
+
+_LINHA_DE_RECOMENDACAO = re.compile(r"^\s*(?:[-•]\s+)?recomendacao\s*:")
+
+
+def _recomenda(linha: str) -> bool:
+    """A linha "Recomendação:" de um bloco do Resumo por tema."""
+    return bool(_LINHA_DE_RECOMENDACAO.match(_normal(_limpa_linha(linha))))
+
+
+def blocos_por_tema(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> Dict[str, str]:
+    """O texto da IA de cada bloco do Resumo por tema que entra no relatório.
+
+    Entram só os blocos dos temas em padrão, o primeiro de cada ID. Na
+    leitura exploratória a linha "Recomendação:" sai: na geração de
+    11/11/2026 a IA a escreveu ("nenhuma recomendação responde a este tema")
+    além da de "Para acompanhar e investigar".
+    """
+    esperados = {ident for ident, _ in temas_do_resumo(agregacao)}
+    blocos: Dict[str, str] = {}
+    for ident, corpo in _blocos_da_ia(texto_da_ia.secao(POR_TEMA)):
+        if agregacao.exploratoria:
+            corpo = _aparar([linha for linha in corpo.splitlines() if not _recomenda(linha)])
+        if ident in esperados and ident not in blocos and corpo:
+            blocos[ident] = corpo
+    return {ident: blocos[ident] for ident, _ in temas_do_resumo(agregacao) if ident in blocos}
+
+
 def _texto_que_entra(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> Dict[str, str]:
     """O texto da IA que vai para o relatório, por seção e na ordem delas.
 
     A leitura da Matriz entra só para os grupos com áudio, e a do Termômetro,
     só com ele avaliável: no resto, o relatório traz só o texto do código. Na
     leitura exploratória, a seção de recomendações não entra (spec de
-    Unidades, §5.3).
+    Unidades, §5.3). Do Resumo por tema entram só os blocos dos temas em
+    padrão.
     """
     textos = {secao: texto_da_ia.secao(secao) for secao in (RESUMO, ACHADOS, HIPOTESES, RECOMENDACOES, ACOMPANHAR)}
+    textos[POR_TEMA] = "\n\n".join(blocos_por_tema(agregacao, texto_da_ia).values())
     if agregacao.exploratoria:
         textos[RECOMENDACOES] = ""
     textos[LEITURA_MATRIZ] = "\n\n".join(_leituras_que_entram(agregacao, texto_da_ia).values())
@@ -3149,7 +3301,9 @@ def montar_relatorio(
 
     Cabeçalho, alertas críticos, "Como ler esta análise", Resumo, as seções
     numeradas e o apêndice. O código põe o cabeçalho, os avisos, as tabelas e
-    o apêndice, e a IA, o texto de cada seção. Na leitura exploratória não há
+    o apêndice, e a IA, o texto de cada seção. O Resumo por tema vem logo
+    depois da Taxonomia, com o cabeçalho e o Termômetro de cada bloco do
+    código e as três linhas da IA. Na leitura exploratória não há
     a seção de recomendações, e "Para acompanhar" vira "Para acompanhar e
     investigar"; as seções se renumeram. A leitura de cada grupo da Matriz
     vai embaixo da tabela do grupo, sem o nome, que já está no título dele.
@@ -3174,6 +3328,7 @@ def montar_relatorio(
         acompanhar = textos[ACOMPANHAR] or "Nenhum achado em sinal: não há tema a acompanhar à parte."
     secoes = [
         ("Taxonomia de Temas", tabela_temas_markdown(agregacao)),
+        (TITULOS_DA_IA[POR_TEMA], resumo_por_tema_markdown(agregacao, blocos_por_tema(agregacao, texto_da_ia))),
         ("Achados", textos[ACHADOS] or _SEM_TEXTO),
         ("Hipóteses", textos[HIPOTESES] or _SEM_TEXTO),
     ]
@@ -3498,6 +3653,118 @@ def _conferir_acompanhamentos(acompanhamentos: List[_Item], problemas: List[str]
             problemas.append("{} não diz de que achado vem.".format(item.ident))
 
 
+# As partes de cada bloco do Resumo por tema, pelo rótulo seguido de dois-pontos.
+_PARTE_DO_BLOCO = re.compile(
+    r"\b(achado|hipotese|recomendacao|para acompanhar e investigar|acompanhar e investigar|para acompanhar)\s*:"
+)
+
+
+def _partes_do_bloco(texto: str) -> Dict[str, str]:
+    """O texto de cada parte do bloco, do rótulo até o rótulo seguinte, sem acento."""
+    normal = _normal(_limpa_linha(texto))
+    marcas = list(_PARTE_DO_BLOCO.finditer(normal))
+    partes: Dict[str, str] = {}
+    for indice, marca in enumerate(marcas):
+        fim = marcas[indice + 1].start() if indice + 1 < len(marcas) else len(normal)
+        chave = "acompanhar" if "acompanhar" in marca.group(1) else marca.group(1)
+        partes.setdefault(chave, normal[marca.end():fim])
+    return partes
+
+
+def _ids(texto: Optional[str], letras: str) -> Set[str]:
+    return {letra + numero for letra, numero in _ID_CITADO.findall(texto or "") if letra in letras}
+
+
+def _conferir_resumo_por_tema(
+    agregacao: Agregacao,
+    texto_da_ia: TextoDaIA,
+    hipoteses: List[_Item],
+    recomendacoes: List[_Item],
+    acompanhamentos: List[_Item],
+    problemas: List[str],
+) -> None:
+    """Os blocos do Resumo por tema: um por tema em padrão, com as três partes.
+
+    A hipótese citada no bloco tem de se apoiar no achado dele; a
+    recomendação, responder a ele ou a uma hipótese que se apoia nele; e o
+    item de "Para acompanhar e investigar", vir dele. Sem citação, o bloco só
+    passa quando nenhuma se liga ao achado.
+    """
+    esperados = dict(achados_esperados(agregacao))
+    do_resumo = dict(temas_do_resumo(agregacao))
+    vistos: Set[str] = set()
+    for ident, corpo in _blocos_da_ia(texto_da_ia.secao(POR_TEMA)):
+        if ident in vistos:
+            problemas.append("O Resumo por tema traz o bloco de {} mais de uma vez; entrou o primeiro.".format(ident))
+            continue
+        vistos.add(ident)
+        if agregacao.exploratoria and ident in do_resumo and any(_recomenda(linha) for linha in corpo.splitlines()):
+            problemas.append(
+                'O bloco de {} no Resumo por tema traz "Recomendação:", que a leitura exploratória não tem: a '
+                "linha ficou fora do relatório.".format(ident)
+            )
+        if ident not in esperados:
+            problemas.append("O Resumo por tema traz {}, que não existe.".format(ident))
+        elif ident not in do_resumo:
+            tema = esperados[ident]
+            problemas.append(
+                "O Resumo por tema traz {}, de {}, que está em {}: o resumo cobre só os temas em padrão, e o "
+                "bloco ficou fora do relatório.".format(ident, tema.subtema, tema.faixa.lower())
+            )
+
+    # Só entram as hipóteses, recomendações e itens que dizem de onde vêm: os
+    # que não dizem já têm o problema deles, e o bloco que os cita não ganha outro.
+    apoios = {item.ident: _ids(_trecho_depois(item.texto, _APOIA_SE, _COMO_VALIDAR), "A") for item in hipoteses}
+    respostas = {item.ident: _ids(_trecho_depois(item.texto, _RESPONDE_A, _COMO_MEDIR), "AH") for item in recomendacoes}
+    origens = {item.ident: _ids(item.texto, "A") for item in acompanhamentos}
+    apoios, respostas, origens = (
+        {ident: ligados for ident, ligados in mapa.items() if ligados} for mapa in (apoios, respostas, origens)
+    )
+    if agregacao.exploratoria:
+        ultima = ("acompanhar", '"Para acompanhar e investigar:"', "M", "o item de Para acompanhar e investigar")
+    else:
+        ultima = ("recomendacao", '"Recomendação:"', "R", "a recomendação")
+    blocos = blocos_por_tema(agregacao, texto_da_ia)
+    for ident, tema in do_resumo.items():
+        if ident not in blocos:
+            problemas.append("O Resumo por tema não trouxe o bloco de {} ({}).".format(ident, tema.subtema))
+            continue
+        partes = _partes_do_bloco(blocos[ident])
+        faltam = [
+            rotulo for chave, rotulo in (("achado", '"Achado:"'), ("hipotese", '"Hipótese:"'), ultima[:2])
+            if chave not in partes
+        ]
+        if faltam:
+            problemas.append("O bloco de {} no Resumo por tema está sem {}.".format(ident, _e(faltam)))
+        # Ligadas ao achado: a hipótese que se apoia nele, a recomendação que
+        # responde a ele e o item que vem dele. A recomendação citada também
+        # passa quando responde a uma hipótese que se apoia no achado.
+        ligadas_h = sorted(h for h, base in apoios.items() if ident in base)
+        if ultima[2] == "R":
+            ligadas = sorted(r for r, alvo in respostas.items() if ident in alvo)
+            aceitas = set(ligadas) | {r for r, alvo in respostas.items() if alvo & set(ligadas_h)}
+        else:
+            ligadas = sorted(m for m, origem in origens.items() if ident in origem)
+            aceitas = set(ligadas)
+        for chave, letra, ligados, validos, nome, verbo in (
+            ("hipotese", "H", ligadas_h, set(ligadas_h), "a hipótese", "não se apoia em"),
+            (ultima[0], ultima[2], ligadas, aceitas, ultima[3], "não responde a" if ultima[2] == "R" else "não vem de"),
+        ):
+            if chave not in partes:
+                continue
+            citados = sorted(_ids(partes[chave].upper(), letra))
+            existentes = set(apoios) if letra == "H" else set(respostas) if letra == "R" else set(origens)
+            for citado in citados:
+                if citado in existentes and citado not in validos:
+                    problemas.append("O bloco de {} no Resumo por tema cita {}, que {} {}.".format(
+                        ident, citado, verbo, ident
+                    ))
+            if not citados and ligados:
+                problemas.append("O bloco de {} no Resumo por tema não cita {} que se liga a ele ({}).".format(
+                    ident, nome, _e(ligados)
+                ))
+
+
 def _sinal_diferente(texto: str, tema: LinhaTema) -> Optional[str]:
     """O sinal emocional que o achado cita, quando difere do da tabela.
 
@@ -3628,6 +3895,8 @@ def verificar_referencias(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> List[
         esperadas.append(RECOMENDACOES)
     if achados_a_acompanhar(agregacao):
         esperadas.append(ACOMPANHAR)
+    if temas_do_resumo(agregacao):
+        esperadas.append(POR_TEMA)
     for secao in esperadas:
         if not texto_da_ia.secao(secao):
             problemas.append('A resposta da IA não trouxe a seção "{}".'.format(_titulo_da_secao(agregacao, secao)))
@@ -3672,8 +3941,10 @@ def verificar_referencias(agregacao: Agregacao, texto_da_ia: TextoDaIA) -> List[
     _conferir_hipoteses(hipoteses, problemas)
     _conferir_recomendacoes(agregacao, tema_do_achado, recomendacoes, problemas)
     _conferir_acompanhamentos(acompanhamentos, problemas)
+    if texto_da_ia.secao(POR_TEMA):
+        _conferir_resumo_por_tema(agregacao, texto_da_ia, hipoteses, recomendacoes, acompanhamentos, problemas)
 
-    sem_mencao = {_normal(rotulo): rotulo for rotulo in agregacao.sem_mencao}
+    sem_mencao ={_normal(rotulo): rotulo for rotulo in agregacao.sem_mencao}
     sem_mencao.update({_normal(rotulo.split(">", 1)[-1].strip()): rotulo for rotulo in agregacao.sem_mencao})
     definidos = {item.ident for item in achados + hipoteses + recomendacoes + acompanhamentos}
     for secao, texto in textos.items():
