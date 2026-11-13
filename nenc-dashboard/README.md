@@ -319,6 +319,15 @@ tela de Uploads.
 - **Participantes**: matriz participante × condição com completude e
   qualidade por camada, janelas que saíram, incluir/excluir com motivo e o
   perfil editável.
+- **Painel de efeitos** (da organização, fora do projeto): todas as amostras
+  de todos os projetos, cada uma contra o controle do próprio projeto, em cada
+  índice e etapa de exposição, com o IC 95%. A escala padrão é o dz pareado
+  (diferença média ÷ desvio das diferenças), comparável entre estudos; a
+  diferença bruta fica como opção. Filtra pela ficha da amostra (base/
+  fragrância, categoria e claims-alvo), preenchida no Desenho de cada projeto,
+  avisa quando os projetos do recorte têm configurações diferentes e mostra
+  uma organização por vez. O CSV vai para o `audit_log`
+  (`sensorial.export.painel_efeitos`).
 - **IA**: igual à Jornada (rápida ou aprofundada, histórico, chat, envio à base
   só por clique), com a base de conhecimento do Teste Sensorial da organização
   filtrada pelo projeto.

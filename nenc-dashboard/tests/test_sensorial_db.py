@@ -410,6 +410,26 @@ class StudyReportTests(_Base):
         self.assertEqual(self._version(project_id), before)
 
 
+    def test_sample_sheets_keep_what_was_filled_and_the_data_version(self):
+        project_id = self._project()
+        self.assertEqual(sensorial_db.sample_sheets(sensorial_db.get_project(project_id)), {})
+        before = self._version(project_id)
+        with self._as(self.first_admin):
+            sensorial_db.update_project(project_id, ficha_amostras={
+                "A": {"base": " Cítrica ", "categoria": "", "claims_alvo": "Energia; ; foco;Energia;Foco"},
+                "B": {"base": "", "categoria": None, "claims_alvo": []},
+                "C": {"categoria": "Corpo", "claims_alvo": [" Relaxamento "]}})
+        self.assertEqual(sensorial_db.sample_sheets(sensorial_db.get_project(project_id)), {
+            "A": {"base": "Cítrica", "claims_alvo": ["Energia", "foco"]},
+            "C": {"categoria": "Corpo", "claims_alvo": ["Relaxamento"]}})
+        self.assertEqual(self._version(project_id), before)
+
+    def test_a_broken_sheet_reads_as_empty(self):
+        self.assertEqual(sensorial_db.sample_sheets({"ficha_amostras": "não é json"}), {})
+        self.assertEqual(sensorial_db.sample_sheets({"ficha_amostras": "[1, 2]"}), {})
+        self.assertEqual(sensorial_db.sample_sheets({"ficha_amostras": '{"A": "texto"}'}), {})
+
+
 class SchemaMigrationTests(unittest.TestCase):
     def test_an_old_projects_table_gains_the_taxonomy_columns(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -423,7 +443,8 @@ class SchemaMigrationTests(unittest.TestCase):
                 sensorial_db.init_db()
             with closing(sqlite3.connect(database_path)) as database:
                 columns = {row[1] for row in database.execute("PRAGMA table_info(sens_projects)")}
-        self.assertTrue({"taxonomia", "taxonomia_status", "nomes_amostras", "claims_relatorio"} <= columns)
+        self.assertTrue({"taxonomia", "taxonomia_status", "nomes_amostras", "claims_relatorio",
+                         "ficha_amostras"} <= columns)
 
 
 class DataTests(_Base):

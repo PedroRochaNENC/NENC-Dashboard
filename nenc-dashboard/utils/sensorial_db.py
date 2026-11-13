@@ -46,12 +46,14 @@ PROJECT_FIELDS = (
     "taxonomia_status",
     "nomes_amostras",
     "claims_relatorio",
+    "ficha_amostras",
 )
 # Campos que mudam o resultado da análise: alterar qualquer um envelhece as
 # análises de IA e o cache do modelo.
 _DATA_FIELDS = {"settings_json", "quality_thresholds"}
 # Colunas que entraram depois da tabela: init_db as acrescenta num banco antigo.
-_ADDED_PROJECT_COLUMNS = ("taxonomia", "taxonomia_status", "nomes_amostras", "claims_relatorio")
+_ADDED_PROJECT_COLUMNS = ("taxonomia", "taxonomia_status", "nomes_amostras", "claims_relatorio",
+                          "ficha_amostras")
 # Conclusão do relatório do estudo sobre cada claim de cada amostra.
 REPORT_CLAIM_STATUSES = ("validado", "parcial", "não validado")
 
@@ -210,6 +212,7 @@ def init_db() -> None:
                 taxonomia_status TEXT,
                 nomes_amostras TEXT,
                 claims_relatorio TEXT,
+                ficha_amostras TEXT,
                 created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 data_version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -352,6 +355,32 @@ _PROJECT_SELECT = """
 """
 
 
+def split_claims(value: Any) -> List[str]:
+    """Claims-alvo de um texto separado por `;` (ou de uma lista), sem vazios nem repetidos."""
+    parts = value if isinstance(value, (list, tuple)) else str(value or "").split(";")
+    claims: List[str] = []
+    for part in parts:
+        text = str(part or "").strip()
+        if text and text.casefold() not in {claim.casefold() for claim in claims}:
+            claims.append(text)
+    return claims
+
+
+def _clean_sheet(sheet: Any) -> Dict[str, Any]:
+    """Ficha de uma amostra com só o que foi preenchido; vazia se nada foi."""
+    if not isinstance(sheet, dict):
+        return {}
+    clean: Dict[str, Any] = {}
+    for field in ("base", "categoria"):
+        text = str(sheet.get(field) or "").strip()
+        if text:
+            clean[field] = text
+    claims = split_claims(sheet.get("claims_alvo"))
+    if claims:
+        clean["claims_alvo"] = claims
+    return clean
+
+
 def _check_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
     unknown = set(fields) - set(PROJECT_FIELDS)
     if unknown:
@@ -367,10 +396,14 @@ def _check_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
             value = json.dumps({str(code): {str(claim): status for claim, status in (claims or {}).items()
                                             if status in REPORT_CLAIM_STATUSES}
                                 for code, claims in value.items() if claims}, ensure_ascii=False, sort_keys=True)
+        if key == "ficha_amostras" and isinstance(value, dict):
+            sheets = {str(code): _clean_sheet(sheet) for code, sheet in value.items()}
+            value = json.dumps({code: sheet for code, sheet in sheets.items() if sheet}, ensure_ascii=False,
+                               sort_keys=True)
         if key == "quality_thresholds" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False, sort_keys=True)
         if isinstance(value, str) and key not in ("settings_json", "quality_thresholds", "nomes_amostras",
-                                                  "claims_relatorio"):
+                                                  "claims_relatorio", "ficha_amostras"):
             value = value.strip()
         clean[key] = value
     if "name" in clean and not clean["name"]:
@@ -441,6 +474,18 @@ def report_claims(project: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, str]
         return {}
     return {str(code): {str(claim): status for claim, status in claims.items() if status in REPORT_CLAIM_STATUSES}
             for code, claims in saved.items() if isinstance(claims, dict) and claims}
+
+
+def sample_sheets(project: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Ficha de cada amostra (base/fragrância, categoria e claims-alvo), pelo código da condição; vazio sem nenhuma.
+
+    É o que o Painel de efeitos filtra. Como os nomes comerciais, não muda as contas nem sobe a versão.
+    """
+    saved = _json_or((project or {}).get("ficha_amostras"), {})
+    if not isinstance(saved, dict):
+        return {}
+    sheets = {str(code): _clean_sheet(sheet) for code, sheet in saved.items()}
+    return {code: sheet for code, sheet in sheets.items() if sheet}
 
 
 def update_project(project_id: int, **changes) -> bool:
