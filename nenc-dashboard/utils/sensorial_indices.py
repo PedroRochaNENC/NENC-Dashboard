@@ -6,10 +6,15 @@ As fórmulas são as da sintaxe do SPSS usada nos estudos: médias regionais
 piso de 1e-30 nas assimetrias e razão só com denominador positivo. Calculados
 sobre o PSD do pipeline, batem com o consolidado do SPSS janela a janela.
 
+Os dois componentes do Indicador de Energia (Sintaxe-Indicador de Energia.sps)
+usam as médias de cada banda nos canais frontais e centrais: A = (beta + gama)
+/ (teta + alfa), energia e ativação global; B = (beta + gama) / alfa,
+revitalização mental e engajamento.
+
 O PPI é a soma ponderada de três componentes em escalas muito diferentes (a
 memória vem em potência absoluta, perto de 1e-12, e na fórmula do SPSS quase
-não pesa). Por padrão os componentes entram padronizados (z, no conjunto
-analisado); o modo "spss" repete a fórmula original.
+não pesa). Por padrão ele repete a fórmula do SPSS (modo "spss"); o modo "z"
+padroniza os componentes no conjunto analisado.
 """
 
 from typing import Dict, Iterable, Optional
@@ -52,7 +57,7 @@ def _log_asymmetry(frame: pd.DataFrame, right: str, left: str) -> pd.Series:
 
 
 def compute_indices(psd: pd.DataFrame) -> pd.DataFrame:
-    """Os nove índices por janela (sem o PPI, que depende do conjunto analisado)."""
+    """Os onze índices por janela (sem o PPI, que depende do conjunto analisado)."""
     out = pd.DataFrame(index=psd.index)
     out["FAI"] = _log_asymmetry(psd, "F4_Alpha", "F3_Alpha")
     out["TEMP_ASYM"] = _log_asymmetry(psd, "T4_Alpha", "T3_Alpha")
@@ -71,6 +76,10 @@ def compute_indices(psd: pd.DataFrame) -> pd.DataFrame:
     front = ("Fp1", "Fp2", "F3", "F4", "Fz")
     out["AROUSAL_FRONT"] = _ratio(_mean(psd, "Beta", front), _mean(psd, "Alpha", front))
     out["MIDLINE_AROUSAL"] = _ratio(_mean(psd, "Beta", ("Fz", "Cz")), _mean(psd, "Alpha", ("Fz", "Cz")))
+    energy = ("Fp1", "Fp2", "F3", "F4", "Fz", "F7", "F8", "C3", "C4", "Cz")
+    fast = _mean(psd, "Beta", energy) + _mean(psd, "Gamma", energy)
+    out["CompA_Energia"] = _ratio(fast, _mean(psd, "Theta", energy) + _mean(psd, "Alpha", energy))
+    out["CompB_Revital"] = _ratio(fast, _mean(psd, "Alpha", energy))
     return out
 
 

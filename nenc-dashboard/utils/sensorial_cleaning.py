@@ -1,15 +1,19 @@
 """
 Limpeza das janelas e tentativas do Teste Sensorial.
 
-Duas fontes, nesta ordem:
+Duas fontes:
 
-1. **BASE LIMPA** enviada (as chaves da aba do consolidado do SPSS): quando o
-   projeto tem a de uma camada, ela decide quais janelas (EEG, periféricos) ou
-   tentativas (teste de associação) entram — é a curadoria do analista;
-2. **Regra de outliers da sintaxe do SPSS**, desligada por padrão: ln de cada
-   banda × canal, z no conjunto, marca |z| > 3,29 e calcula a distância de
-   Mahalanobis das 80 variáveis (p < 0,001 no qui-quadrado com 80 graus de
-   liberdade). A linha sai com 5 marcas ou mais, ou com 1 marca e Mahalanobis.
+1. **Rotina de outliers da sintaxe da Aline** (Sintaxe-Outliers.sps, versão de
+   7/10/2026), que decide as janelas de EEG de todo projeto: LN(x + 1) de cada
+   banda × canal (a potência zero entra, com valor 0), z no arquivo
+   inteiro, marca |z| > 3,29 e calcula a distância de Mahalanobis das 80
+   variáveis (p < 0,001 no qui-quadrado com 80 graus de liberdade). A linha sai
+   com 5 marcas ou mais, ou com 1 marca e Mahalanobis. A mesma limpeza em todos
+   os estudos é o que permite compará-los;
+2. **BASE LIMPA** enviada (as chaves da aba do consolidado do SPSS): decide as
+   janelas dos periféricos e as tentativas do teste de associação, para os quais
+   a Aline não tem rotina; no EEG ela só é conferida contra a rotina (e volta a
+   decidir se o projeto desligar a rotina).
 
 A decisão do usuário sobre a sessão (Participantes) vem depois de tudo.
 """
@@ -48,14 +52,15 @@ def outlier_flags(frame: pd.DataFrame, columns: Sequence[str], *, z: float = 3.2
                   p_mahalanobis: float = 0.001, min_marks: int = 5) -> pd.DataFrame:
     """A regra de outliers da sintaxe do SPSS, linha a linha.
 
-    Valor ≤ 0 não tem ln e fica de fora da contagem (como no SPSS); a
-    Mahalanobis só existe para linhas com as 80 variáveis.
+    LN(x + 1), como na versão de 7/10 da sintaxe: a potência zero não vira
+    falta. Valor negativo (que não deveria existir) fica de fora da contagem;
+    a Mahalanobis só existe para linhas com as 80 variáveis.
     """
     from scipy.stats import chi2
 
     columns = [column for column in columns if column in frame]
     values = frame[columns].astype("float64")
-    logs = np.log(values.where(values > 0))
+    logs = np.log1p(values.where(values >= 0))
     means = logs.mean()
     deviations = logs.std(ddof=1).replace(0, np.nan)
     scores = (logs - means) / deviations

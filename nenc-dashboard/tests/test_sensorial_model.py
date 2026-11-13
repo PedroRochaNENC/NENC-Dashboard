@@ -39,6 +39,17 @@ class IndexTests(unittest.TestCase):
         self.assertAlmostEqual(indices["MEMORY_IDX"], (5.0 + 4.0) / 2)
         self.assertAlmostEqual(indices["MIDLINE_AROUSAL"], 2.0)
 
+    def test_the_energy_indicator_components(self):
+        energy = ("Fp1", "Fp2", "F3", "F4", "Fz", "F7", "F8", "C3", "C4", "Cz")
+        row = _psd_row()
+        for channel in energy:
+            row.update({channel + "_Theta": 1.0, channel + "_Alpha": 3.0, channel + "_Beta": 4.0,
+                        channel + "_Gamma": 2.0})
+        row["Cz_Alpha"] = 13.0  # alfa médio (9 × 3 + 13) / 10 = 4
+        indices = sensorial_indices.compute_indices(pd.DataFrame([row])).iloc[0]
+        self.assertAlmostEqual(indices["CompA_Energia"], (4.0 + 2.0) / (1.0 + 4.0))
+        self.assertAlmostEqual(indices["CompB_Revital"], (4.0 + 2.0) / 4.0)
+
     def test_missing_channels_zero_denominators_and_the_log_floor(self):
         rows = pd.DataFrame([
             _psd_row(C3_Alpha=np.nan, C4_Alpha=2.0, P3_Alpha=2.0, P4_Alpha=2.0),
@@ -73,12 +84,14 @@ class CleaningTests(unittest.TestCase):
         frame = pd.DataFrame(np.exp(generator.normal(size=(300, 6))), columns=columns)
         frame.loc[0, columns] = math.exp(8.0)  # 6 marcas positivas
         frame.loc[1, "c0"] = math.exp(6.0)  # 1 marca
-        frame.loc[2, "c1"] = 0.0  # sem ln: fora da contagem e da Mahalanobis
+        frame.loc[2, "c1"] = 0.0  # LN(0 + 1) = 0: a potência zero entra, como na sintaxe de 7/10
+        frame.loc[3, "c2"] = -1.0  # negativo não tem LN(x + 1) definido: fora da contagem e da Mahalanobis
         flags = sensorial_cleaning.outlier_flags(frame, columns, min_marks=5)
         self.assertEqual(flags.loc[0, "marcas_positivas"], 6)
         self.assertFalse(flags.loc[0, "valida"])
-        self.assertTrue(math.isnan(flags.loc[2, "mahalanobis"]))
-        logs = np.log(frame.drop(index=2)[columns])
+        self.assertFalse(math.isnan(flags.loc[2, "mahalanobis"]))
+        self.assertTrue(math.isnan(flags.loc[3, "mahalanobis"]))
+        logs = np.log1p(frame.drop(index=3)[columns])
         inverse = np.linalg.inv(np.cov(logs.to_numpy(), rowvar=False))
         expected = mahalanobis(logs.loc[1], logs.mean(), inverse) ** 2
         self.assertAlmostEqual(flags.loc[1, "mahalanobis"], expected, places=6)
@@ -127,7 +140,7 @@ class DesignTests(unittest.TestCase):
         self.assertTrue(settings["limpeza"]["regra_spss"])
         self.assertTrue(settings["limpeza"]["usar_base_limpa"])
         self.assertEqual(sensorial_design.index_names(settings)["FAI"], "Atratividade")
-        self.assertEqual(sensorial_design.DEFAULT_SETTINGS["limpeza"]["regra_spss"], False)  # padrão intacto
+        self.assertEqual(sensorial_design.DEFAULT_SETTINGS["limpeza"]["regra_spss"], True)  # padrão intacto
 
 
 def _windows(sessions, stages=("Basal", "Olfacao", "PosOlfacao", "Audio>Gravacao"), per_stage=4, seed=3):
@@ -198,7 +211,9 @@ class ModelTests(BundleBase):
         self.assertTrue((audio[audio["sessao_id"] == "s5"]["motivo"] == "etapa fora da análise").all())
         included = eeg[eeg["incluida"]]
         self.assertEqual(sorted(included["sessao_id"].unique()), ["s2", "s3", "s5"])
-        self.assertAlmostEqual(included["PPI"].mean(), 0.0, places=9)  # z no conjunto analisado
+        # PPI como na sintaxe da Aline: a soma ponderada dos componentes crus.
+        expected = 0.4 * included["FAI"] + 0.3 * included["ATTENTION_IDX_MID"] + 0.3 * included["MEMORY_IDX"]
+        self.assertTrue(((included["PPI"] - expected).abs() < 1e-9).all())
         self.assertTrue(eeg.loc[~eeg["incluida"], "PPI"].isna().all())
         self.assertNotIn("F3_Alpha", eeg)  # as bandas não ficam no modelo
         self.assertEqual([c["codigo"] for c in model["design"]["condicoes"]], ["Basal", "A"])
@@ -211,13 +226,24 @@ class ModelTests(BundleBase):
         eeg = model["eeg"]
         self.assertTrue(eeg[(eeg["sessao_id"] == "s4") & (eeg["Etapa"] == "Olfacao")]["incluida"].all())
 
-    def test_the_spss_rule_only_runs_when_asked_and_without_base_limpa(self):
+    def test_the_aline_outlier_rule_decides_the_eeg_and_the_base_limpa_is_only_checked(self):
         psd = _windows(self.SESSIONS[:2], per_stage=40)
         psd.loc[psd.index[5], [c for c in sensorial_indices.BAND_COLUMNS[:10]]] = 1e9
         self._file("eeg_psd", psd)
-        self.assertNotIn("marcas_outlier", self._model()["eeg"])
-        eeg = self._model({"limpeza": {"regra_spss": True}})["eeg"]
+        eeg = self._model()["eeg"]  # ligada por padrão
         self.assertEqual(eeg.loc[5, "motivo"], "outlier pela regra do SPSS")
+        self.assertIn("marcas_outlier", eeg)
+        keys = psd[["sessao_id", "Etapa", "Bloco", "Tempo"]]  # a BASE LIMPA manteve todas as janelas
+        self._file("base_limpa_eeg", keys)
+        model = self._model()
+        self.assertFalse(model["eeg"].loc[5, "incluida"])  # vale a rotina
+        check = next(i for i in model["issues"] if i["code"] == "base_limpa_eeg_conferencia")
+        self.assertIn("a rotina tirou 1 que a BASE LIMPA manteve", check["message"])
+        self.assertFalse(any(i["code"] == "base_limpa_eeg" for i in model["issues"]))
+        # Projeto que desliga a rotina volta à BASE LIMPA.
+        off = self._model({"limpeza": {"regra_spss": False}})["eeg"]
+        self.assertNotIn("marcas_outlier", off)
+        self.assertTrue(off.loc[5, "incluida"])
 
     def test_peripherals_follow_quality_unless_the_base_limpa_decides(self):
         rows = []
@@ -240,6 +266,30 @@ class ModelTests(BundleBase):
         model = self._model()
         self.assertEqual(model["peripherals"]["incluida_fc"].tolist(), [False, True, False, True])
         self.assertTrue(any(i["code"] == "perifericos_qualidade" for i in model["issues"]))
+
+    def test_slow_answers_hit_the_3000_ms_ceiling_before_the_cr(self):
+        trials = pd.DataFrame({
+            "sessao_id": ["s1"] * 3, "participant_code": ["P07"] * 3, "experimento": ["2001A"] * 3,
+            "amostra": ["A"] * 3, "tentativa": [1, 2, 3], "palavra": ["Fresco", "Leve", "Doce"],
+            "rt": [1000.0, 2000.0, 9000.0], "resposta": ["Sim", "Nao", "Sim"]})
+        self._file("associacao_tentativas", trials)
+        table = self._model()["trials"]
+        self.assertEqual(table["rt"].tolist(), [1000.0, 2000.0, 3000.0])
+        self.assertEqual(table["rt_original"].tolist(), [1000.0, 2000.0, 9000.0])
+        self.assertEqual([round(v, 6) for v in table["cr"]], [1.0, 0.0, -1.0])
+        raw = self._model({"associacao": {"rt_teto_ms": None}})["trials"]
+        self.assertEqual(raw["rt"].tolist(), [1000.0, 2000.0, 9000.0])
+
+    def test_confirmed_commercial_names_become_the_labels_and_the_design_keeps_its_own(self):
+        import json
+
+        self._file("eeg_psd", _windows(self.SESSIONS[:2], per_stage=3))
+        model = build_model({"project": {"id": 1, "data_version": 3, "nomes_amostras": json.dumps({"A": "Zinger"})},
+                             "settings": {}, "files": self.files, "participants": [], "sessions": []})
+        conditions = {c["codigo"]: c for c in model["design"]["condicoes"]}
+        self.assertEqual(conditions["A"]["rotulo"], "Zinger")
+        self.assertEqual(conditions["A"]["rotulo_desenho"], "Amostra A")
+        self.assertNotIn("rotulo_desenho", conditions["Basal"])
 
     def test_trials_drop_empty_words_and_get_the_cr_of_their_session(self):
         trials = pd.DataFrame({
@@ -265,7 +315,9 @@ class ModelTests(BundleBase):
         self.assertFalse(model["eeg"].empty)
         self.assertNotIn("FAI", model["eeg"])  # sem PSD, sem os índices do relatório
         self.assertTrue(any(i["code"] == "sem_psd" for i in model["issues"]))
-        self.assertIn("atencao", model["pipeline_indicators"])
+        # As colunas do pipeline ficam guardadas, mas não são medidas: só os 10 índices da Aline.
+        self.assertIn("atencao", model["pipeline_columns"])
+        self.assertEqual(model["pipeline_indicators"], [])
         self.assertEqual(model["participants"].set_index("participant_code").loc["P07", "perfil_sexo"], "F")
         text = _texts(model["sessions"]) + _texts(model["eeg"]) + _texts(model["participants"])
         for word in CANARY_WORDS:

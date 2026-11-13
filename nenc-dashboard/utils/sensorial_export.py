@@ -4,8 +4,9 @@ Excel / Power BI do Teste Sensorial.
 Uma aba por tabela da análise, no recorte da página: projeto e desenho,
 sessões (com a situação em cada camada e a qualidade), participantes, janelas
 que ficaram de fora, médias por participante, resumo por condição e etapa,
-comparações pareadas (p bruto e de Holm, efeito), curvas dos índices,
-teste de associação, síntese, achados, limitações, análises de IA e um
+comparações pareadas (p, diferença média e IC 95%, efeito), curvas dos índices,
+teste de associação, síntese, achados, limitações, qualidade dos dados (os
+avisos, que só vão neste Excel técnico), análises de IA e um
 dicionário de todas as colunas. As janelas de EEG incluídas vão com os índices,
 para o Power BI relacionar pela sessão e pela etapa.
 
@@ -36,13 +37,14 @@ SHEET_DESCRIPTIONS = {
     "Janelas_Fora": "Janelas de EEG das etapas da análise que ficaram de fora, com o motivo.",
     "Janelas_EEG": "Janelas de EEG incluídas, com os índices do relatório (para o Power BI).",
     "Medias_Participante": "Média das janelas de cada participante por condição, etapa e medida.",
-    "Resumo": "Por medida, condição e etapa: n de participantes, média, desvio, erro padrão e mediana.",
-    "Comparacoes": "Comparações pareadas por participante (Wilcoxon), com o p de Holm por medida × etapa.",
-    "Curvas": "Curva média de cada índice por condição e etapa (início da etapa), com o erro padrão.",
+    "Resumo": "Por medida, condição e etapa: n de participantes, média, desvio, erro padrão, IC 95% e mediana.",
+    "Comparacoes": "Comparações pareadas por participante, com p < 0,05 como critério de diferença.",
+    "Curvas": "Curva média de cada índice por condição e etapa (início da etapa), com o erro padrão e o IC 95%.",
     "Associacao": "Teste de associação por condição e claim: % de Sim, CR do Sim, Score, faixa e quadrante.",
     "Sintese": "Por amostra e claim: o que cérebro, corpo e teste explícito confirmam.",
-    "Achados": "Diferenças (Holm) e tendências, em frases.",
+    "Achados": "Diferenças (p < 0,05) e tendências (p < 0,10), em frases.",
     "Limitacoes": "Limitações da análise.",
+    "Qualidade_Dados": "Avisos dos dados para a equipe (sessões sem código, repetidas, qualidade do sinal).",
     "Analises_IA": "Análises de IA salvas no projeto.",
     "Citacoes_IA": "Trechos da base de conhecimento citados nas análises.",
     "Dicionario": "Aba, coluna e o que ela contém.",
@@ -71,15 +73,18 @@ COLUMN_DESCRIPTIONS = {
     "motivo": "Por que a janela ficou de fora.", "medida": "Código da medida.", "medida_nome": "Nome de negócio.",
     "valor": "Média das janelas do participante.", "n": "Número de participantes (ou de pares).",
     "media": "Média.", "dp": "Desvio padrão.", "ep": "Erro padrão.", "mediana": "Mediana.",
+    "ic95": "Meia largura do IC 95% da média (t de Student com n − 1 graus).",
+    "diferenca_media": "Média das diferenças pareadas (a − b).",
+    "ic_inf": "Limite inferior do IC 95% da diferença média.", "ic_sup": "Limite superior do IC 95% da diferença média.",
+    "aviso": "Aviso dos dados.",
     "tipo": "Tipo da comparação: vs_basal, vs_controle ou entre_amostras.",
     "condicao_a": "Condição comparada.", "condicao_b": "Condição de comparação.",
     "etapa_b": "Etapa da condição de comparação (a de referência do basal).",
     "media_a": "Média da condição comparada.", "media_b": "Média da condição de comparação.",
     "mediana_a": "Mediana da condição comparada.", "mediana_b": "Mediana da condição de comparação.",
     "diferenca_mediana": "Mediana das diferenças pareadas (a − b).", "r": "r de postos pareado (−1 a 1).",
-    "p": "p bruto do Wilcoxon.", "metodo": "wilcoxon ou descritivo (abaixo do mínimo de pares).",
-    "p_holm": "p corrigido por Holm na família medida × etapa.",
-    "resultado": "diferença (Holm), tendência (p bruto), sem diferença ou descritivo.",
+    "p": "p do teste pareado.", "metodo": "wilcoxon, t_pareado ou descritivo (abaixo do mínimo de pares).",
+    "resultado": "diferença (p < 0,05), tendência (p < 0,10), sem diferença ou descritivo.",
     "camada": "eeg ou perifericos.", "t": "Segundos desde o início da etapa (bins de 0,25 s).",
     "palavra": "Claim do teste de associação.", "pct_sim": "Fração de respostas Sim.",
     "cr_sim": "CR médio das respostas Sim.", "score": "% de Sim × CR médio do Sim.",
@@ -178,7 +183,7 @@ def excel_tables(project: Dict, model: Dict, metrics: Dict, *, quality: Optional
         if not curve.empty:
             curves.append(curve.assign(medida=measure))
     tables["Curvas"] = clean_frame(_with_names(pd.concat(curves, ignore_index=True), names) if curves else None,
-                                   ["medida", "medida_nome", "condicao", "etapa", "t", "media", "ep", "n"])
+                                   ["medida", "medida_nome", "condicao", "etapa", "t", "media", "ep", "ic95", "n"])
     association = metrics["associacao"]["por_condicao"].assign(grupo="")
     pooled = metrics["associacao"].get("agrupado")
     if pooled is not None and not pooled.empty:
@@ -186,8 +191,9 @@ def excel_tables(project: Dict, model: Dict, metrics: Dict, *, quality: Optional
     tables["Associacao"] = clean_frame(association)
     tables["Sintese"] = clean_frame(metrics["sintese"])
     tables["Achados"] = clean_frame(pd.DataFrame(metrics["achados"]),
-                                    ["camada", "tipo", "medida", "condicao", "comparacao", "etapa", "p_holm", "texto"])
+                                    ["camada", "tipo", "medida", "condicao", "comparacao", "etapa", "p", "texto"])
     tables["Limitacoes"] = pd.DataFrame({"limitacao": metrics["limitacoes"]})
+    tables["Qualidade_Dados"] = pd.DataFrame({"aviso": metrics.get("qualidade_dados") or []})
     analysis_list, citation_list = analysis_rows(analyses, project.get("data_version"))
     tables["Analises_IA"] = clean_frame(pd.DataFrame(analysis_list, columns=ANALYSIS_COLUMNS))
     tables["Citacoes_IA"] = clean_frame(pd.DataFrame(citation_list, columns=list(CITATION_COLUMNS))
@@ -277,17 +283,18 @@ def comparison_rows(table: pd.DataFrame, model: Dict, measures, only_relevant: b
     labels = sensorial_design.condition_labels(model["design"])
     stages = {s["codigo"]: s["rotulo"] for s in model["design"].get("etapas") or []}
     names = model["index_names"]
-    headers = ["Medida", "Comparação", "Etapa", "n", "Dif. mediana", "r", "p Holm", "Resultado"]
+    headers = ["Medida", "Comparação", "Etapa", "n", "Dif. média (IC 95%)", "r", "p", "Resultado"]
     if table.empty:
         return headers, []
     chosen = table[table["medida"].isin(list(measures))]
     if only_relevant:
         chosen = chosen[chosen["resultado"].isin(["diferença", "tendência"])]
-    chosen = chosen.sort_values(["resultado", "p_holm"])
+    chosen = chosen.sort_values(["resultado", "p"])
     rows = [[names.get(r.medida, r.medida), "{} × {}".format(labels.get(r.condicao_a, r.condicao_a),
                                                              labels.get(r.condicao_b, r.condicao_b)),
-             stages.get(r.etapa, r.etapa), str(int(r.n)), _fmt(r.diferenca_mediana), _fmt(r.r, 2),
-             _fmt(r.p_holm, 2), r.resultado] for r in chosen.itertuples()]
+             stages.get(r.etapa, r.etapa), str(int(r.n)),
+             "{} ({} a {})".format(_fmt(r.diferenca_media), _fmt(r.ic_inf), _fmt(r.ic_sup)), _fmt(r.r, 2),
+             _fmt(r.p, 2), r.resultado] for r in chosen.itertuples()]
     return headers, rows
 
 
