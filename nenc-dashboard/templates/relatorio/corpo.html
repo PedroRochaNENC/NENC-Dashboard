@@ -1,0 +1,76 @@
+{% from "_macros.html" import chip_faixa %}
+{#- O corpo do relatório, sem capa nem índice: é o que a página do app mostra, e o PDF o põe depois deles. -#}
+<div class="relatorio">
+
+  {% if alertas %}
+  <div class="caixa caixa--alerta" id="alertas">
+    <h2>Alertas críticos</h2>
+    <ul>
+    {% for alerta in alertas %}
+      <li><strong>{{ alerta.alias }}</strong>{% if alerta.unidade %} · {{ alerta.unidade }}{% endif %}{% if alerta.chegada %} · chegou em {{ alerta.chegada }}{% endif %}{% if alerta.tempo %} · {{ alerta.tempo }}{% endif %}<br>{{ alerta.evidencia }}</li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <section id="resumo">
+    <h1 class="secao">Resumo executivo</h1>
+    <p class="resumo-texto">{{ resumo }}</p>
+
+    <div class="termometro-bloco">
+      <div>{{ termometro.nota|medidor(190) }}</div>
+      <div>
+        <span class="rotulo">Termômetro de Experiência</span>
+        <p class="contagem">{{ termometro.positivos }} positivos · {{ termometro.neutros }} neutros · {{ termometro.negativos }} negativos, entre {{ termometro.avaliaveis }} respondentes com nota do texto.</p>
+        <p>{{ termometro.leitura }}</p>
+      </div>
+    </div>
+
+    {% if como_ler %}
+    <div class="caixa caixa--como-ler">
+      <h2 class="rotulo">Como ler esta análise</h2>
+      <ul>
+      {% for linha in como_ler %}
+        <li><strong>{{ linha.observamos }}</strong> {{ linha.significa }}</li>
+      {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </section>
+
+  <section id="visao-geral">
+    <h2 class="secao">Visão geral dos temas</h2>
+    <table class="visao">
+      <thead><tr><th>Tema</th><th>Respondentes</th><th>Composição</th><th>O que disseram</th></tr></thead>
+      <tbody>
+      {% for linha in visao_geral %}
+        <tr>
+          <td><a href="#{{ linha.capitulo }}">{{ linha.tema }}</a></td>
+          <td class="n"><strong>{{ linha.respondentes }}/{{ linha.total }}</strong> <span class="legenda-pol">{{ linha.respondentes|pct(linha.total) }}%</span></td>
+          <td class="barra">{{ linha.polaridades|barra_polaridade(linha.largura, 9) }}</td>
+          <td class="pol">{{ linha.polaridades|polaridades_em_palavras }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if sem_mencao %}
+    <p class="sem-mencao"><strong>Sem menção nesta amostra:</strong> {{ sem_mencao|join(", ") }}. Numa coleta aberta, a ausência de menções não indica que o tema seja irrelevante.</p>
+    {% endif %}
+  </section>
+
+  {% for cap in capitulos %}
+    {% include "capitulo.html" %}
+  {% endfor %}
+
+  {% if secao_transversais %}{% include "matriz.html" %}{% endif %}
+
+  {% include "reclamacoes.html" %}
+
+  <section class="notas" id="notas">
+    <h2 class="secao">Notas metodológicas</h2>
+    {% for nota in notas %}<p>{{ nota }}</p>{% endfor %}
+    {% if anexo and anexo.arquivo %}
+    <p class="anexo-aviso">O detalhe técnico (voz por tema, médias por áudio, índice combinado, divergências e limitações) está no <strong>Anexo técnico</strong> do projeto: {{ anexo.arquivo }}.</p>
+    {% endif %}
+  </section>
+</div>

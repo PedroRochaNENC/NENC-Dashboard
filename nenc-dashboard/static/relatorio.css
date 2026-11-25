@@ -1,0 +1,254 @@
+/*
+  Relatório por tema: componentes (docs/SPEC_RELATORIO_POR_TEMA.md, §8).
+
+  Este arquivo vale para o PDF e para a página do app: tudo está sob .relatorio
+  e não traz regras de página nem fontes, nem recursos que só o WeasyPrint entende fora de
+  declarações que o navegador ignora. O que é só do PDF (capa, índice,
+  cabeçalho corrido, quebra de página) está em relatorio_pdf.css.
+
+  Cores semânticas sempre com rótulo em texto ao lado; o PDF tem de ler bem
+  em escala de cinza.
+*/
+
+.relatorio {
+  --ink: #0B0B0B;
+  --sec: #52514E;
+  --mut: #6B6963;
+  --rule: #E1E0D9;
+  --fundo: #F6F5F1;
+  --accent: #5D5294;
+  --accent-claro: #EFECF7;
+  --pos: #1F6B47;
+  --neg: #A03624;
+  --mix: #8A5A0F;
+  --neu: #5E6370;
+  --pos-fundo: #E8F3EC;
+  --neg-fundo: #FAEDEA;
+  --mix-fundo: #FBF1DE;
+  --neu-fundo: #EEEFF2;
+
+  font-family: "Rubik", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.5;
+  color: var(--ink);
+  hyphens: auto;
+}
+
+.relatorio * { box-sizing: border-box; }
+.relatorio p { margin: 0 0 2mm; orphans: 3; widows: 3; }
+/* Células estreitas de tabela não hifenizam: "Atendimen-to" e "(LJ-MOE-01)" partido ficam feios. */
+.relatorio table td, .relatorio table th { hyphens: manual; }
+.relatorio strong { font-weight: 500; }
+.relatorio a { color: inherit; text-decoration: none; }
+
+/* ---------- Títulos ---------- */
+
+.relatorio h1, .relatorio h2, .relatorio h3, .relatorio h4 { font-weight: 700; margin: 0; color: var(--ink); break-after: avoid; }
+.relatorio h1.secao { font-size: 19pt; line-height: 1.2; margin: 0 0 5mm; }
+.relatorio h2.secao { font-size: 13pt; margin: 8mm 0 3mm; }
+/* Seções depois dos capítulos (transversais, Matriz, Reclamações): o mesmo cabeçalho do capítulo. */
+.relatorio .fechamento > h1.secao { font-size: 21pt; line-height: 1.15; padding: 0 0 3mm; margin: 0 0 5mm; border-bottom: 0.5mm solid var(--accent); }
+.relatorio h1.secao .num { color: var(--accent); margin-right: 2mm; }
+.relatorio .fluxo { margin-top: 10mm; }
+.relatorio .rotulo {
+  font-size: 7.5pt; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--mut);
+}
+
+/* ---------- Chips ---------- */
+
+.chip {
+  display: inline-block; padding: 0.3mm 2.4mm; border-radius: 3mm; font-size: 7.5pt; font-weight: 500;
+  line-height: 1.5; vertical-align: middle; white-space: nowrap; border: 0.25mm solid transparent;
+}
+.chip--padrao { background: var(--accent); color: #FFFFFF; }
+.chip--sinal { background: #FFFFFF; color: var(--accent); border-color: var(--accent); }
+.chip--isolada { background: #FFFFFF; color: var(--neu); border-color: #B9BCC6; }
+.chip--tema { background: var(--accent-claro); color: var(--accent); }
+.chip--tipo-higiene { background: var(--neu-fundo); color: var(--neu); }
+.chip--tipo-encantamento { background: var(--pos-fundo); color: var(--pos); }
+.chip--driver { background: var(--accent-claro); color: var(--accent); }
+.chip--selo { background: var(--mix-fundo); color: var(--mix); border-color: #E7CF9C; }
+.chip--exploratoria { background: var(--mix-fundo); color: var(--mix); border-color: #E7CF9C; }
+.chip--alerta { background: var(--neg-fundo); color: var(--neg); border-color: #E4B7AE; }
+.chip--voz { background: var(--fundo); color: var(--sec); border-color: var(--rule); white-space: normal; }
+
+/* ---------- Polaridade em palavras ---------- */
+
+.pol { white-space: nowrap; font-weight: 500; }
+.pol--positiva { color: var(--pos); }
+.pol--negativa { color: var(--neg); }
+.pol--mista { color: var(--mix); }
+.pol--neutra { color: var(--neu); }
+.legenda-pol { font-size: 8.5pt; color: var(--sec); margin: 1.2mm 0 0; }
+
+/* ---------- Caixas (alerta, como ler) ---------- */
+
+.caixa { border-radius: 2mm; padding: 3.2mm 4.4mm; margin: 0 0 5mm; break-inside: avoid; }
+.caixa--alerta { background: var(--neg-fundo); border: 0.3mm solid #E4B7AE; }
+.caixa--alerta h2 { font-size: 10.5pt; color: var(--neg); margin: 0 0 2mm; bookmark-level: none; }
+.caixa--alerta ul { margin: 0; padding-left: 4mm; }
+.caixa--alerta li { margin: 0 0 1.5mm; }
+.caixa--como-ler { background: var(--fundo); border: 0.3mm solid var(--rule); }
+.caixa--como-ler h2 { margin: 0 0 2mm; font-size: 8pt; bookmark-level: none; }
+.caixa--como-ler ul { margin: 0; padding-left: 4mm; }
+.caixa--como-ler li { margin: 0 0 1.4mm; font-size: 8.8pt; }
+.caixa--como-ler li:last-child { margin-bottom: 0; }
+
+/* ---------- Resumo e Termômetro ---------- */
+
+.resumo-texto { font-size: 10.5pt; line-height: 1.55; margin: 0 0 5mm; }
+.termometro-bloco {
+  display: grid; grid-template-columns: 54mm 1fr; column-gap: 6mm; align-items: center;
+  border: 0.3mm solid var(--rule); border-radius: 2mm; padding: 3.5mm 5mm; margin: 0 0 5mm; break-inside: avoid;
+}
+.termometro-bloco .contagem { font-size: 8.5pt; color: var(--sec); margin: 0 0 1.6mm; }
+.termometro-bloco p { margin: 0 0 1.6mm; }
+.termometro-bloco p:last-child { margin-bottom: 0; }
+
+/* ---------- Visão geral ---------- */
+
+table.visao { width: 100%; border-collapse: collapse; font-size: 8.8pt; margin: 0 0 3mm; }
+table.visao th {
+  text-align: left; font-size: 7.5pt; font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--mut); border-bottom: 0.3mm solid var(--ink); padding: 1.4mm 2mm;
+}
+table.visao td { padding: 1.7mm 2mm; border-bottom: 0.2mm solid var(--rule); vertical-align: middle; }
+table.visao td.n { white-space: nowrap; width: 24mm; }
+table.visao td.barra { width: 58mm; }
+table.visao td.pol { white-space: normal; font-weight: 400; color: var(--sec); font-size: 8.2pt; }
+table.visao tr { break-inside: avoid; }
+.sem-mencao { font-size: 8.5pt; color: var(--sec); }
+
+/* ---------- Capítulo ---------- */
+
+.capitulo { margin: 0 0 6mm; }
+.cap-cabecalho { margin: 0 0 4mm; padding: 0 0 3mm; border-bottom: 0.5mm solid var(--accent); break-after: avoid; }
+.cap-cabecalho h1 { font-size: 21pt; line-height: 1.15; display: block; }
+.cap-cabecalho h1 .num { color: var(--accent); margin-right: 2mm; }
+.cap-linha { display: flex; align-items: center; gap: 2.5mm; margin: 1.6mm 0 0; flex-wrap: wrap; }
+.capitulo--curto .cap-cabecalho { border-bottom-width: 0.3mm; border-color: var(--rule); margin-bottom: 2.4mm; padding-bottom: 1.6mm; }
+.capitulo--curto .cap-cabecalho h1 { font-size: 13pt; }
+.capitulo--curto { break-inside: avoid; margin-bottom: 4.5mm; }
+
+.ficha {
+  display: grid; grid-template-columns: 1fr 44mm; column-gap: 8mm; align-items: start;
+  background: var(--fundo); border-radius: 2mm; padding: 3mm 5mm; margin: 0 0 3.2mm; break-inside: avoid;
+}
+.ficha--sem-grade { grid-template-columns: 1fr; }
+.ficha-destaque { font-size: 9pt; color: var(--sec); margin: 0 0 1.6mm; }
+.ficha-destaque strong { font-size: 18pt; font-weight: 700; color: var(--ink); margin-right: 1mm; }
+.ficha-voz { text-align: left; }
+.ficha-voz .rotulo { margin: 0 0 1mm; }
+.ficha-voz .frase { font-size: 8.5pt; color: var(--sec); margin: 1mm 0 0; line-height: 1.4; }
+.ficha-delta { font-size: 8.5pt; color: var(--sec); margin: 2mm 0 0; padding-top: 1.8mm; border-top: 0.2mm solid var(--rule); }
+.ficha-delta strong { color: var(--ink); }
+.ficha-selo { margin: 0 0 3mm; }
+
+.grafico { display: block; max-width: 100%; }
+.grafico.voz { width: 100%; height: auto; }
+
+.texto-curto { margin: 0 0 2.4mm; }
+
+/* ---------- Subcapítulo ---------- */
+
+.sub { margin: 0 0 3.8mm; break-inside: avoid; }
+.sub h2 { font-size: 11.5pt; line-height: 1.3; margin: 0 0 0.8mm; }
+.sub h2 .num { color: var(--accent); margin-right: 1.6mm; }
+.sub .meta { font-size: 8.5pt; color: var(--sec); margin: 0 0 1.8mm; }
+.sub .dito { margin: 0 0 2mm; }
+.critica-linha {
+  background: var(--neg-fundo); border-left: 0.9mm solid var(--neg); border-radius: 0 1.2mm 1.2mm 0;
+  padding: 1.6mm 3mm; margin: 0 0 2mm; font-size: 9pt;
+}
+.critica-linha .rotulo { color: var(--neg); margin-right: 1.6mm; }
+
+/* ---------- Fala ---------- */
+
+blockquote.fala {
+  margin: 0 0 1.6mm; padding: 0.3mm 0 0.3mm 3.2mm; border-left: 0.7mm solid var(--rule); break-inside: avoid;
+}
+blockquote.fala p { margin: 0; color: var(--ink); font-size: 9.2pt; }
+blockquote.fala footer { font-size: 7.6pt; color: var(--mut); margin-top: 0.3mm; }
+blockquote.fala--positiva { border-left-color: #6FB28E; }
+blockquote.fala--negativa { border-left-color: #D58A7C; }
+blockquote.fala--mista { border-left-color: #D9B36A; }
+blockquote.fala--neutra { border-left-color: #B9BCC6; }
+blockquote.fala footer .tag { font-weight: 500; }
+blockquote.fala--positiva footer .tag { color: var(--pos); }
+blockquote.fala--negativa footer .tag { color: var(--neg); }
+blockquote.fala--mista footer .tag { color: var(--mix); }
+
+/* ---------- Cartões de hipótese, recomendação e acompanhar ---------- */
+
+.cartao { border-radius: 2mm; padding: 3.2mm 4.6mm; margin: 0 0 3.2mm; break-inside: avoid; }
+.cartoes { margin: 0 0 3.2mm; break-inside: avoid; }
+.cartoes .cartao { margin: 0; }
+.cartoes--duplo { display: grid; grid-template-columns: 1fr 1fr; column-gap: 4mm; align-items: stretch; }
+.cartoes--duplo .cartao { padding: 3mm 3.8mm; font-size: 9pt; }
+.cartoes--duplo .cartao .campo { font-size: 8.4pt; }
+.cartao .rotulo { display: block; margin: 0 0 1.2mm; }
+.cartao p { margin: 0 0 1.4mm; }
+.cartao p:last-child { margin-bottom: 0; }
+.cartao .campo { font-size: 8.8pt; color: var(--sec); }
+.cartao .campo strong { color: var(--ink); }
+.cartao--hipotese { background: var(--accent-claro); }
+.cartao--hipotese .rotulo { color: var(--accent); }
+.cartao--recomendacao { border: 0.3mm solid var(--accent); border-left-width: 1.4mm; background: #FFFFFF; }
+.cartao--recomendacao .rotulo { color: var(--accent); }
+.cartao--recomendacao .chips { margin: 0 0 1.8mm; }
+.cartao--acompanhar { background: var(--fundo); border: 0.3mm dashed #B9B6AC; }
+.cartao--transversal { background: var(--accent-claro); border-left: 1.4mm solid var(--accent); border-radius: 0 2mm 2mm 0; }
+.cartao--transversal .rotulo { color: var(--accent); }
+
+/* ---------- Matriz ---------- */
+
+.grupo-matriz { margin: 0 0 6mm; }
+.grupo-matriz h3 { font-size: 11pt; margin: 0 0 0.6mm; }
+.grupo-matriz .descricao { font-size: 8.8pt; color: var(--sec); margin: 0 0 2mm; }
+table.matriz { width: 100%; border-collapse: collapse; font-size: 8.6pt; margin: 0 0 2mm; }
+table.matriz th {
+  text-align: left; font-size: 7.5pt; font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--mut); border-bottom: 0.3mm solid var(--ink); padding: 1.3mm 2mm;
+}
+table.matriz td { padding: 1.5mm 2mm; border-bottom: 0.2mm solid var(--rule); vertical-align: top; }
+table.matriz td.alias { white-space: nowrap; font-weight: 500; }
+table.matriz td.unidade { width: 34mm; }
+table.matriz td.temas { width: 30mm; }
+table.matriz tr { break-inside: avoid; }
+.grupo-matriz .nota { font-size: 8.5pt; color: var(--sec); margin: 0 0 1.4mm; }
+.grupo-matriz .leitura { margin: 2mm 0 0; }
+.grupo-matriz .leitura p { margin: 0 0 1.2mm; }
+.vazio { color: var(--mut); font-size: 9pt; margin: 0 0 2mm; }
+
+/* ---------- Reclamações ---------- */
+
+.reclamacao { border: 0.3mm solid var(--rule); border-radius: 2mm; padding: 3.4mm 4.6mm; margin: 0 0 3.6mm; break-inside: avoid; }
+.reclamacao-topo { display: grid; grid-template-columns: 9mm 1fr auto; column-gap: 3mm; align-items: start; margin: 0 0 2mm; }
+.reclamacao-pos {
+  width: 8mm; height: 8mm; border-radius: 50%; background: var(--neg); color: #FFFFFF; font-weight: 700;
+  font-size: 11pt; text-align: center; line-height: 8mm;
+}
+.reclamacao h3 { font-size: 11pt; line-height: 1.3; margin: 0; bookmark-level: none; }
+.reclamacao-numeros { text-align: right; font-size: 8.5pt; color: var(--sec); white-space: nowrap; }
+.reclamacao-numeros strong { font-size: 11pt; font-weight: 700; color: var(--ink); }
+.reclamacao .critica { margin: 0 0 2mm; font-size: 9.4pt; }
+.reclamacao-rodape { font-size: 8.3pt; color: var(--sec); margin: 2mm 0 0; padding-top: 1.8mm; border-top: 0.2mm solid var(--rule); }
+.reclamacao-rodape .item { display: inline-block; margin-right: 4mm; }
+.reclamacao-rodape .item:last-child { margin-right: 0; }
+
+table.isoladas { width: 100%; border-collapse: collapse; font-size: 8.6pt; margin: 0 0 3mm; }
+table.isoladas th {
+  text-align: left; font-size: 7.5pt; font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--mut); border-bottom: 0.3mm solid var(--ink); padding: 1.3mm 2mm;
+}
+table.isoladas td { padding: 1.6mm 2mm; border-bottom: 0.2mm solid var(--rule); vertical-align: top; }
+table.isoladas tr { break-inside: avoid; }
+table.isoladas td.tema { width: 27mm; }
+table.isoladas td.unidade { width: 30mm; }
+table.isoladas td.origem { white-space: nowrap; width: 20mm; color: var(--mut); }
+.ordem-nota { font-size: 8.5pt; color: var(--sec); background: var(--fundo); border-radius: 1.6mm; padding: 2.2mm 3.4mm; margin: 0 0 4mm; }
+
+/* ---------- Notas ---------- */
+
+.notas p { font-size: 8.8pt; color: var(--sec); }
+.notas .anexo-aviso { background: var(--accent-claro); border-radius: 2mm; padding: 2.4mm 4mm; color: var(--ink); }

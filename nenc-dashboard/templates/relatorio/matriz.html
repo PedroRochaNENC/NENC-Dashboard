@@ -1,0 +1,43 @@
+{#- Leituras transversais e Matriz de Destaques (spec §3.5). -#}
+<section class="fechamento fluxo" id="transversais">
+  <h1 class="secao"><span class="num">{{ secao_transversais.numero }}</span> {{ secao_transversais.titulo }}</h1>
+
+  {% for item in transversais %}
+  <div class="cartao cartao--transversal">
+    <span class="rotulo">Leitura transversal</span>
+    <p>{{ item.texto }}</p>
+    <p class="campo"><strong>Apoia-se nos capítulos</strong> {{ item.capitulos|referencias_de_capitulo(numeros_de_capitulo) }}. <strong>Como validar:</strong> {{ item.como_validar }}</p>
+  </div>
+  {% endfor %}
+
+  {% if matriz.avaliavel %}
+  {% if secao_transversais.tem_transversais %}<h2 class="secao" id="matriz">Matriz de Destaques</h2>{% else %}<span id="matriz"></span>{% endif %}
+  {% for grupo in matriz.grupos %}
+  <div class="grupo-matriz">
+    <h3>{{ grupo.titulo }}</h3>
+    <p class="descricao">{{ grupo.descricao }}</p>
+    {% if grupo.linhas %}
+    {% set com_unidade = unidades_no_recorte > 1 %}
+    <table class="matriz">
+      <thead><tr><th>Áudio</th>{% if com_unidade %}<th>Unidade</th>{% endif %}<th>Temas</th><th>Em uma frase</th></tr></thead>
+      <tbody>
+      {% for linha in grupo.linhas %}
+        <tr><td class="alias">{{ linha.alias }}</td>{% if com_unidade %}<td class="unidade">{{ linha.unidade or "—" }}</td>{% endif %}<td class="temas">{{ linha.temas }}</td><td>{{ linha.frase }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if grupo.fora_da_tabela %}<p class="nota">Mais {{ grupo.fora_da_tabela }} {{ "áudio" if grupo.fora_da_tabela == 1 else "áudios" }} no grupo, fora da tabela.</p>{% endif %}
+    {% if grupo.voz_no_grupo %}<p class="nota">{{ grupo.voz_no_grupo }}</p>{% endif %}
+    {% if grupo.perfil or grupo.acao %}
+    <div class="leitura">
+      {% if grupo.perfil %}<p><strong>Perfil:</strong> {{ grupo.perfil }}</p>{% endif %}
+      {% if grupo.acao %}<p><strong>Ação:</strong> {{ grupo.acao }}</p>{% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="vazio">Nenhum áudio do recorte neste grupo.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</section>

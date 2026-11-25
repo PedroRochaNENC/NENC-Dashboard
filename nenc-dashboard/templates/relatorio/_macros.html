@@ -1,0 +1,21 @@
+{#- Peças reutilizadas pelos templates do relatório. -#}
+
+{% macro chip_faixa(faixa) -%}
+{%- if faixa == "Padrão" -%}<span class="chip chip--padrao">Padrão</span>
+{%- elif faixa == "Sinal" -%}<span class="chip chip--sinal">Sinal</span>
+{%- elif faixa == "Menção isolada" -%}<span class="chip chip--isolada">Menção isolada</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro fala(trecho, mostrar_tag=true) -%}
+<blockquote class="fala fala--{{ trecho.polaridade }}">
+  <p>“{{ trecho.texto }}”</p>
+  <footer>{{ trecho.alias }} · {{ trecho.tempo }}{% if trecho.nota is not none %} · texto {{ trecho.nota|nota }}{% endif %}{% if mostrar_tag %} · <span class="tag">{{ trecho.polaridade|rotulo_polaridade }}</span>{% endif %}</footer>
+</blockquote>
+{%- endmacro %}
+
+{% macro falas(ids, trechos, mostrar_tag=true) -%}
+{%- for id in ids -%}
+  {%- if id in trechos -%}{{ fala(trechos[id], mostrar_tag) }}{%- endif -%}
+{%- endfor -%}
+{%- endmacro %}

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>{{ cabecalho.projeto }} · {{ cabecalho.recorte }}</title>
+<style>
+{{ css|safe }}
+@page { @top-right { content: "{{ cabecalho_direita|css_string }}"; } }
+@page :first { @top-right { content: none; } }
+</style>
+</head>
+<body>
+<div class="relatorio relatorio--documento">
+
+<div class="capa">
+  <p class="marca">NENCBOOST · ANÁLISE DE VOZ E PROSÓDIA</p>
+  <h1 class="titulo">{{ cabecalho.projeto }}</h1>
+  <p class="recorte">{{ cabecalho.recorte }}</p>
+  <p class="periodo">{% if cabecalho.periodo %}{{ cabecalho.periodo|join(" a ") }} · {% endif %}gerado em {{ cabecalho.gerado_em }}</p>
+  {% if cabecalho.exploratoria or alertas %}
+  <p class="selos">
+    {% if cabecalho.exploratoria %}<span class="chip chip--exploratoria">Leitura exploratória · menos de 20 respondentes</span>{% endif %}
+    {% if alertas %}<a class="chip chip--alerta ref-pagina" href="#alertas">{{ alertas|length }} {{ "alerta crítico" if alertas|length == 1 else "alertas críticos" }}</a>{% endif %}
+  </p>
+  {% endif %}
+
+  <div class="kpis">
+    <div class="kpi"><strong>{{ cabecalho.respondentes }}</strong><span>respondentes</span></div>
+    <div class="kpi"><strong>{{ cabecalho.audios }}</strong><span>áudios</span></div>
+    <div class="kpi"><strong>{{ cabecalho.unidades or 1 }}</strong><span>{{ "unidade" if (cabecalho.unidades or 1) == 1 else "unidades" }}</span></div>
+  </div>
+
+  <div class="termometro">
+    <div>{{ termometro.nota|medidor(230) }}</div>
+    <div>
+      <p class="rotulo">Termômetro de Experiência</p>
+      <p>{{ termometro.positivos }} positivos · {{ termometro.neutros }} neutros · {{ termometro.negativos }} negativos, entre {{ termometro.avaliaveis }} respondentes com nota do texto.</p>
+      <p>Mede o que foi dito. A voz entra na leitura de cada tema.</p>
+    </div>
+  </div>
+
+  {% if destaques %}
+  <div class="destaques">
+    <span class="rotulo">Temas mais citados</span>
+    {% for linha in destaques %}
+    <div class="destaque"><strong>{{ linha.tema }}</strong><span>{{ linha.respondentes }}/{{ linha.total }} · {{ linha.respondentes|pct(linha.total) }}%</span><span>{{ linha.polaridades|barra_polaridade(linha.largura, 8) }}</span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if cabecalho.contexto %}
+  <div class="sobre"><span class="rotulo">Sobre o projeto</span>{{ cabecalho.contexto }}</div>
+  {% endif %}
+
+  <p class="rodape-capa">{{ cabecalho.modelo }} · {{ cabecalho.gerado_em }} · Documento para leitura de negócio; o detalhe técnico fica no Anexo técnico.</p>
+</div>
+
+<nav class="indice">
+  <h1 class="secao">Conteúdo</h1>
+  {% for entrada in indice %}
+  <a class="n{{ entrada.nivel }}" href="#{{ entrada.ancora }}">{% if entrada.numero %}<span class="num">{{ entrada.numero }}</span>{% endif %}{{ entrada.rotulo }}</a>
+  {% endfor %}
+</nav>
+
+{{ corpo }}
+
+</div>
+</body>
+</html>
