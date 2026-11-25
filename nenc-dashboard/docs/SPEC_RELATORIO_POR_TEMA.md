@@ -22,7 +22,7 @@
 | A mesma frase ("Sem destaque em relação aos demais relatos") aparece 21 vezes na rede: tabela, achado e apêndice de cada um dos 7 temas. | Frase fixa repetida em três lugares. | Voz em gráfico no capítulo, sem frase quando não há destaque (§3.2). |
 | As falas de exemplo são curtas e de elogio ("Tá sempre bem.", "Graças a Deus, nota 10, todo mundo."). | `_escolher_trechos` ordena pela força da nota do texto. | A IA escolhe entre candidatos informativos, e o código insere a fala (§5.3). |
 | Outros é 45 de 98 respondentes (46%) na rede e não tem leitura. | Linha sem faixa, sem achado e sem voz. | Último capítulo, com subcapítulos (§3.4). |
-| A unidade sai só como código ("SBRPICLOU01") em áudios sem nome cadastrado. | Cadastro de unidade incompleto. | Rótulo "nome (código)" e pedido à Smart Fit (§11). |
+| A unidade sai só como código ("LJ-XXX-01") em áudios sem nome cadastrado. | Cadastro de unidade incompleto. | Rótulo "nome (código)" e pedido à Smart Fit (§11). |
 | Nomes de funcionários ("Beto", "Simone e Jansen") e um dado financeiro ("R$90,90 … Nubank") aparecem em falas. | Falas literais sem tratamento. | Máscara em código (§3.6, §6). |
 | A análise individual só chega à Geral pelo Sumário Executivo. | `sumarios_individuais` usa só `sumario_executivo`. | Ficha de contexto estruturada (§10). |
 
@@ -346,7 +346,7 @@ Cerca de 300 tokens. **Sem leitura da voz**: a voz é calculada em código e a f
 
 ## 11. O que pedir à Smart Fit
 
-- Nome de cada unidade no cadastro, ao lado do código: hoje alguns áudios saem só como "SBRPICLOU01", e o rótulo "nome (código)" das reclamações precisa dos dois.
+- Nome de cada unidade no cadastro, ao lado do código: hoje alguns áudios saem só como "LJ-XXX-01", e o rótulo "nome (código)" das reclamações precisa dos dois.
 - Confirmar que o PDF pode manter o nome do funcionário nos elogios, e que nas críticas ele sai (§6).
 - Dizer onde cabem preço e valor percebido, como em [Unidades §11](SPEC_UNIDADES_E_TAGS.md).
 - Confirmar a nomenclatura "Avaliação geral e outros assuntos" para o conjunto fora das 16 tags.
