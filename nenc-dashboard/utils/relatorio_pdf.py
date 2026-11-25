@@ -54,3 +54,13 @@ def html_para_pdf(html: str) -> bytes:
 def relatorio_pdf(relatorio: Dict[str, Any]) -> bytes:
     """O PDF do relatório por tema."""
     return html_para_pdf(relatorio_html.documento_html(relatorio))
+
+
+def legado_pdf(texto: Optional[str], **opcoes: Any) -> bytes:
+    """O PDF de um texto em markdown (v2 ou antigo), sem o apêndice. Opções: as de `relatorio_html.legado_html`."""
+    return html_para_pdf(relatorio_html.legado_html(texto, **opcoes))
+
+
+def anexo_pdf(texto: Optional[str], **opcoes: Any) -> bytes:
+    """O PDF do Anexo técnico. Opções: as de `relatorio_html.anexo_html`."""
+    return html_para_pdf(relatorio_html.anexo_html(texto, **opcoes))

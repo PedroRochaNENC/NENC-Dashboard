@@ -85,6 +85,18 @@ body { margin: 0; }
 .relatorio .secao-nova { break-before: page; }
 .relatorio .fluxo { break-before: auto; }
 
+/* Texto em markdown: o título de seção (h2) é o capítulo do cabeçalho corrido e abre o marcador; h3, o subnível. */
+.relatorio .md h2 { string-set: capitulo content(); bookmark-level: 1; bookmark-label: content(); }
+.relatorio .md h3 { bookmark-level: 2; bookmark-label: content(); }
+.relatorio .md h4, .relatorio .md h5, .relatorio .md h6 { bookmark-level: none; }
+.relatorio .referencias h2 { string-set: capitulo content(); bookmark-level: 1; bookmark-label: content(); border-bottom: 0.3mm solid #E1E0D9; }
+.indice--markdown { margin: 0 0 10mm; }
+.indice--markdown a { padding-top: 1.7mm; }
+
+/* O Anexo técnico é deitado, para as tabelas largas: a capa acompanha a página. */
+.capa--paisagem { width: 297mm; height: 210mm; padding: 20mm 24mm 16mm 30mm; }
+.capa--paisagem .rodape-capa { max-width: 200mm; }
+
 /* Na capa, o alerta crítico aponta para a página dele. */
 .capa a.ref-pagina::after { content: " · página " target-counter(attr(href url), page); }
 

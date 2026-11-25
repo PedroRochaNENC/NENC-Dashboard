@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>{{ projeto }}{% if subtitulo %} · {{ subtitulo }}{% endif %}</title>
+<style>
+{{ css|safe }}
+{% block pagina %}{% endblock %}
+{# "start": a página que continua uma seção leva o nome dela, e não o da seção que começa no meio da página. #}
+@page { @top-left { content: string(capitulo, start); } @top-right { content: "{{ cabecalho_direita|css_string }}"; } }
+@page :first { @top-right { content: none; } }
+</style>
+</head>
+<body>
+<div class="relatorio relatorio--documento relatorio--{% block tipo %}texto{% endblock %}">
+
+<div class="capa{% block classe_da_capa %}{% endblock %}">
+  <p class="marca">{% block marca %}NENCBOOST · ANÁLISE DE VOZ E PROSÓDIA{% endblock %}</p>
+  <h1 class="titulo">{{ projeto }}</h1>
+  {% if subtitulo %}<p class="recorte">{{ subtitulo }}</p>{% endif %}
+  <p class="periodo">{% block periodo %}gerado em {{ gerado_em }}{% endblock %}</p>
+  {% if sobre %}
+  <div class="sobre"><span class="rotulo">Sobre o projeto</span>{% for linha in sobre %}<p>{{ linha }}</p>{% endfor %}</div>
+  {% endif %}
+  <p class="rodape-capa">{% block rodape_da_capa %}{% endblock %}</p>
+</div>
+
+{% if titulos|length > 1 %}
+<nav class="indice indice--markdown">
+  <h1 class="secao">Conteúdo</h1>
+  {% for titulo in titulos %}
+  <a class="n1" href="#{{ titulo.ancora }}">{{ titulo.texto }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+<main class="md">{{ corpo }}</main>
+
+{% block depois %}{% endblock %}
+
+</div>
+</body>
+</html>

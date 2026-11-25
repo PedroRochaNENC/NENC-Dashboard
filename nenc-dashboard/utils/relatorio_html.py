@@ -11,12 +11,13 @@ alias, o tempo e a máscara de cada fala já vêm prontos em `trechos`.
 
 import math
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup, escape
 
 from utils import relatorio_graficos as graficos
+from utils import relatorio_markdown as markdown
 
 RAIZ = Path(__file__).resolve().parent.parent
 PASTA_TEMPLATES = RAIZ / "templates" / "relatorio"
@@ -245,3 +246,97 @@ def documento_html(relatorio: Dict[str, Any]) -> str:
     contexto["cabecalho_direita"] = _cabecalho_direita(relatorio["cabecalho"])
     contexto["corpo"] = _corpo(relatorio)
     return _AMBIENTE.get_template("documento.html").render(**contexto)
+
+
+# ---------------------------------------------------------------------------
+# Texto em markdown: a v2, as análises antigas e o Anexo técnico (spec §9)
+# ---------------------------------------------------------------------------
+
+_LIMITE_DA_LINHA_DO_CONTEXTO = 240
+
+
+def _cortar(texto: str, limite: int) -> str:
+    texto = " ".join(str(texto or "").split())
+    return texto if len(texto) <= limite else texto[: limite - 1].rstrip() + "…"
+
+
+def linhas_do_contexto(contexto: Optional[Dict[str, Any]], limite: int = _LIMITE_DA_LINHA_DO_CONTEXTO) -> List[str]:
+    """O cadastro do projeto em até duas linhas para a capa (spec §3.1), sem o briefing, que é longo.
+
+    A primeira junta especialidade e histórico; a segunda, as perguntas centrais.
+    """
+    contexto = contexto or {}
+    sobre = " — ".join(
+        parte for parte in (_cortar(contexto.get("especialidade"), limite), _cortar(contexto.get("historico"), limite))
+        if parte
+    )
+    linhas = [_cortar(sobre, limite)] if sobre else []
+    perguntas = _cortar(contexto.get("problemas"), limite)
+    if perguntas:
+        linhas.append("Perguntas centrais: " + perguntas)
+    return linhas
+
+
+def _documento_de_markdown(
+    modelo_do_template: str,
+    texto: Optional[str],
+    *,
+    projeto: str,
+    subtitulo: str,
+    gerado_em: str,
+    modelo: str,
+    extras: Optional[Dict[str, Any]] = None,
+) -> str:
+    convertido = markdown.converter(texto)
+    contexto = {
+        "projeto": projeto or "Projeto",
+        "subtitulo": subtitulo,
+        "gerado_em": gerado_em,
+        "modelo": modelo,
+        "corpo": convertido.html,
+        "titulos": convertido.titulos,
+        "css": _ler("relatorio.css") + "\n" + _ler("relatorio_pdf.css"),
+        "cabecalho_direita": _cabecalho_direita({"projeto": projeto or "Projeto", "recorte": subtitulo}),
+        "sobre": [],
+        "citacoes": [],
+        "com_anexo": False,
+    }
+    contexto.update(extras or {})
+    return _AMBIENTE.get_template(modelo_do_template).render(**contexto)
+
+
+def legado_html(
+    texto: Optional[str],
+    *,
+    projeto: str,
+    subtitulo: str = "",
+    gerado_em: str = "",
+    modelo: str = "",
+    contexto: Optional[Dict[str, Any]] = None,
+    citacoes: Sequence[Dict[str, Any]] = (),
+    com_anexo: bool = False,
+) -> str:
+    """O texto v2 ou antigo como documento para o PDF: capa, índice e o corpo, sem o "Apêndice técnico".
+
+    O apêndice, quando o texto o traz, fica de fora: `com_anexo` só avisa na
+    capa que ele existe em arquivo à parte (relatorio_markdown.separar_anexo).
+    """
+    corpo, _ = markdown.separar_anexo(texto)
+    return _documento_de_markdown(
+        "legado.html", corpo, projeto=projeto, subtitulo=subtitulo, gerado_em=gerado_em, modelo=modelo,
+        extras={"sobre": linhas_do_contexto(contexto), "citacoes": list(citacoes or []), "com_anexo": com_anexo},
+    )
+
+
+def anexo_html(
+    texto: Optional[str],
+    *,
+    projeto: str,
+    subtitulo: str = "",
+    gerado_em: str = "",
+    modelo: str = "",
+) -> str:
+    """O Anexo técnico (o markdown do apêndice) como documento para o PDF, em página deitada."""
+    return _documento_de_markdown(
+        "anexo.html", texto, projeto=projeto, subtitulo=subtitulo, gerado_em=gerado_em, modelo=modelo
+    )

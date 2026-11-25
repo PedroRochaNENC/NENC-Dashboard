@@ -177,22 +177,20 @@ class AnaliseGeralRecebeOProjetoInteiroTests(unittest.TestCase):
     def test_the_pdf_carries_only_the_saved_analysis(self):
         # A seção de métricas acústicas do PDF listava cada áudio pela sessão,
         # que traz o telefone; o apêndice da v2 já tem as médias pelo alias.
-        funcoes = {no.name: no for no in self._nos(ast.FunctionDef)}
+        # O PDF do fpdf2 saiu (spec do relatório por tema, §9): o da análise
+        # salva e o do lote saem do texto gravado, pelo WeasyPrint.
+        funcoes = {no.name for no in self._nos(ast.FunctionDef)}
         self.assertNotIn("_calculate_acoustic_summary_text", funcoes)
+        self.assertNotIn("_build_project_analysis_pdf", funcoes)
+        self.assertNotIn("pdf_report", ast.unparse(self.arvore))
 
-        pdf = funcoes["_build_project_analysis_pdf"]
-        self.assertEqual(
-            [a.arg for a in pdf.args.args + pdf.args.kwonlyargs],
-            ["project_name", "project_info", "model", "created_at", "text", "citations"],
-        )
-        # Duas chamadas: a análise mais recente e a geração por unidade.
-        chamadas = [
-            no for no in self._nos(ast.Call)
-            if isinstance(no.func, ast.Name) and no.func.id == "_build_project_analysis_pdf"
-        ]
-        self.assertEqual(len(chamadas), 2)
-        for chamada in chamadas:
-            self.assertNotIn("sinc", ast.unparse(chamada))
+        for nome in ("arquivos_da_analise", "pdf_da_analise", "anexo_pdf_da_analise"):
+            with self.subTest(chamada=nome):
+                self.assertNotIn("sinc", ast.unparse(self._chamada(nome)))
+
+    def test_the_batch_zip_carries_the_project_annex(self):
+        chamada = self._chamada("nome_do_anexo")
+        self.assertEqual(ast.unparse(chamada.args[1]), "''")
 
 
 if __name__ == "__main__":

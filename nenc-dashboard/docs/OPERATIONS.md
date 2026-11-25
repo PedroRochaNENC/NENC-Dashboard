@@ -323,7 +323,15 @@ Python 3.14.2 do `.venv`):
 
 **Docker** (`python:3.11-slim`): o `Dockerfile` instala `libpango-1.0-0`,
 `libpangoft2-1.0-0` e `libharfbuzz-subset0`, e uma fonte com os simbolos que a
-Rubik nao tem (`fonts-dejavu-core`). O deploy segue exigindo `--build`.
+Rubik nao tem (`fonts-dejavu-core`). O deploy segue exigindo `--build`: sem a
+imagem nova, o PDF da Analise Geral some da pagina (ela mostra o motivo no lugar
+do botao) e o lote por unidade nao comeca.
+
+**O que sai pelo WeasyPrint** (desde a Fase 3): o PDF da Analise Geral de
+Prosodia, v2 e antigas, pelo template legado; o Anexo tecnico (o "Apendice
+tecnico" do texto, em A4 deitado, com a tabela "Audios e unidades"); e o zip do
+lote, que leva o anexo do projeto. Jornada, Sensorial e a analise individual
+por audio seguem no fpdf2 (`utils/pdf_report.py`).
 
 **Armadilhas achadas no spike** (valem para o CSS do relatorio):
 
@@ -336,6 +344,12 @@ Rubik nao tem (`fonts-dejavu-core`). O deploy segue exigindo `--build`.
 - `h1` entra nos marcadores do PDF por padrao: a capa leva
   `bookmark-level: none`.
 - Sem `Rubik-Italic`, o `<em>` sai em italico sintetico.
+- Um `<pattern>` de SVG repetido em cada grafico vira ancora duplicada: as
+  hachuras sao listras de `<rect>`, sem id.
+- O Jinja escapa aspas dentro de `<style>`: texto que vai numa string de CSS
+  (o cabecalho corrido) passa pelo filtro `css_string`.
+- `overflow-wrap: anywhere` entra na largura minima da coluna e parte palavras
+  curtas ("Respondent-e"); nas tabelas, `break-word`.
 
 ## Recuperacao de administrador
 

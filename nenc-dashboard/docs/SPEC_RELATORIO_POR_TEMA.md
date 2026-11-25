@@ -310,6 +310,14 @@ A página mostra o `corpo_html` com `st.html` (o `requirements.txt` pede o Strea
 
 **Zip.** `planejar_por_unidade` não muda. O zip ganha o anexo como mais um arquivo.
 
+**Como ficou na Fase 3 (25/11/2026).** O caminho v2 é o único em produção até a Fase 2, então o anexo de hoje sai do "Apêndice técnico" do texto salvo (`relatorio_markdown.separar_anexo`):
+
+- **Unidade.** As tabelas do apêndice saem de `prosodia_signals` e não mudam nesta fase. A unidade entra numa tabela "Áudios e unidades" (Áudio, Unidade, QR code, Chegada, sem a sessão), antes das limitações (`prosodia_geracao.anexo_do_texto`). A coluna de unidade em cada tabela fica para quando a Fase 1 gerar o anexo do JSON.
+- **Escopo.** Na página, o anexo é o da análise mais recente, com os áudios do recorte dela, e o nome leva a unidade quando o recorte é de uma só (`nome_do_anexo_da_analise`). No lote, é o da análise "Todas as unidades", e o nome vai sem unidade (`nome_do_anexo(projeto, "", dia)`).
+- **Máscara.** `prosodia_mascara.py` é da Fase 1: até lá, as falas do anexo saem como saíam no apêndice do PDF v2.
+- **Página.** A v2 e as antigas seguem na tela pelo `st.markdown`, com o texto inteiro. O PDF é montado uma vez por análise (`st.cache_data`) e, sem o Pango, a página mostra o motivo no lugar do botão; o lote não começa sem ele.
+- **Papel.** O anexo é A4 deitado, para as tabelas de 8 ou mais colunas; o corpo da v2 segue em A4 retrato, com capa, índice das seções `###` e as referências da base no fim.
+
 **Análises v2 e antigas.** Valem para toda análise sem `relatorio_json`: as geradas antes desta spec e as de projetos sem tags (§2, itens 25 e 26). O texto markdown é convertido em HTML (`markdown-it-py`, com tabelas) e ganha a capa, a tipografia, o cabeçalho e o rodapé novos, sem capítulos. O título "Apêndice técnico" divide o texto: o que vem antes é o corpo, e o que vem depois vira o Anexo técnico do projeto. A conversão tira a marcação que vaza (`*Apoia-se em:*`, `_Faixas…_`). O gerador fpdf2 de Prosódia (`_build_project_analysis_pdf`) sai do código. O Δ lê o snapshot gravado, que não muda de formato.
 
 ## 10. Análise individual por áudio
@@ -350,15 +358,15 @@ Cerca de 300 tokens. **Sem leitura da voz**: a voz é calculada em código e a f
 | Projetos sem tags (§4) | **Decidido em 25/11/2026:** seguem na v2; só a taxonomia com tag aberta gera capítulos. Fecha a dúvida sobre a faixa do capítulo por Categoria, que fica só para a taxonomia mista. | Fechado. |
 | Ficha individual no caminho v2 (§10) | A ficha não tem "Sumário Executivo", então `sumario_executivo` não a lê. Na v2, a Geral recebe a ficha inteira no lugar do Sumário, com o mesmo limite de tamanho, e análise antiga segue no Sumário. | Fase 4. |
 | Interruptor por projeto (§2, item 27) | Configuração do projeto, lida em `gerar_analise_geral`; sem ele ligado, a geração segue o caminho v2. Onde guardar (coluna em `projects` ou configuração existente) a decidir olhando `prosodia_db.py`. | Fase 2. |
-| WeasyPrint no Python 3.14 e no Windows | Spike da Fase 0: renderizar com fonte própria, `@page`, `string-set`, `target-counter` e `bookmark-level`. Saídas: fixar a versão do Python do venv, ou rodar o PDF só no Docker. | Fase 0. |
+| WeasyPrint no Python 3.14 e no Windows | **Fechado na Fase 0 (25/11/2026):** WeasyPrint 70.0 com o Pango do MSYS2 passou no spike (fonte própria, `@page`, `string-set`, `target-counter`, `bookmark-level`). | Fechado. |
 | Mista sem trecho crítico (§3.6) | Não entra no ranking; o JSON registra quantas houve. | Fase 5, olhando quantas se perdem. |
 | Peso da ordem das reclamações (§3.6) | Faixa, respondentes, intensidade. | Fase 5, com a leitura humana. |
 | Mínimo de 6 palavras na fala candidata (§5.3) | Ponto de partida. | Fase 5. |
 | `gpt-4.1` seguir o JSON estrito, as regras de evidência e escolher falas bem | Decisão do Pedro; validar no lote da Smart Fit. O seletor segue aberto para trocar por modelo Claude. | Fase 2. |
 | Reconhecimento de nomes do `pt_core_news_sm` | A confirmar contra as falas reais; se for fraco, passar ao modelo `md`. Falha segura mascara na dúvida. | Fase 2. |
-| `st.html` com `<style>` e SVG (§8.4) | Se não aceitar, `components.html` num iframe. | Fase 3. |
+| `st.html` com `<style>` e SVG (§8.4) | Se não aceitar, `components.html` num iframe. A página só mostra o HTML novo quando houver `relatorio_json`, que a Fase 2 grava; até lá a v2 e as antigas seguem no `st.markdown` (§9). | Fase 2, no navegador, com a primeira análise por capítulos. |
 | Branch `feat/resumo-por-tema` (1fe96a1, ainda não mesclada) | **Decidido em 25/11/2026:** os capítulos a substituem. O "Resumo por tema" some, a branch não é mesclada e não entra na Fase 1. A conta do Termômetro por tema (`termometro_do_tema`) não é reaproveitada, porque o Termômetro do tema não está nos capítulos. | Fechado. |
-| Anexo fora do lote (§9) | Botão na página do projeto. | Fase 3. |
+| Anexo fora do lote (§9) | **Fechado na Fase 3:** botão "Download Anexo técnico (.pdf)" na página, com o anexo da análise mais recente (o recorte dela). | Fechado. |
 
 ## 13. Mudanças por arquivo
 

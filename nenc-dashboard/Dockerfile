@@ -6,10 +6,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Instala dependências de sistema essenciais
+# Instala dependências de sistema essenciais. Pango e HarfBuzz são do WeasyPrint,
+# que gera o PDF da Análise Geral; a DejaVu é a fonte de reserva para os glifos que
+# a Rubik do relatório não tem (a imagem slim não traz fonte nenhuma).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libharfbuzz-subset0 \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Copia e instala dependências de projeto

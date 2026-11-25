@@ -19,7 +19,7 @@ para a base de conhecimento.
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Callable, Collection, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -28,6 +28,7 @@ from utils import ai_provider, prosodia_db
 from utils import prosodia_overview as overview
 from utils import prosodia_relatorio as rel
 from utils import prosodia_temas as temas
+from utils import relatorio_markdown, relatorio_pdf
 from utils.kb_attributes import build_kb_filter
 from utils.prosodia_project_types import normalize_project_type
 
@@ -197,6 +198,24 @@ def nome_da_analise(projeto: str, analise: dict, extensao: str = "pdf") -> str:
     )
 
 
+def nome_do_anexo(projeto: str, unidade: str, dia: date) -> str:
+    """Anexo_Tecnico_<Projeto>_<data>.pdf, com a unidade quando a análise é de uma só.
+
+    A regra de nome_do_arquivo. O anexo do lote é o do projeto: vai sem unidade
+    (spec do relatório por tema, §9).
+    """
+    trecho_da_unidade = "" if unidade in ("", TODAS_AS_UNIDADES) else _trecho_do_nome(unidade)
+    partes = [p for p in ("Anexo_Tecnico", _trecho_do_nome(projeto), trecho_da_unidade) if p]
+    return "{}_{}.pdf".format("_".join(partes), dia.isoformat())
+
+
+def nome_do_anexo_da_analise(projeto: str, analise: dict) -> str:
+    """O nome do Anexo técnico de uma análise salva, pela unidade do recorte e pelo dia dela."""
+    recorte = rel.Recorte.de_dict((analise.get("temas") or {}).get("recorte"))
+    criada = rel.ler_data(analise.get("created_at"))
+    return nome_do_anexo(projeto, unidade_do_recorte(recorte), criada.date() if criada else date.today())
+
+
 @dataclass(frozen=True)
 class AnaliseDoLote:
     """Uma análise da geração por unidade: a unidade, os áudios e o recorte gravado."""
@@ -285,6 +304,123 @@ def legenda(audios_projeto: Sequence[dict], ids: Collection[int]) -> List[Tuple[
         for a in sorted(audios_projeto, key=lambda a: int(a["id"]))
         if int(a["id"]) in escolhidos
     ]
+
+
+# ---------------------------------------------------------------------------
+# PDF e Anexo técnico (docs/SPEC_RELATORIO_POR_TEMA.md, §9)
+# ---------------------------------------------------------------------------
+
+TODOS_OS_AUDIOS = "Todos os áudios do projeto"
+_TITULO_DAS_LIMITACOES = "#### Limitações e cortes aplicados"
+
+
+def subtitulo_do_recorte(recorte: rel.Recorte) -> str:
+    """O recorte na capa do PDF: a descrição gravada, ou "Todos os áudios do projeto"."""
+    descricao = (recorte.descricao or "").strip()
+    return descricao[:1].upper() + descricao[1:] if descricao else TODOS_OS_AUDIOS
+
+
+def _data(quando: Optional[datetime]) -> str:
+    return (quando or datetime.now()).strftime("%d/%m/%Y")
+
+
+def _celula(texto) -> str:
+    return " ".join(str(texto or "").replace("|", "/").split()) or "—"
+
+
+def audios_e_unidades_markdown(audios_projeto: Sequence[dict], ids: Collection[int]) -> str:
+    """Áudio NN, unidade, QR code e chegada dos áudios `ids`, sem a sessão, que traz o telefone.
+
+    É a coluna de unidade do Anexo (§9): o alias é o do projeto inteiro, e esta
+    tabela diz de que unidade é cada "Áudio NN" que as outras tabelas citam.
+    """
+    nomes = rel.aliases(rel.AudioDoProjeto(int(a["id"]), str(a.get("session_id") or "")) for a in audios_projeto)
+    escolhidos = {int(i) for i in ids}
+    linhas = [
+        "| {} | {} | {} | {} |".format(
+            nomes[int(a["id"])],
+            _celula(overview.unidade_label(a) if a.get("unidade_id") else ""),
+            _celula(overview.qr_label(a)),
+            _celula(overview.entry_text(a)),
+        )
+        for a in sorted(audios_projeto, key=lambda a: int(a["id"]))
+        if int(a["id"]) in escolhidos
+    ]
+    if not linhas:
+        return "Nenhum áudio no recorte."
+    return "\n".join(["| Áudio | Unidade | QR code | Chegada |", "|---|---|---|---|"] + linhas)
+
+
+def anexo_do_texto(texto: Optional[str], audios_projeto: Sequence[dict], ids: Collection[int]) -> str:
+    """O Anexo técnico de uma análise: o apêndice do texto mais a tabela de áudios e unidades.
+
+    Vazio quando o texto não tem "Apêndice técnico" (análise anterior à v2). A
+    tabela entra antes das limitações, que fecham o anexo.
+    """
+    _, apendice = relatorio_markdown.separar_anexo(texto)
+    if not apendice:
+        return ""
+    tabela = "#### Áudios e unidades\n\n" + audios_e_unidades_markdown(audios_projeto, ids)
+    if _TITULO_DAS_LIMITACOES in apendice:
+        return apendice.replace(_TITULO_DAS_LIMITACOES, tabela + "\n\n" + _TITULO_DAS_LIMITACOES, 1)
+    return apendice + "\n\n" + tabela
+
+
+def pdf_da_analise(
+    projeto: dict,
+    texto: Optional[str],
+    citacoes: Sequence[dict],
+    modelo: str,
+    criada_em: Optional[datetime],
+    recorte: rel.Recorte,
+) -> bytes:
+    """O PDF de uma análise em markdown (v2 ou antiga), sem o apêndice, que vai no anexo."""
+    return relatorio_pdf.legado_pdf(
+        texto,
+        projeto=str(projeto.get("name") or ""),
+        subtitulo=subtitulo_do_recorte(recorte),
+        gerado_em=_data(criada_em),
+        modelo=modelo or "",
+        contexto=contexto_do_projeto(projeto),
+        citacoes=list(citacoes or []),
+        com_anexo=bool(relatorio_markdown.separar_anexo(texto)[1]),
+    )
+
+
+def anexo_pdf_da_analise(
+    projeto: dict,
+    texto: Optional[str],
+    audios_projeto: Sequence[dict],
+    ids: Collection[int],
+    modelo: str,
+    criada_em: Optional[datetime],
+    recorte: rel.Recorte,
+) -> Optional[bytes]:
+    """O PDF do Anexo técnico de uma análise, ou None quando ela não tem apêndice."""
+    anexo = anexo_do_texto(texto, audios_projeto, ids)
+    if not anexo:
+        return None
+    return relatorio_pdf.anexo_pdf(
+        anexo,
+        projeto=str(projeto.get("name") or ""),
+        subtitulo=subtitulo_do_recorte(recorte),
+        gerado_em=_data(criada_em),
+        modelo=modelo or "",
+    )
+
+
+def arquivos_da_analise(
+    projeto: dict, analise: dict, audios_projeto: Sequence[dict]
+) -> Tuple[bytes, Optional[bytes]]:
+    """(PDF, PDF do anexo ou None) de uma análise salva, com o recorte e a data dela."""
+    snapshot = analise.get("temas") or {}
+    recorte = rel.Recorte.de_dict(snapshot.get("recorte"))
+    criada = rel.ler_data(analise.get("created_at"))
+    texto = analise.get("analysis_text") or ""
+    modelo = analise.get("model") or ""
+    pdf = pdf_da_analise(projeto, texto, analise.get("citations") or [], modelo, criada, recorte)
+    anexo = anexo_pdf_da_analise(projeto, texto, audios_projeto, snapshot.get("audios") or [], modelo, criada, recorte)
+    return pdf, anexo
 
 
 # ---------------------------------------------------------------------------

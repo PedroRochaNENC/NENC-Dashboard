@@ -252,3 +252,44 @@ table.isoladas td.origem { white-space: nowrap; width: 20mm; color: var(--mut); 
 
 .notas p { font-size: 8.8pt; color: var(--sec); }
 .notas .anexo-aviso { background: var(--accent-claro); border-radius: 2mm; padding: 2.4mm 4mm; color: var(--ink); }
+
+/* ---------- Texto em markdown (v2, análises antigas e Anexo técnico) ---------- */
+
+.md h2 {
+  font-size: 15pt; line-height: 1.25; margin: 9mm 0 3.5mm; padding: 0 0 2mm; border-bottom: 0.5mm solid var(--accent);
+}
+.md h2:first-child { margin-top: 0; }
+.md h3 { font-size: 11.5pt; line-height: 1.3; margin: 6mm 0 2mm; }
+.md h4, .md h5, .md h6 { font-size: 9.6pt; margin: 4mm 0 1.5mm; color: var(--sec); }
+.md p { margin: 0 0 2.4mm; }
+.md ul, .md ol { margin: 0 0 3mm; padding-left: 5mm; }
+.md li { margin: 0 0 1.2mm; }
+.md li > p { margin: 0 0 1mm; }
+.md em { font-style: italic; color: var(--sec); }
+.md strong { font-weight: 500; }
+.md blockquote { margin: 0 0 3mm; padding: 0.8mm 0 0.8mm 3.4mm; border-left: 0.8mm solid var(--rule); color: var(--sec); }
+.md blockquote p { margin: 0 0 1mm; }
+.md code { font-size: 8.6pt; background: var(--fundo); padding: 0 0.8mm; border-radius: 0.8mm; }
+.md hr { border: 0; border-top: 0.2mm solid var(--rule); margin: 5mm 0; }
+
+.md table.tabela { width: 100%; border-collapse: collapse; margin: 1mm 0 4mm; font-size: 8.6pt; }
+.md table.tabela th {
+  text-align: left; font-size: 7.4pt; font-weight: 500; letter-spacing: .04em; color: var(--mut);
+  border-bottom: 0.3mm solid var(--ink); padding: 1.3mm 1.8mm; vertical-align: bottom;
+}
+/* break-word e não anywhere: anywhere entra na largura mínima da coluna e parte "Respondente" no meio. */
+.md table.tabela td { padding: 1.4mm 1.8mm; border-bottom: 0.2mm solid var(--rule); vertical-align: top; overflow-wrap: break-word; }
+.md table.tabela td:first-child { font-weight: 500; }
+.md table.tabela tr { break-inside: avoid; }
+.md table.tabela thead { display: table-header-group; }
+.md table.tabela--media { font-size: 8.2pt; }
+.md table.tabela--larga { font-size: 7.6pt; }
+.md table.tabela--larga th { font-size: 6.9pt; padding: 1.1mm 1.4mm; }
+.md table.tabela--larga td { padding: 1.2mm 1.4mm; }
+
+.referencias { margin: 9mm 0 0; }
+.referencias h2 { font-size: 12pt; margin: 0 0 3mm; padding: 0 0 1.6mm; border-bottom: 0.3mm solid var(--rule); }
+.referencia { margin: 0 0 2.2mm; break-inside: avoid; }
+.referencia p { margin: 0; }
+.referencia .arquivo { font-size: 9pt; font-weight: 500; }
+.referencia .trecho { font-size: 8.4pt; color: var(--sec); }

@@ -1,0 +1,17 @@
+{% extends "base_markdown.html" %}
+{% block tipo %}legado{% endblock %}
+{% block periodo %}gerado em {{ gerado_em }}{% if modelo %} · {{ modelo }}{% endif %}{% endblock %}
+{% block rodape_da_capa %}Documento para leitura de negócio.{% if com_anexo %} O detalhe técnico está no Anexo técnico, em arquivo à parte.{% endif %}{% endblock %}
+{% block depois %}
+{% if citacoes %}
+<section class="referencias">
+  <h2 id="referencias">Referências da Base de Conhecimento</h2>
+  {% for citacao in citacoes %}
+  <div class="referencia">
+    <p class="arquivo">{{ loop.index }}. {{ citacao.filename or "Documento" }}</p>
+    {% if citacao.quote %}<p class="trecho">{{ citacao.quote|truncate(600, True, "…") }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}
