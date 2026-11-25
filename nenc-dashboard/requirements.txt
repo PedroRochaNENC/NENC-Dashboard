@@ -21,4 +21,12 @@ httpx>=0.27.0
 spacy>=3.8.0
 qrcode>=8.0
 pillow>=10.0.0
+# Relatório por tema (docs/SPEC_RELATORIO_POR_TEMA.md): HTML -> PDF.
+# O WeasyPrint precisa do Pango no sistema (Dockerfile; MSYS2 no Windows, ver docs/OPERATIONS.md).
+weasyprint>=66
+jinja2>=3.1
+markdown-it-py>=3.0
+jsonschema>=4.20
+# Gera as fontes estáticas (Regular, Medium, Bold) a partir da Rubik variável
+fonttools>=4.50
 
