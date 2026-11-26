@@ -123,6 +123,8 @@ _CAPITULO = {
             "required": ["texto", "como_investigar", "porque"],
             "properties": {"texto": _TEXTO, "como_investigar": _TEXTO, "porque": _IDS},
         },
+        # As falas que a IA pode escolher (§5.3), por id; o desenho não as mostra.
+        "candidatas": _IDS,
     },
 }
 
@@ -136,6 +138,11 @@ _TRECHO = {
         "nota": {"type": ["number", "null"]},
         "polaridade": {"enum": list(POLARIDADES)},
         "mascarado": {"type": "boolean"},
+        # De onde a fala vem (Fase 1): crítica (negativa, ou trecho crítico de uma mista), unidade e capítulo.
+        "critica": {"type": "boolean"},
+        "unidade": _TEXTO_OU_NULO,
+        "capitulo": _TEXTO,
+        "subcapitulo": _TEXTO_OU_NULO,
     },
 }
 
@@ -304,6 +311,8 @@ ESQUEMA: Dict[str, Any] = {
                         },
                     },
                 },
+                # Mistas sem trecho de nota até -0,2: ficam fora do ranking e se contam aqui (§12).
+                "mistas_sem_trecho_critico": _INTEIRO,
             },
         },
         "notas": {"type": "array", "items": {"type": "string"}},

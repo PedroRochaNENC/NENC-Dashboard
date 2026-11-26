@@ -367,6 +367,23 @@ def init_db() -> None:
                 created_at      TEXT    DEFAULT (datetime('now','localtime'))
             );
 
+            -- Grupos de subtemas de cada tag aberta, que viram os subcapítulos
+            -- do relatório por tema (docs/SPEC_RELATORIO_POR_TEMA.md, §4). A
+            -- chave diz com quais subtemas e qual definição da tag a IA os
+            -- agrupou: com ela igual, os grupos valem e a tag não volta à IA.
+            CREATE TABLE IF NOT EXISTS subtema_grupos (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id),
+                project_id      INTEGER NOT NULL
+                                REFERENCES projects(id) ON DELETE CASCADE,
+                tag             TEXT    NOT NULL,
+                grupos_json     TEXT    NOT NULL,
+                chave           TEXT    NOT NULL,
+                modelo          TEXT,
+                created_at      TEXT    DEFAULT (datetime('now','localtime')),
+                UNIQUE (project_id, tag)
+            );
+
             CREATE TABLE IF NOT EXISTS qr_unidades (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 organization_id INTEGER NOT NULL REFERENCES organizations(id),
@@ -462,6 +479,10 @@ def init_db() -> None:
         # Snapshot de cada Análise Geral (áudios cobertos, recorte e tabela de
         # temas): é com ele que a análise seguinte calcula "Anteriores → novos".
         _ensure_column(conn, "project_analyses", "temas_json", "TEXT")
+        # O relatório por tema em JSON (docs/SPEC_RELATORIO_POR_TEMA.md, §5.1),
+        # fonte do PDF e da página. Análise sem ele é v2 ou anterior.
+        _ensure_column(conn, "project_analyses", "relatorio_json", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_subtema_grupos_organization ON subtema_grupos(organization_id)")
 
         for table_name in (
             "projects",
@@ -1923,11 +1944,14 @@ def save_project_analysis(
     analysis_text: str,
     citations: Optional[list] = None,
     temas: Optional[dict] = None,
+    relatorio: Optional[dict] = None,
 ) -> int:
     """Salva uma análise geral de projeto. Retorna o ID gerado.
 
     `temas` é o snapshot da Análise Geral v2 (prosodia_relatorio.snapshot),
-    lido de volta como `temas` pelas funções de leitura.
+    lido de volta como `temas` pelas funções de leitura. `relatorio` é o
+    relatório por tema em JSON, lido de volta como `relatorio`; a análise v2
+    fica sem ele.
     """
     _require_write()
     organization_id = _active_organization_id()
@@ -1937,8 +1961,8 @@ def save_project_analysis(
         actual_org_id = proj_row["organization_id"] if proj_row else (organization_id or 1)
         cur = conn.execute(
             """INSERT INTO project_analyses
-               (organization_id, project_id, model, analysis_text, citations, temas_json)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (organization_id, project_id, model, analysis_text, citations, temas_json, relatorio_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 actual_org_id,
                 project_id,
@@ -1946,6 +1970,7 @@ def save_project_analysis(
                 analysis_text,
                 json.dumps(citations or []),
                 json.dumps(temas, ensure_ascii=False) if temas is not None else None,
+                json.dumps(relatorio, ensure_ascii=False) if relatorio is not None else None,
             ),
         )
         analysis_id = cur.lastrowid
@@ -2042,6 +2067,14 @@ def _with_themes_snapshot(analysis: Dict) -> Dict:
     except ValueError:
         snapshot = None
     analysis["temas"] = snapshot if isinstance(snapshot, dict) else None
+    # O relatório por tema: None na v2, nas anteriores e no JSON ilegível,
+    # que abrem no template legado.
+    raw = analysis.pop("relatorio_json", None)
+    try:
+        relatorio = json.loads(raw) if raw else None
+    except ValueError:
+        relatorio = None
+    analysis["relatorio"] = relatorio if isinstance(relatorio, dict) else None
     return analysis
 
 
@@ -2324,4 +2357,63 @@ def get_audio_temas_for_project(project_id: int) -> Dict[int, Dict]:
         except ValueError:
             continue
         result[item["audio_id"]] = item
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Grupos de subtemas das tags abertas (relatório por tema)
+# ---------------------------------------------------------------------------
+
+def save_subtema_grupos(project_id: int, tag: str, chave: str, grupos: list, modelo: str = "") -> None:
+    """Grava os grupos de subtemas de uma tag no lugar dos anteriores.
+
+    `grupos` é a lista [{"nome", "subtemas"}] que prosodia_subtemas devolve,
+    e `chave`, a dos subtemas e da definição da tag que a IA agrupou.
+    """
+    _require_write()
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        proj_row = conn.execute("SELECT organization_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        actual_org_id = proj_row["organization_id"] if proj_row else (organization_id or 1)
+        conn.execute(
+            """INSERT INTO subtema_grupos (organization_id, project_id, tag, grupos_json, chave, modelo)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(project_id, tag) DO UPDATE SET
+                   organization_id = excluded.organization_id,
+                   grupos_json = excluded.grupos_json,
+                   chave = excluded.chave,
+                   modelo = excluded.modelo,
+                   created_at = datetime('now','localtime')""",
+            (actual_org_id, project_id, tag, json.dumps(grupos, ensure_ascii=False), chave, modelo or ""),
+        )
+    _audit("prosodia.subtema_grupos.save", "project", project_id, actual_org_id, write=True)
+
+
+def get_subtema_grupos(project_id: int) -> Dict[str, Dict]:
+    """Os grupos gravados de cada tag do projeto: {tag: {chave, grupos, modelo, created_at}}.
+
+    Linha com JSON ilegível fica de fora: a tag volta à IA na próxima geração.
+    """
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        _require_visible_project(conn, project_id, organization_id)
+        if not organization_id:
+            rows = conn.execute("SELECT * FROM subtema_grupos WHERE project_id = ?", (project_id,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM subtema_grupos WHERE project_id = ? AND organization_id = ?",
+                (project_id, organization_id),
+            ).fetchall()
+    _audit("prosodia.subtema_grupos.list", "project", project_id, organization_id or 0)
+    result = {}
+    for row in rows:
+        item = dict(row)
+        try:
+            grupos = json.loads(item.pop("grupos_json") or "[]")
+        except ValueError:
+            continue
+        if isinstance(grupos, list):
+            item["grupos"] = grupos
+            result[item["tag"]] = item
     return result
