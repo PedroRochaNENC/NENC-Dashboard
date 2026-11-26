@@ -419,6 +419,46 @@ class PorTemaTests(_BancoDescartavel):
         self.assertEqual(len(relatorio.chamadas), 1)
 
 
+class FichaNaGeralTests(_BancoDescartavel):
+    """A ficha de contexto na Geral (docs/SPEC_RELATORIO_POR_TEMA.md, §10; Fase 4)."""
+
+    def test_the_general_analysis_reads_the_latest_card_even_after_a_deep_analysis(self):
+        from utils import prosodia_ficha as ficha
+
+        self._projeto(audios=1)
+        audio_id = self._audios()[0]["id"]
+        prosodia_db.save_analysis(audio_id, "m", "## Sumário Executivo\nAntiga.")
+        self.assertEqual(geracao.analise_para_a_geral(audio_id), "## Sumário Executivo\nAntiga.")
+
+        cartao = ficha.montar_ficha("## Ficha de contexto\n### Situação\nRelato da fila.")
+        prosodia_db.save_analysis(audio_id, "m", cartao)
+        with closing(sqlite3.connect(self.database_path)) as conn, conn:
+            conn.execute("UPDATE analyses SET created_at = '2026-11-01 10:00:00' WHERE analysis_text = ?", (cartao,))
+        prosodia_db.save_analysis(audio_id, "m", "## Análise Estatística\nAprofundada, depois.")
+
+        self.assertEqual(geracao.analise_para_a_geral(audio_id), cartao)
+        self.assertIsNone(geracao.analise_para_a_geral(999999))
+
+    def test_themes_come_from_the_classification_only_while_it_is_valid(self):
+        self._projeto(taxonomia=TAXONOMIA_COM_TAGS)
+        self._gerar(IaFalsa(classificacao=_classificacao("Atendimento > demora na fila")))
+        projeto = prosodia_db.get_project(self.project_id)
+        audio = self._audios()[0]
+        transcricao = self._transcricao([audio])
+
+        temas = geracao.temas_gravados_do_audio(projeto, audio["id"], transcricao)
+
+        self.assertEqual(temas, "- Atendimento > demora na fila (negativa): espera")
+        # Outra transcrição muda a chave: a classificação não vale mais.
+        outra = transcricao.assign(Text="Outra fala completamente diferente.")
+        self.assertEqual(geracao.temas_gravados_do_audio(projeto, audio["id"], outra), "")
+        # Entrevista não usa a classificação: a IA escreve os temas.
+        self.assertEqual(
+            geracao.temas_gravados_do_audio(dict(projeto, tipo_projeto="entrevista_qualitativa"), audio["id"], transcricao),
+            "",
+        )
+
+
 class ChamadasTests(unittest.TestCase):
     def test_the_report_call_uses_the_base_without_analyses(self):
         cliente = object()

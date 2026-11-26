@@ -61,6 +61,11 @@ def legado_pdf(texto: Optional[str], **opcoes: Any) -> bytes:
     return html_para_pdf(relatorio_html.legado_html(texto, **opcoes))
 
 
+def ficha_pdf(texto: Optional[str], **opcoes: Any) -> bytes:
+    """O PDF da análise de um áudio. Opções: as de `relatorio_html.ficha_html`."""
+    return html_para_pdf(relatorio_html.ficha_html(texto, **opcoes))
+
+
 def anexo_pdf(texto: Optional[str], **opcoes: Any) -> bytes:
     """O PDF do Anexo técnico. Opções: as de `relatorio_html.anexo_html`."""
     return html_para_pdf(relatorio_html.anexo_html(texto, **opcoes))

@@ -356,7 +356,7 @@ Cerca de 300 tokens. **Sem leitura da voz**: a voz é calculada em código e a f
 | Ponto | Hipótese de trabalho | Quando fechar |
 |---|---|---|
 | Projetos sem tags (§4) | **Decidido em 25/11/2026:** seguem na v2; só a taxonomia com tag aberta gera capítulos. Fecha a dúvida sobre a faixa do capítulo por Categoria, que fica só para a taxonomia mista. | Fechado. |
-| Ficha individual no caminho v2 (§10) | A ficha não tem "Sumário Executivo", então `sumario_executivo` não a lê. Na v2, a Geral recebe a ficha inteira no lugar do Sumário, com o mesmo limite de tamanho, e análise antiga segue no Sumário. | Fase 4. |
+| Ficha individual no caminho v2 (§10) | **Fechado na Fase 4:** `sumario_executivo` reconhece a ficha e a devolve compacta (uma linha por seção, sem as vazias). Na v2, com o mesmo limite de tamanho do Sumário; nas chamadas de capítulo, até 2.400 caracteres. Análise antiga segue no Sumário. | Fechado. |
 | Interruptor por projeto (§2, item 27) | **Fechado na Fase 2:** coluna `projects.relatorio_por_tema`, lida em `gerar_analise_geral`; desligado, a geração segue a v2. | Fechado. |
 | WeasyPrint no Python 3.14 e no Windows | **Fechado na Fase 0 (25/11/2026):** WeasyPrint 70.0 com o Pango do MSYS2 passou no spike (fonte própria, `@page`, `string-set`, `target-counter`, `bookmark-level`). | Fechado. |
 | Mista sem trecho crítico (§3.6) | Não entra no ranking; o JSON registra quantas houve. | Fase 5, olhando quantas se perdem. |
@@ -428,6 +428,14 @@ A ordem de execução é a do item 28 da §2: Fase 0, Fase 3, Fases 1 e 2, Fase 
    - **Ainda não:** a máscara nas falas do Anexo e a coluna de unidade nas tabelas dele (o anexo segue saindo do apêndice v2); o Δ do capítulo de categoria.
 3. **O visual.** HTML, gráficos, CSS, PDF, a página do app, o anexo, o zip e o template legado, que também atende o texto v2. **Vem primeiro** (§2, item 28), a partir de fixtures fictícias montadas do formato dos dois PDFs de 24/11 (sem dado da Smart Fit no repositório), porque é a parte que mais pede iteração visual. O esquema JSON da §5.1 é o contrato: se a Fase 1 pedir mudança nele, as fixtures acompanham.
 4. **Ficha individual.** O prompt e a página do áudio, e a Geral passando a recebê-la.
+
+   **Como ficou (26/11/2026).** `utils/prosodia_ficha.py` reconhece, monta e compacta a ficha. Decisões de implementação:
+   - **Prompt:** `PROMPT_PESQUISA_OPINIAO` e `PROMPT_ENTREVISTA` viraram a ficha (os relatórios antigos saíram do código). Além das regras da §10, a ficha não escreve nomes de pessoas (no teste da Smart Fit, uma trazia o da respondente). Os modos Estatística e Estratégica seguem como estavam.
+   - **Gravação:** `montar_ficha` põe o título, o rótulo de interpretação prévia e as sete seções sempre, com "Não disse." na que faltar. Na Pesquisa de Opinião, "Temas tocados" sai da classificação gravada do áudio quando a chave dela ainda vale (`prosodia_geracao.temas_gravados_do_audio`), e a linha de alerta entra sem a evidência.
+   - **Página do áudio:** o modo rápido chama-se "Ficha de contexto"; manda à IA o contexto e a transcrição (até 12 mil caracteres), sem as tabelas de voz, com 900 tokens. O reprocessamento também gera a ficha. O resumo da tela é a "Situação", e o PDF sai do template curto `templates/relatorio/ficha.html` (sem capa), deixando o `pdf_report`.
+   - **Outras telas** que geram a análise rápida em lote (Áudios, Entrevistas, monitor do WhatsApp) gravam a resposta no formato da ficha (`ficha_da_resposta`), com os temas escritos pela IA.
+   - **Geral:** lê de cada áudio a ficha mais recente e, sem ficha, a análise mais recente (`analise_para_a_geral`): a aprofundada gerada depois não tira a ficha da Geral.
+   - **Teste na Smart Fit:** fichas dos 15 áudios de Duque de Caxias 2 com `gpt-4.1-mini` (na cópia), e o relatório por tema reescrito com elas, dentro do contrato.
 5. **Validação com a Smart Fit.** Cópia de produção (o script de geração fora da página, sem desligar o `_audit`), a rede e Duque de Caxias 2, e conferir:
    1. cada ponto da §1 tem resposta visível;
    2. nenhum capítulo cita valência, ativação, habitual, pitch nem loudness, e nenhuma frase se repete entre capítulos;

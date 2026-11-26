@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>{{ titulo }} · {{ projeto }}</title>
+<style>
+{{ css|safe }}
+{#- Sem capa: a primeira página tem as margens das demais (relatorio_pdf.css a zera para a capa). #}
+@page { @top-left { content: "{{ titulo|css_string }}"; } @top-right { content: "{{ cabecalho_direita|css_string }}"; } }
+@page :first {
+  margin: 22mm 18mm 20mm 18mm;
+  @bottom-left { content: "NencBoost"; font: 400 7.5pt "Rubik"; color: #6B6963; }
+  @bottom-right { content: "página " counter(page) " de " counter(pages); font: 400 7.5pt "Rubik"; color: #6B6963; }
+}
+</style>
+</head>
+<body>
+<div class="relatorio relatorio--documento relatorio--ficha">
+
+<header class="ficha-topo">
+  <p class="marca">{{ marca }}</p>
+  <h1 class="titulo">{{ titulo }}</h1>
+  <p class="recorte">{{ projeto }}</p>
+  <p class="periodo">{% if subtitulo %}{{ subtitulo }} · {% endif %}gerado em {{ gerado_em }}{% if modelo %} · {{ modelo }}{% endif %}</p>
+</header>
+
+<main class="md">{{ corpo }}</main>
+
+{% if citacoes %}
+<section class="referencias">
+  <h2 id="referencias">Referências da Base de Conhecimento</h2>
+  {% for citacao in citacoes %}
+  <div class="referencia">
+    <p class="arquivo">{{ loop.index }}. {{ citacao.filename or "Documento" }}</p>
+    {% if citacao.quote %}<p class="trecho">{{ citacao.quote|truncate(600, True, "…") }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+</div>
+</body>
+</html>

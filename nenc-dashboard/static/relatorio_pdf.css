@@ -102,3 +102,10 @@ body { margin: 0; }
 
 /* O número da página de origem, nas reclamações. */
 .relatorio a.ref::after { content: ", p. " target-counter(attr(href url), page); color: #6B6963; }
+
+/* A ficha do áudio (Fase 4): documento curto, sem capa nem índice. */
+.ficha-topo { border-left: 2.4mm solid #5D5294; padding: 1mm 0 1mm 6mm; margin: 0 0 8mm; }
+.ficha-topo .marca { font-size: 7.5pt; font-weight: 700; letter-spacing: .12em; color: #5D5294; margin: 0 0 3mm; }
+.ficha-topo h1.titulo { font-size: 20pt; line-height: 1.15; font-weight: 700; margin: 0 0 1.5mm; bookmark-level: none; }
+.ficha-topo .recorte { font-size: 11pt; font-weight: 500; color: #52514E; margin: 0 0 1mm; }
+.ficha-topo .periodo { font-size: 8.5pt; color: #6B6963; margin: 0; }

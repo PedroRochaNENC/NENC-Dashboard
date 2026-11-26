@@ -233,9 +233,10 @@ class SistemaTests(unittest.TestCase):
         for bloco in ("Pico e fim", "Limitações e Próximos Passos", "Feche com um saldo"):
             with self.subTest(bloco=bloco):
                 self.assertNotIn(bloco, sistema)
-        # Os prompts das análises individuais não mudam.
-        self.assertIn(prompts.PROSODIA_CX_FRAMEWORK, prompts.PROMPT_PESQUISA_OPINIAO)
-        self.assertIn(prompts.PROSODIA_EVIDENCE_RULES, prompts.PROMPT_ENTREVISTA)
+        # Os modos em duas etapas da análise individual seguem com os blocos
+        # comuns; o rápido virou a ficha de contexto (spec do relatório por tema, §10).
+        self.assertIn(prompts.PROSODIA_CX_FRAMEWORK, prompts.PROSODIA_SYSTEM_PROMPT_STRATEGIC)
+        self.assertIn(prompts.PROSODIA_EVIDENCE_RULES, prompts.PROSODIA_SYSTEM_PROMPT_STATISTICAL)
         self.assertIn("Pico e fim", prompts.PROSODIA_CX_FRAMEWORK)
 
     def test_the_example_is_the_one_in_the_spec(self):

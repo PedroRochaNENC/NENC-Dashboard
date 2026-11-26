@@ -328,6 +328,33 @@ def legado_html(
     )
 
 
+def ficha_html(
+    texto: Optional[str],
+    *,
+    projeto: str,
+    titulo: str,
+    subtitulo: str = "",
+    gerado_em: str = "",
+    modelo: str = "",
+    citacoes: Sequence[Dict[str, Any]] = (),
+) -> str:
+    """A análise de um áudio (a ficha de contexto, ou a análise aprofundada) num documento curto, sem capa.
+
+    `titulo` é o áudio ("Áudio #12"); `subtitulo`, a unidade e a chegada. É o
+    PDF da página do áudio (spec do relatório por tema, §10).
+    """
+    marca = "NENCBOOST · FICHA DO ÁUDIO" if "Ficha de contexto" in str(texto or "") else "NENCBOOST · ANÁLISE DO ÁUDIO"
+    return _documento_de_markdown(
+        "ficha.html", texto, projeto=projeto, subtitulo=subtitulo, gerado_em=gerado_em, modelo=modelo,
+        extras={
+            "titulo": titulo,
+            "marca": marca,
+            "citacoes": list(citacoes or []),
+            "cabecalho_direita": _cabecalho_direita({"projeto": projeto or "Projeto", "recorte": titulo}),
+        },
+    )
+
+
 def anexo_html(
     texto: Optional[str],
     *,

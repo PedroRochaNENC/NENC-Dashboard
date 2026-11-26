@@ -32,6 +32,7 @@ from utils.prosodia_db import (
     mark_project_synced,
 )
 from utils.prosodia_temas import audios_com_alerta, parse_taxonomia
+from utils.prosodia_ficha import ficha_da_resposta
 from utils.prosodia_indice import FAIXAS as FAIXAS_INDICE
 from utils.prosodia_indice import atualizar_sem_derrubar as atualizar_indices_sem_derrubar
 from utils.prosodia_indice import faixa as faixa_indice
@@ -525,6 +526,8 @@ if wa_configured():
                     except Exception as e:
                         st.warning(f"[{session_id}] Falha na análise de IA: {e}")
 
+                    # A análise rápida é a ficha de contexto (spec do relatório por tema, §10).
+                    analysis_result["text"] = ficha_da_resposta(analysis_result["text"])
                     if analysis_result["text"]:
                         save_analysis(
                             audio_id=audio_id,
@@ -1013,6 +1016,7 @@ else:
                                     temperature=0.5,
                                     max_tokens=3000,
                                 )
+                                result_ai["text"] = ficha_da_resposta(result_ai["text"])
                                 save_analysis(selected_id, "gpt-4.1-mini", result_ai["text"], result_ai.get("citations", []))
                                 
                                 # Enviar nova análise para KB
