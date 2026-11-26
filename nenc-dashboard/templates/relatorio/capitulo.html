@@ -1,0 +1,90 @@
+{% from "_macros.html" import chip_faixa, fala, falas %}
+{#- Um capítulo por tema (spec §3.2). `cap` é o capítulo; `trechos`, o dicionário de falas. -#}
+{% set curto = cap.faixa == "Menção isolada" %}
+<section class="capitulo {{ 'capitulo--curto' if curto else 'capitulo--cheio' }}" id="{{ cap.id }}">
+  <header class="cap-cabecalho">
+    <h1><span class="num">{{ cap.numero }}</span> <span class="nome">{{ cap.tema }}</span></h1>
+    <div class="cap-linha">
+      {{ chip_faixa(cap.faixa) }}
+      <span class="pol">{{ cap.respondentes }}/{{ cap.total }} ({{ cap.respondentes|pct(cap.total) }}%)</span>
+      {% if curto %}<span class="legenda-pol">{{ cap.polaridades|polaridades_em_palavras }}</span>{% endif %}
+      {% if cap.selo %}<span class="chip chip--selo">{{ cap.selo }}</span>{% endif %}
+    </div>
+  </header>
+
+  {% if curto %}
+    {% if cap.texto %}<p class="texto-curto">{{ cap.texto }}</p>{% endif %}
+    {{ falas(cap.falas, trechos, false) }}
+  {% else %}
+    <div class="ficha">
+      <div class="ficha-numeros">
+        <p class="ficha-destaque"><strong>{{ cap.respondentes }}/{{ cap.total }}</strong> respondentes · {{ cap.respondentes|pct(cap.total) }}%</p>
+        {{ cap.polaridades|barra_polaridade(150, 9) }}
+        <p class="legenda-pol">{{ cap.polaridades|polaridades_em_palavras }}</p>
+        {% if cap.delta %}
+        <p class="ficha-delta"><strong>Desde a análise anterior:</strong>
+          {{ cap.delta.anteriores }} de {{ cap.delta.total_anteriores }} respondentes anteriores e
+          {{ cap.delta.novos }} de {{ cap.delta.total_novos }} novos citaram o tema.
+          {{ "Com tantos respondentes novos, vale como tendência." if cap.delta.tendencia else "É variação observada, e não tendência." }}</p>
+        {% endif %}
+      </div>
+      <div class="ficha-voz">
+        <p class="rotulo">Voz do tema</p>
+        {{ grade_voz(cap.voz) }}
+        {% if cap.voz.frase %}<p class="frase">{{ cap.voz.frase }}</p>{% endif %}
+      </div>
+    </div>
+
+    {% if cap.texto %}<p class="texto-curto">{{ cap.texto }}</p>{% endif %}
+
+    {% for sub in cap.subcapitulos %}
+    <div class="sub" id="{{ sub.id }}">
+      <h2><span class="num">{{ sub.numero }}</span> <span class="nome">{{ sub.nome }}</span></h2>
+      <p class="meta">{{ sub.respondentes }} {{ "respondente" if sub.respondentes == 1 else "respondentes" }} · {{ sub.polaridades|polaridades_em_palavras }}</p>
+      <p class="dito">{{ sub.o_que_foi_dito }}</p>
+      {% if sub.critica %}
+      <div class="critica-linha"><span class="rotulo">Crítica</span>{{ sub.critica.resumo }}</div>
+      {% endif %}
+      {% set ids = sub.falas + ((sub.critica.falas if sub.critica else []) | reject("in", sub.falas) | list) %}
+      {{ falas(ids, trechos) }}
+    </div>
+    {% endfor %}
+    {% if cap.demais %}<p class="sem-mencao">{{ cap.demais }}</p>{% endif %}
+
+    {% set segundo = cap.recomendacao or cap.acompanhar %}
+    {% if cap.hipotese or segundo %}
+    <div class="cartoes {{ 'cartoes--duplo' if (cap.hipotese and segundo) else '' }}">
+    {% if cap.hipotese %}
+    <div class="cartao cartao--hipotese">
+      <span class="rotulo">Hipótese</span>
+      <p>{{ cap.hipotese.texto }}</p>
+      <p class="campo"><strong>Como validar:</strong> {{ cap.hipotese.como_validar }}</p>
+      <p class="campo">Apoia-se em {{ cap.hipotese.apoia_em|referencias(numeros) }}.</p>
+    </div>
+    {% endif %}
+
+    {% if cap.recomendacao %}
+    <div class="cartao cartao--recomendacao">
+      <span class="rotulo">Recomendação</span>
+      <p class="chips">
+        <span class="chip chip--tipo-{{ cap.recomendacao.tipo|lower }}">{{ cap.recomendacao.tipo }}</span>
+        <span class="chip chip--driver">Driver: {{ cap.recomendacao.driver }}</span>
+        <span class="chip chip--driver">Área: {{ cap.recomendacao.area }}</span>
+      </p>
+      <p>{{ cap.recomendacao.texto }}</p>
+      <p class="campo"><strong>Responde a:</strong> {{ cap.recomendacao.responde_a|referencias(numeros) }}. <strong>Como medir:</strong> {{ cap.recomendacao.como_medir }}</p>
+    </div>
+    {% endif %}
+
+    {% if cap.acompanhar %}
+    <div class="cartao cartao--acompanhar">
+      <span class="rotulo">{{ "O que acompanhar e investigar" if exploratoria else "O que acompanhar" }}</span>
+      <p>{{ cap.acompanhar.texto }}</p>
+      <p class="campo"><strong>{{ "Como investigar" }}:</strong> {{ cap.acompanhar.como_investigar }}</p>
+      <p class="campo">Por quê: {{ cap.acompanhar.porque|referencias(numeros) }}.</p>
+    </div>
+    {% endif %}
+    </div>
+    {% endif %}
+  {% endif %}
+</section>

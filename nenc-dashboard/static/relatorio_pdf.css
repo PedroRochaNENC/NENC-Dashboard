@@ -1,0 +1,104 @@
+/*
+  Relatório por tema: só do PDF (WeasyPrint). Fontes, @page, capa, índice e
+  quebras de página. Os componentes estão em relatorio.css.
+
+  Notas do spike (docs/OPERATIONS.md):
+  - target-counter() dá 0 dentro de display: flex: no índice o link é bloco e o
+    número da página flutua à direita.
+  - h1 entra nos marcadores do PDF por padrão: a capa leva bookmark-level: none.
+*/
+
+@font-face { font-family: "Rubik"; font-weight: 400; src: url("fonts/Rubik-Regular.ttf"); }
+@font-face { font-family: "Rubik"; font-weight: 500; src: url("fonts/Rubik-Medium.ttf"); }
+@font-face { font-family: "Rubik"; font-weight: 700; src: url("fonts/Rubik-Bold.ttf"); }
+
+@page {
+  size: A4;
+  margin: 22mm 18mm 20mm 18mm;
+  @top-left { content: string(capitulo); font: 500 7.5pt "Rubik"; color: #6B6963; }
+  @top-right { content: ""; font: 400 7.5pt "Rubik"; color: #6B6963; }
+  @bottom-left { content: "NencBoost"; font: 400 7.5pt "Rubik"; color: #6B6963; }
+  @bottom-right { content: "página " counter(page) " de " counter(pages); font: 400 7.5pt "Rubik"; color: #6B6963; }
+}
+
+@page :first {
+  margin: 0;
+  @top-left { content: none; }
+  @top-right { content: none; }
+  @bottom-left { content: none; }
+  @bottom-right { content: none; }
+}
+
+html { font-family: "Rubik", sans-serif; }
+body { margin: 0; }
+.capa, .capa * { box-sizing: border-box; }
+
+/* ---------- Capa ---------- */
+
+.capa {
+  height: 297mm; width: 210mm; padding: 26mm 22mm 20mm 30mm; position: relative; page-break-after: always;
+  background: #FFFFFF; overflow: hidden;
+}
+.capa::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 8mm; background: #5D5294; }
+.capa .marca { font-size: 8pt; font-weight: 700; letter-spacing: .12em; color: #5D5294; margin: 0 0 14mm; }
+.capa h1.titulo { font-size: 30pt; line-height: 1.12; font-weight: 700; margin: 0 0 4mm; bookmark-level: none; }
+.capa .recorte { font-size: 14pt; font-weight: 500; color: #52514E; margin: 0 0 2mm; }
+.capa .periodo { font-size: 9.5pt; color: #6B6963; margin: 0 0 6mm; }
+.capa .selos { margin: 0 0 8mm; }
+.capa .kpis { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 5mm; margin: 0 0 9mm; }
+.capa .kpi { border-top: 0.6mm solid #5D5294; padding-top: 2.4mm; }
+.capa .kpi strong { display: block; font-size: 22pt; font-weight: 700; line-height: 1.1; }
+.capa .kpi span { font-size: 8pt; color: #6B6963; letter-spacing: .04em; text-transform: uppercase; }
+.capa .termometro {
+  display: grid; grid-template-columns: 62mm 1fr; column-gap: 8mm; align-items: center;
+  background: #F6F5F1; border-radius: 2.4mm; padding: 5mm 7mm; margin: 0 0 9mm;
+}
+.capa .termometro p { margin: 0 0 1.6mm; font-size: 9pt; color: #52514E; }
+.capa .termometro .rotulo { font-size: 7.5pt; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: #6B6963; }
+.capa .destaques { margin: 0 0 9mm; }
+.capa .destaques .rotulo { display: block; margin: 0 0 2mm; font-size: 7.5pt; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: #6B6963; }
+.capa .destaque { display: grid; grid-template-columns: 52mm 24mm 1fr; align-items: center; padding: 1.4mm 0; border-bottom: 0.2mm solid #E1E0D9; font-size: 9pt; }
+.capa .destaque strong { font-weight: 500; }
+.capa .sobre { font-size: 9pt; color: #52514E; max-width: 130mm; }
+.capa .sobre .rotulo { display: block; margin: 0 0 1.2mm; font-size: 7.5pt; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: #6B6963; }
+.capa .rodape-capa { position: absolute; left: 30mm; right: 22mm; bottom: 14mm; font-size: 7.8pt; color: #6B6963; border-top: 0.2mm solid #E1E0D9; padding-top: 2.4mm; }
+
+/* ---------- Índice ---------- */
+
+.indice { margin: 0 0 8mm; }
+.indice h1.secao { string-set: capitulo "Conteúdo"; bookmark-level: 1; bookmark-label: "Conteúdo"; }
+.indice a { color: inherit; text-decoration: none; display: block; padding: 1.1mm 0; border-bottom: 0.2mm dotted #C9C7BE; font-size: 9.5pt; }
+.indice a::after { content: target-counter(attr(href url), page); float: right; color: #6B6963; }
+.indice a.n1 { font-weight: 500; padding-top: 1.7mm; }
+.indice a.n1 .num { color: #5D5294; display: inline-block; min-width: 7mm; }
+.indice a.n2 { padding-left: 7mm; font-size: 8.7pt; color: #52514E; }
+.indice a.n2 .num { display: inline-block; min-width: 8mm; color: #6B6963; }
+.indice a.n0 { font-weight: 500; }
+
+/* ---------- Quebras e marcadores ---------- */
+
+.relatorio h1.secao { string-set: capitulo content(); bookmark-level: 1; bookmark-label: content(); }
+.relatorio h2.secao { bookmark-level: 2; bookmark-label: content(); }
+.relatorio .cap-cabecalho h1 { string-set: capitulo content(); bookmark-level: 1; bookmark-label: content(); }
+.relatorio .sub h2 { bookmark-level: 2; bookmark-label: content(); }
+.relatorio .capitulo--cheio { break-before: page; }
+.relatorio .secao-nova { break-before: page; }
+.relatorio .fluxo { break-before: auto; }
+
+/* Texto em markdown: o título de seção (h2) é o capítulo do cabeçalho corrido e abre o marcador; h3, o subnível. */
+.relatorio .md h2 { string-set: capitulo content(); bookmark-level: 1; bookmark-label: content(); }
+.relatorio .md h3 { bookmark-level: 2; bookmark-label: content(); }
+.relatorio .md h4, .relatorio .md h5, .relatorio .md h6 { bookmark-level: none; }
+.relatorio .referencias h2 { string-set: capitulo content(); bookmark-level: 1; bookmark-label: content(); border-bottom: 0.3mm solid #E1E0D9; }
+.indice--markdown { margin: 0 0 10mm; }
+.indice--markdown a { padding-top: 1.7mm; }
+
+/* O Anexo técnico é deitado, para as tabelas largas: a capa acompanha a página. */
+.capa--paisagem { width: 297mm; height: 210mm; padding: 20mm 24mm 16mm 30mm; }
+.capa--paisagem .rodape-capa { max-width: 200mm; }
+
+/* Na capa, o alerta crítico aponta para a página dele. */
+.capa a.ref-pagina::after { content: " · página " target-counter(attr(href url), page); }
+
+/* O número da página de origem, nas reclamações. */
+.relatorio a.ref::after { content: ", p. " target-counter(attr(href url), page); color: #6B6963; }

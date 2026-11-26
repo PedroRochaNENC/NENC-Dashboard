@@ -1,0 +1,7 @@
+{% extends "base_markdown.html" %}
+{% block pagina %}@page { size: A4 landscape; }{% endblock %}
+{% block tipo %}anexo{% endblock %}
+{% block classe_da_capa %} capa--paisagem{% endblock %}
+{% block marca %}NENCBOOST · ANEXO TÉCNICO{% endblock %}
+{% block periodo %}gerado em {{ gerado_em }}{% if modelo %} · {{ modelo }}{% endif %}{% endblock %}
+{% block rodape_da_capa %}Complementa a Análise Geral do projeto: reúne as tabelas de apoio, as médias de voz, os números da Matriz e do Termômetro e os cortes aplicados. Os áudios aparecem como Áudio NN, o mesmo nome do relatório.{% endblock %}

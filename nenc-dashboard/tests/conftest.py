@@ -79,5 +79,13 @@ def _isolated_database(monkeypatch):
     )
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requer_weasyprint: gera PDF com o WeasyPrint e e pulado quando o Pango nao esta instalado "
+        "(docs/OPERATIONS.md).",
+    )
+
+
 def pytest_unconfigure(config):
     shutil.rmtree(_SUITE_DIRECTORY, ignore_errors=True)

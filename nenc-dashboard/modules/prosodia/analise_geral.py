@@ -7,6 +7,7 @@ Consolida dados de todos os áudios de um projeto para gerar:
 - analise geral por IA com historico
 """
 
+import hashlib
 import io
 import logging
 import zipfile
@@ -19,8 +20,8 @@ from utils.icons import page_title
 
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
-from utils import pdf_report
 from utils import prosodia_overview as overview
+from utils import relatorio_pdf
 
 from utils.prosodia_db import (
     init_db,
@@ -104,92 +105,28 @@ def _build_project_analysis_markdown(
     return "\n".join(lines)
 
 
-def _build_project_analysis_pdf(
-    project_name: str,
-    project_info: dict,
-    model: str,
-    created_at: str,
-    text: str,
-    citations: list,
-) -> bytes:
-    """PDF da análise geral, no mesmo desenho dos demais relatórios.
+@st.cache_data(show_spinner="Montando o PDF…", max_entries=12)
+def _arquivos_da_analise(chave: tuple, _projeto: dict, _analise: dict, _audios: list) -> tuple:
+    """(PDF, anexo ou None) da análise salva, uma vez por análise.
 
-    Usa `pdf_report` em vez de montar o FPDF na mão: o texto da IA passa a
-    renderizar títulos, negrito e tabelas em vez de sair com `**` e barras
-    verticais cruas, o rodapé numera as páginas, e a sanitização preserva
-    travessões e aspas curvas que a codificação antiga virava `?`.
-
-    Leva só o texto salvo e as referências. A seção de métricas acústicas
-    que vinha depois listava cada áudio pela sessão, que traz o telefone; o
-    apêndice técnico da v2 já tem as médias por áudio, pelo alias.
+    O WeasyPrint leva um ou dois segundos por documento, e a página recarrega a
+    cada clique. A `chave` traz o que muda o PDF (a análise, o cadastro do
+    projeto e os áudios); os argumentos com `_` não entram no hash.
     """
-    pdf = pdf_report.ReportPDF("Análise Geral · {}".format(project_name or "Projeto"))
-    pdf.add_page()
+    return geracao.arquivos_da_analise(_projeto, _analise, _audios)
 
-    # -- Capa curta -------------------------------------------------------
-    pdf.set_font(pdf_report.FONT, "B", 8.5)
-    pdf.set_text_color(*pdf_report.ACCENT)
-    pdf.cell(0, 5, pdf_report.sanitize("NENCBOOST · ANÁLISE DE VOZ E PROSÓDIA"),
-             new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(1.5)
 
-    pdf.set_font(pdf_report.FONT, "B", 20)
-    pdf.set_text_color(*pdf_report.INK)
-    pdf.multi_cell(0, 9, pdf_report.sanitize(project_name or "Projeto"),
-                   new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(1)
-    pdf.set_draw_color(*pdf_report.ACCENT)
-    pdf.set_line_width(0.8)
-    pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + 24, pdf.get_y())
-    pdf.set_line_width(0.2)
-    pdf.ln(5)
-
-    ficha = [item for item in (
-        "Modelo: {}".format(model) if model else "",
-        "Gerado em: {}".format(created_at) if created_at else "",
-    ) if item]
-    if ficha:
-        pdf_report.paragraph(pdf, " · ".join(ficha), size=8.5, color=pdf_report.MUTED)
-
-    # -- Contexto do projeto ----------------------------------------------
-    rotulos = [
-        ("Especialidade", "especialidade"),
-        ("Histórico", "historico"),
-        ("Perguntas centrais", "problemas"),
-        ("Briefing", "briefing"),
-    ]
-    contexto = [(rotulo, str(project_info.get(chave) or "").strip())
-                for rotulo, chave in rotulos]
-    contexto = [(rotulo, valor) for rotulo, valor in contexto if valor]
-    if contexto:
-        pdf_report.heading(pdf, "Contexto do Projeto", level=2)
-        for rotulo, valor in contexto:
-            # O briefing e o campo longo; os demais cabem em poucas linhas.
-            if len(valor) > 1200:
-                valor = valor[:1200].rstrip() + "…"
-            pdf_report.paragraph(pdf, "{}:".format(rotulo), size=9, style="B",
-                                 color=pdf_report.INK)
-            pdf_report.paragraph(pdf, valor, size=9)
-
-    # -- Resultado da análise ---------------------------------------------
-    if text:
-        pdf_report.heading(pdf, "Resultado da Análise", level=2)
-        pdf_report.render_markdown_lite(pdf, text)
-
-    # -- Referências -------------------------------------------------------
-    if citations:
-        pdf_report.heading(pdf, "Referências da Base de Conhecimento", level=2)
-        for numero, citacao in enumerate(citations, 1):
-            arquivo = citacao.get("filename") or "Documento"
-            trecho = (citacao.get("quote") or "").strip()
-            pdf_report.paragraph(pdf, "{}. {}".format(numero, arquivo), size=9,
-                                 style="B", color=pdf_report.INK)
-            if trecho:
-                if len(trecho) > 600:
-                    trecho = trecho[:600].rstrip() + "…"
-                pdf_report.paragraph(pdf, trecho, size=8.5, style="I")
-
-    return pdf_report.output_bytes(pdf)
+def _chave_dos_arquivos(analise: dict) -> tuple:
+    # O cache é do processo, para todas as organizações: o hash do texto garante
+    # que duas análises com o mesmo id em bancos diferentes não troquem de PDF.
+    contexto = geracao.contexto_do_projeto(project)
+    return (
+        analise.get("id"),
+        str(analise.get("created_at")),
+        hashlib.sha256(str(analise.get("analysis_text") or "").encode("utf-8")).hexdigest(),
+        tuple(sorted(contexto.items())),
+        tuple((int(a["id"]), a.get("unidade_id")) for a in audios_projeto),
+    )
 
 
 def _append_result_to_kb(
@@ -899,8 +836,6 @@ with st.expander("Momentos de maior ativação prosódica"):
             _abrir_na_timeline(momento, "Momento de Alta Ativação Geral", "Filtro de Ativação Consolidado",
                                _tempo_do_momento(momento))
 
-proj_ctx = geracao.contexto_do_projeto(project)
-
 
 def _resumo_da_geracao(analise: dict) -> None:
     """O que a última geração deixou para a tela: a verificação e os avisos.
@@ -993,7 +928,22 @@ if latest_analysis:
         text=latest_analysis.get("analysis_text", ""),
         citations=latest_analysis.get("citations", []),
     )
-    col_d1, col_d2 = st.columns(2)
+    # O PDF sai sem o "Apêndice técnico": ele vai num arquivo à parte, o Anexo
+    # técnico (spec do relatório por tema, §9). O .md segue com o texto inteiro.
+    pdf_data, anexo_data, erro_do_pdf = None, None, ""
+    if not relatorio_pdf.disponivel():
+        erro_do_pdf = "PDF indisponível neste servidor (WeasyPrint sem o Pango: {}).".format(
+            relatorio_pdf.motivo_da_indisponibilidade()
+        )
+    else:
+        try:
+            pdf_data, anexo_data = _arquivos_da_analise(
+                _chave_dos_arquivos(latest_analysis), project, latest_analysis, audios_projeto
+            )
+        except Exception as erro:
+            _LOGGER.exception("Falha ao montar o PDF da Análise Geral do projeto %s", project_id)
+            erro_do_pdf = "Não foi possível montar o PDF: {}".format(erro)
+    col_d1, col_d2, col_d3 = st.columns(3)
     with col_d1:
         st.download_button(
             "Download Analise Geral (.md)",
@@ -1004,22 +954,29 @@ if latest_analysis:
             use_container_width=True,
         )
     with col_d2:
-        pdf_data = _build_project_analysis_pdf(
-            project_name=project.get("name", ""),
-            project_info=proj_ctx,
-            model=latest_analysis.get("model", ""),
-            created_at=latest_analysis.get("created_at", ""),
-            text=latest_analysis.get("analysis_text", ""),
-            citations=latest_analysis.get("citations", []),
-        )
-        st.download_button(
-            "Download Analise Geral (.pdf)",
-            data=pdf_data,
-            file_name=geracao.nome_da_analise(project.get("name", ""), latest_analysis, "pdf"),
-            mime="application/pdf",
-            key="download_latest_project_analysis_pdf",
-            use_container_width=True,
-        )
+        if pdf_data:
+            st.download_button(
+                "Download Analise Geral (.pdf)",
+                data=pdf_data,
+                file_name=geracao.nome_da_analise(project.get("name", ""), latest_analysis, "pdf"),
+                mime="application/pdf",
+                key="download_latest_project_analysis_pdf",
+                use_container_width=True,
+            )
+    with col_d3:
+        if anexo_data:
+            st.download_button(
+                "Download Anexo técnico (.pdf)",
+                data=anexo_data,
+                file_name=geracao.nome_do_anexo_da_analise(project.get("name", ""), latest_analysis),
+                mime="application/pdf",
+                key="download_latest_project_analysis_anexo",
+                use_container_width=True,
+                help="As tabelas de apoio da análise (voz por tema, médias acústicas, índice, Matriz, "
+                "Termômetro e limitações), com a unidade de cada áudio. Vai à parte do relatório.",
+            )
+    if erro_do_pdf:
+        st.caption(erro_do_pdf)
 
     with st.expander("Referencias da Base de Conhecimento"):
         ui.knowledge_base_references(
@@ -1299,8 +1256,8 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
         key=f"prj_lote_gerar_{project_id}",
         help=(
             "Uma Análise Geral para cada unidade e uma com todas, no período e na origem escolhidos "
-            "acima (o filtro de QR code e de unidade não vale aqui), e um .zip com os PDFs. Cada "
-            "análise fica salva no histórico, com a unidade no recorte."
+            "acima (o filtro de QR code e de unidade não vale aqui), e um .zip com os PDFs e o Anexo "
+            "técnico do projeto. Cada análise fica salva no histórico, com a unidade no recorte."
             if pode_editar
             else "Seu perfil só consulta: gerar grava a classificação e as análises."
         ),
@@ -1311,9 +1268,16 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
                 "ou ANTHROPIC_API_KEY) e reinicie o app."
             )
             st.stop()
+        if not relatorio_pdf.disponivel():
+            # O lote existe para entregar o zip de PDFs: sem o Pango, não gasta a IA.
+            st.error("PDF indisponível neste servidor (WeasyPrint sem o Pango: {}).".format(
+                relatorio_pdf.motivo_da_indisponibilidade()
+            ))
+            st.stop()
         vs_id = get_prosodia_vector_store_id() if use_kb else None
         agora = datetime.now()
         arquivos, itens = [], []
+        anexo_do_lote = None
         with st.status("Gerando as análises por unidade…", expanded=True) as painel:
             try:
                 responder, modelo_da_classificacao = geracao.responder_da_classificacao(ai_provider_id, ai_model)
@@ -1347,14 +1311,23 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
                     st.markdown("**{}** — não gerada: {}".format(item.unidade, erro))
                     continue
                 nome = geracao.nome_do_arquivo(project.get("name", ""), item.unidade, agora.date())
-                arquivos.append((nome, _build_project_analysis_pdf(
-                    project_name="{} · {}".format(project.get("name", ""), item.unidade),
-                    project_info=proj_ctx,
-                    model=ai_model,
-                    created_at=agora.strftime("%Y-%m-%d %H:%M:%S"),
-                    text=resultado.relatorio.texto,
-                    citations=resultado.relatorio.citacoes,
-                )))
+                sem_pdf = ""
+                try:
+                    arquivos.append((nome, geracao.pdf_da_analise(
+                        project, resultado.relatorio.texto, resultado.relatorio.citacoes, ai_model, agora,
+                        item.recorte,
+                    )))
+                    # O Anexo técnico é um por projeto (spec do relatório por tema, §9):
+                    # sai da análise de todas as unidades, cujos áudios são os do lote inteiro.
+                    if item.unidade == geracao.TODAS_AS_UNIDADES:
+                        anexo_do_lote = geracao.anexo_pdf_da_analise(
+                            project, resultado.relatorio.texto, audios_projeto, item.ids, ai_model, agora,
+                            item.recorte,
+                        )
+                except Exception as erro:
+                    # A análise já está salva: segue para a base, e o zip sai sem este PDF.
+                    _LOGGER.exception("Falha no PDF da unidade %s do projeto %s", item.unidade, project_id)
+                    sem_pdf = " · salva, mas sem PDF: {}".format(erro)
                 if use_kb:
                     _append_result_to_kb(
                         nome[:-len(".pdf")] + ".md",
@@ -1368,9 +1341,10 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
                         project_id,
                     )
                 problemas = len(resultado.relatorio.problemas)
-                situacao = "{} · {}".format(
+                situacao = "{} · {}{}".format(
                     "{} respondentes".format(resultado.agregacao.n_respondentes),
                     "{} pontos para revisar".format(problemas) if problemas else "referências conferidas",
+                    sem_pdf,
                 )
                 itens.append((item.unidade, situacao))
                 st.markdown("**{}** — {}.".format(item.unidade, situacao))
@@ -1380,6 +1354,8 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
             )
         pacote = None
         if arquivos:
+            if anexo_do_lote:
+                arquivos.append((geracao.nome_do_anexo(project.get("name", ""), "", agora.date()), anexo_do_lote))
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_do_lote:
                 for nome, pdf in arquivos:

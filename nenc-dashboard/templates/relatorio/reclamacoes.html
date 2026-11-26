@@ -1,0 +1,54 @@
+{% from "_macros.html" import chip_faixa, falas %}
+{#- Reclamações e feedbacks negativos (spec §3.6). -#}
+<section class="fechamento secao-nova" id="reclamacoes">
+  <h1 class="secao"><span class="num">{{ secao_reclamacoes.numero }}</span> {{ secao_reclamacoes.titulo }}</h1>
+
+  {% if reclamacoes.abertura %}<p class="resumo-texto" style="font-size: 10pt">{{ reclamacoes.abertura }}</p>{% endif %}
+
+  {% if reclamacoes.itens %}
+  <p class="ordem-nota">Ordem: faixa do tema, número de respondentes críticos e, por último, a intensidade da voz.
+    Frequência e intensidade nem sempre apontam para o mesmo problema, por isso a intensidade aparece como etiqueta, e não entra numa nota única.</p>
+  {% for item in reclamacoes.itens %}
+  <div class="reclamacao">
+    <div class="reclamacao-topo">
+      <div class="reclamacao-pos">{{ item.posicao }}</div>
+      <div>
+        <h3>{{ item.titulo }}</h3>
+        <span class="chip chip--tema">{{ item.tema }}</span>
+      </div>
+      <div class="reclamacao-numeros"><strong>{{ item.respondentes }}/{{ item.total }}</strong><br>{{ chip_faixa(item.faixa) }}</div>
+    </div>
+    <p class="critica">{{ item.critica }}</p>
+    {{ falas(item.falas, trechos, false) }}
+    <p class="reclamacao-rodape">
+      {% if item.etiqueta_voz %}<span class="item"><span class="chip chip--voz">{{ item.etiqueta_voz }}</span></span>{% endif %}
+      {% if unidades_no_recorte > 1 and item.unidades %}<span class="item"><strong>{{ "Unidade" if item.unidades|length == 1 else "Unidades" }}:</strong> {{ item.unidades|unidades_resumidas }}</span>{% endif %}
+      <span class="item">Origem: <a class="ref" href="#{{ origens[item.origem] }}">{{ item.origem }}</a></span>
+    </p>
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if reclamacoes.isoladas %}
+  <h2 class="secao">Menções isoladas</h2>
+  <p class="sem-mencao" style="margin-bottom: 2mm">Um respondente por assunto. Entram na lista porque são concretas, e não porque se repitam.</p>
+  <table class="isoladas">
+    <thead><tr><th>Tema</th><th>Assunto</th>{% if unidades_no_recorte > 1 %}<th>Unidade</th>{% endif %}<th>O que disse</th><th>Origem</th></tr></thead>
+    <tbody>
+    {% for linha in reclamacoes.isoladas %}
+      <tr>
+        <td class="tema">{{ linha.tema }}</td>
+        <td>{{ linha.assunto }}</td>
+        {% if unidades_no_recorte > 1 %}<td class="unidade">{{ linha.unidade or "—" }}</td>{% endif %}
+        <td>“{{ trechos[linha.fala].texto }}”<br><span class="sem-mencao">{{ trechos[linha.fala].alias }} · {{ trechos[linha.fala].tempo }}</span></td>
+        <td class="origem"><a class="ref" href="#{{ origens[linha.origem] }}">{{ linha.origem }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if not reclamacoes.itens and not reclamacoes.isoladas %}
+  <p class="vazio">Nenhuma reclamação ou feedback negativo nesta amostra.</p>
+  {% endif %}
+</section>

@@ -306,6 +306,51 @@ codigo ser preenchido:
    nomes dos QRs e liga cada QR a sua. O audio cujo QR nao casou se corrige a
    mao, na pagina do audio.
 
+## PDF do relatorio: WeasyPrint e o Pango
+
+O relatorio por tema (`docs/SPEC_RELATORIO_POR_TEMA.md`) vira PDF por HTML + CSS
+com o WeasyPrint, que precisa do Pango instalado no sistema. Os testes de HTML
+rodam em qualquer maquina; os de PDF sao pulados quando o Pango nao esta.
+
+**Windows de desenvolvimento** (testado em 25/11/2026 com WeasyPrint 70.0 no
+Python 3.14.2 do `.venv`):
+
+1. `winget install --id MSYS2.MSYS2 --exact --silent`
+2. `C:\msys64\usr\bin\bash.exe -lc "pacman -Sy --noconfirm --needed mingw-w64-x86_64-pango"`
+3. Antes de rodar, `WEASYPRINT_DLL_DIRECTORIES=C:\msys64\mingw64\bin` no ambiente.
+4. Ocupa cerca de 0,6 GB no C:. Confira o espaco livre antes: o disco ja chegou
+   a 0 bytes com o Windows Update.
+
+**Docker** (`python:3.11-slim`): o `Dockerfile` instala `libpango-1.0-0`,
+`libpangoft2-1.0-0` e `libharfbuzz-subset0`, e uma fonte com os simbolos que a
+Rubik nao tem (`fonts-dejavu-core`). O deploy segue exigindo `--build`: sem a
+imagem nova, o PDF da Analise Geral some da pagina (ela mostra o motivo no lugar
+do botao) e o lote por unidade nao comeca.
+
+**O que sai pelo WeasyPrint** (desde a Fase 3): o PDF da Analise Geral de
+Prosodia, v2 e antigas, pelo template legado; o Anexo tecnico (o "Apendice
+tecnico" do texto, em A4 deitado, com a tabela "Audios e unidades"); e o zip do
+lote, que leva o anexo do projeto. Jornada, Sensorial e a analise individual
+por audio seguem no fpdf2 (`utils/pdf_report.py`).
+
+**Armadilhas achadas no spike** (valem para o CSS do relatorio):
+
+- `target-counter(attr(href url), page)` devolve 0 dentro de `display: flex`.
+  No indice, o link e bloco e o numero da pagina flutua a direita.
+- A `static/fonts/Rubik.ttf` e variavel (`wght` 300 a 900) e nao tem as setas e
+  os marcadores `→ ▪ ■ ✓`. O WeasyPrint usa arquivos estaticos: gere Regular,
+  Medium e Bold com `fontTools.varLib.instancer`. Sem fonte de reserva, os
+  simbolos viram quadrados; prefira formas em SVG ou CSS.
+- `h1` entra nos marcadores do PDF por padrao: a capa leva
+  `bookmark-level: none`.
+- Sem `Rubik-Italic`, o `<em>` sai em italico sintetico.
+- Um `<pattern>` de SVG repetido em cada grafico vira ancora duplicada: as
+  hachuras sao listras de `<rect>`, sem id.
+- O Jinja escapa aspas dentro de `<style>`: texto que vai numa string de CSS
+  (o cabecalho corrido) passa pelo filtro `css_string`.
+- `overflow-wrap: anywhere` entra na largura minima da coluna e parte palavras
+  curtas ("Respondent-e"); nas tabelas, `break-word`.
+
 ## Recuperacao de administrador
 
 O bootstrap nao deve ser reutilizado para recuperar acesso. Um administrador
