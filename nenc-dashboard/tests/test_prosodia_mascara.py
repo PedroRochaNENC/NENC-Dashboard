@@ -95,6 +95,10 @@ class ModeloTests(unittest.TestCase):
         mascarado = mascarar_fala("Gostaria de reclamar da Fernanda, que me tratou mal.", PRESERVAR)
         self.assertNotIn("Fernanda", mascarado)
 
+    def test_verb_at_the_start_of_a_sentence_is_not_a_name(self):
+        texto = "Tudo certo. Preservar e replicar as práticas da unidade."
+        self.assertEqual(mascarar_fala(texto, PRESERVAR), texto)
+
 
 class PreservarTests(unittest.TestCase):
     def test_unit_code_is_left_out_and_words_go_in(self):

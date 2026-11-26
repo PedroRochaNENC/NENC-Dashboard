@@ -459,6 +459,16 @@ class FichaNaGeralTests(_BancoDescartavel):
         )
 
 
+class ContextoDaCapaTests(unittest.TestCase):
+    def test_whole_sentences_up_to_the_limit_or_a_cut_at_a_word(self):
+        curto = {"especialidade": "Pesquisa com clientes."}
+        self.assertEqual(geracao.contexto_da_capa(curto), "Pesquisa com clientes.")
+        frases = {"especialidade": "Primeira frase do contexto. Segunda frase, mais longa, que não cabe."}
+        self.assertEqual(geracao.contexto_da_capa(frases, 40), "Primeira frase do contexto.")
+        corrido = {"especialidade": "uma frase só sem ponto que passa do limite frequentando a academia"}
+        self.assertEqual(geracao.contexto_da_capa(corrido, 40), "uma frase só sem ponto que passa do…")
+
+
 class ChamadasTests(unittest.TestCase):
     def test_the_report_call_uses_the_base_without_analyses(self):
         cliente = object()

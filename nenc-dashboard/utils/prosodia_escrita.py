@@ -614,6 +614,15 @@ def verificar_sintese(documento: dict, preservar: Sequence[str] = ()) -> Tuple[L
                 erros.append("{}: a fração {}/{} é do Termômetro; cite-a só na leitura dele".format(onde, parte, base))
             elif (int(parte), int(base)) not in validas:
                 erros.append("{}: a fração {}/{} não está nos capítulos".format(onde, parte, base))
+        if onde != "termômetro":
+            # Os dois números do Termômetro na mesma frase, em qualquer forma
+            # ("66 relatos positivos entre 94"): na Smart Fit, a IA os pôs num capítulo.
+            for frase in re.split(r"(?<=[.!?;])\s+", texto):
+                numeros = {int(n) for n in re.findall(r"(?<![\d,./])\d+(?![\d,/])", frase)}
+                for parte, base in sorted(do_termometro - fracoes):
+                    if parte != base and {parte, base} <= numeros and not _FRACAO.search(frase):
+                        erros.append("{}: os números {} e {} são do Termômetro; cite-os só na leitura dele".format(
+                            onde, parte, base))
         for numero in sorted(_numeros_citados(texto) - aliases):
             erros.append("{}: cita o Áudio {:02d}; a síntese não cita falas".format(onde, numero))
         termo = _VOZ_TECNICA.search(texto)
