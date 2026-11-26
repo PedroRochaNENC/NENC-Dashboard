@@ -913,6 +913,8 @@ class Trecho:
     polaridade: str
     nota_texto: Optional[float] = None
     divergente: bool = False
+    # O subtema que a IA criou na tag aberta (ou em Outros) para a menção.
+    detalhe: str = ""
 
 
 def _forca(trecho: Trecho) -> float:
@@ -977,10 +979,44 @@ def _ocorrencias(
                         polaridade,
                         leitura.nota_texto,
                         segmento is not None and (sessao, segmento) in divergentes,
+                        " ".join(str(tema.get("detalhe") or "").split()),
                     ),
                     leitura,
                 ))
     return ocorrencias
+
+
+@dataclass(frozen=True)
+class MencaoDoAudio:
+    """Uma menção a uma linha da taxonomia num áudio contado, com o subtema e a unidade.
+
+    É a matéria dos capítulos (prosodia_capitulos): os subcapítulos contam
+    respondentes por subtema, e as reclamações dizem de que unidade é cada um.
+    `respondente` é a chave de chave_respondente e nunca vai para o relatório.
+    """
+
+    respondente: str
+    audio_id: int
+    rotulo: str
+    detalhe: str
+    polaridade: str
+    unidade: str = ""
+
+
+def _mencoes_do_audio(contados: Iterable[AudioDoProjeto], tipo: str) -> Tuple[MencaoDoAudio, ...]:
+    return tuple(
+        MencaoDoAudio(
+            chave_respondente(audio.session_id, tipo),
+            audio.audio_id,
+            str(tema.get("subtema")),
+            " ".join(str(tema.get("detalhe") or "").split()),
+            _polaridade(tema.get("polaridade")),
+            audio.unidade,
+        )
+        for audio in contados
+        for tema in _lista((audio.classificacao or {}).get("temas"))
+        if tema.get("subtema")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1469,6 +1505,11 @@ class Agregacao:
     trechos_de_alerta: Dict[str, List[Tuple[Optional[int], Optional[float], Optional[float]]]] = field(
         default_factory=dict
     )
+    # Para os capítulos do relatório por tema: cada trecho classificado por
+    # linha (Outros inclusive), com respondente e leitura de voz, e cada
+    # menção com o subtema e a unidade.
+    ocorrencias: Dict[str, List[Tuple[str, Trecho, LeituraTrecho]]] = field(default_factory=dict)
+    mencoes: Tuple[MencaoDoAudio, ...] = ()
 
     @property
     def exploratoria(self) -> bool:
@@ -1522,7 +1563,9 @@ def agregar(
     mencoes = _mencoes_por_respondente(contados, tipo, conjunto)
     total = len(mencoes)
     reguas = reguas_do_projeto(sinc_projeto)
-    ocorrencias = _ocorrencias(contados, tipo, nomes, conjunto, sinc_projeto, transcricao_projeto, reguas)
+    # Outros entra nas ocorrências para o capítulo dele; a tabela v2 não o lê.
+    com_outros = conjunto | ({OUTROS} if taxonomia.tem_tags_abertas else set())
+    ocorrencias = _ocorrencias(contados, tipo, nomes, com_outros, sinc_projeto, transcricao_projeto, reguas)
     presenca, unidades_do_recorte, sem_unidade = _presenca_por_unidade(contados, tipo, conjunto)
     detalhes = _detalhes_por_linha(contados, tipo)
     abertas = {s.rotulo for s in taxonomia.subtemas if s.aberta}
@@ -1662,6 +1705,8 @@ def agregar(
         candidatos=candidatos,
         falas_de_alerta=frozenset(falas_de_alerta),
         trechos_de_alerta=trechos_de_alerta,
+        ocorrencias=ocorrencias,
+        mencoes=_mencoes_do_audio(contados, tipo),
     )
 
 
@@ -1817,6 +1862,23 @@ def como_ler_markdown(
     mesmos avisos saem com as mesmas palavras em toda análise, sem a IA
     exagerar nem suavizar (spec de Unidades, §5.1).
     """
+    return "\n".join(
+        "- **O que observamos:** {} **O que isso significa:** {}".format(observado, significado)
+        for observado, significado in como_ler_itens(agregacao, taxonomia_status, taxonomia_da_ia)
+    )
+
+
+def como_ler_itens(
+    agregacao: Agregacao,
+    taxonomia_status: Optional[str] = None,
+    taxonomia_da_ia: bool = False,
+    por_capitulos: bool = False,
+) -> List[Tuple[str, str]]:
+    """Os pares (o que observamos, o que isso significa) do "Como ler", na ordem de importância.
+
+    `por_capitulos` é o relatório por tema, que não tem coluna Unidades e
+    leva o detalhe dos cortes no Anexo técnico.
+    """
     itens: List[Tuple[str, str]] = []
     n = agregacao.n_respondentes
     itens.append((
@@ -1860,9 +1922,11 @@ def como_ler_markdown(
         itens.append((
             "{} dos {} áudios recebidos ficaram fora da contagem (sem fala, sem classificação ou cópia de "
             "outro áudio).".format(fora, len(agregacao.recorte)),
-            "O total de respondentes é menor que o de áudios recebidos; o apêndice detalha os cortes.",
+            "O total de respondentes é menor que o de áudios recebidos; o {} detalha os cortes.".format(
+                "Anexo técnico" if por_capitulos else "apêndice"
+            ),
         ))
-    if agregacao.por_unidade and agregacao.sem_unidade:
+    if agregacao.por_unidade and agregacao.sem_unidade and not por_capitulos:
         itens.append((
             "{} chegaram sem QR code de unidade.".format(
                 _plural(agregacao.sem_unidade, "respondente", "respondentes")
@@ -1874,10 +1938,7 @@ def como_ler_markdown(
             "Os temas foram propostos pela IA." if taxonomia_da_ia else "A taxonomia ainda não foi validada com a cliente.",
             "Eles ainda serão revisados com a cliente e podem mudar de nome na próxima análise.",
         ))
-    return "\n".join(
-        "- **O que observamos:** {} **O que isso significa:** {}".format(observado, significado)
-        for observado, significado in itens
-    )
+    return itens
 
 
 def alertas_markdown(agregacao: Agregacao) -> str:
