@@ -446,6 +446,12 @@ A ordem de execução é a do item 28 da §2: Fase 0, Fase 3, Fases 1 e 2, Fase 
    7. os pontos da §12 marcados para esta fase;
    8. leitura humana: quem recebe o capítulo de Limpeza sabe o que fazer, e a seção de reclamações diz o que atacar primeiro.
 
+   **Como ficou (26/11/2026).** Cópia de produção de 25/11, interruptor ligado na cópia, fichas de todos os 101 áudios (`gpt-4.1-mini`), geração por `gerar_analise_geral` com `gpt-4.1` e sem base de conhecimento. Rede: 14 capítulos, 27 páginas, cerca de 30 s de IA; Duque de Caxias 2: 8 capítulos, 13 páginas, leitura exploratória. Itens 2 a 6 conferidos por script: sem termo técnico nem frase repetida entre capítulos; toda crítica e toda reclamação com fala; falas críticas sem dado financeiro ou de contato, com marca e unidade preservadas; contagens dos capítulos iguais às do Anexo (13 de 13 e 7 de 7); PDF sem texto na área do rodapé, sem marcação vazando, e índice e marcadores na mesma página de cada capítulo. Item 1: "Sem destaque" sai zero vezes (eram 21), Outros tem capítulo, o caso "R$90,90 … Nubank" sai como "[valor]" e "[banco]"; só a unidade sem nome cadastrado depende da Smart Fit (§11). Corrigido na validação:
+   - **Capa:** o contexto era cortado por caractere ("frequentando a aca"); agora sai em frases inteiras ou cortado na palavra, com "…" (`contexto_da_capa`).
+   - **Números do Termômetro:** a IA voltou a atribuí-los a um capítulo, agora como "66 relatos positivos entre 94": a verificação recusa os dois números do Termômetro na mesma frase fora da leitura dele, salvo quando coincidem com uma fração de capítulo.
+   - **Máscara:** o modelo dava "Preservar", verbo no começo da frase, como pessoa; token de verbo não é mais nome.
+   - **Para a leitura humana (item 8):** o corpo da rede tem 27 páginas (o PDF de 24/11 tinha 5 de corpo e 16 de apêndice), pelo capítulo cheio em página nova; a mesma fala pode aparecer em duas linhas das menções isoladas quando trata de dois temas; os elogios da Matriz mantêm nomes de funcionários (§6, a confirmar com a Smart Fit, §11). `st.html` passou no AppTest; o navegador fica para a primeira geração no app.
+
 A Fase 1 não depende de nenhuma outra. As Fases 2 e 4 dependem da 1. A Fase 3 depende só do esquema JSON da §5.1 e do spike da Fase 0.
 
 ## 16. Fora do escopo

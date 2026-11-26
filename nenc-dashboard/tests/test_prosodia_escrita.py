@@ -285,12 +285,17 @@ class VerificarSinteseTests(_Base):
         return escrita.verificar_sintese(self.doc, PRESERVAR)
 
     def test_thermometer_fraction_only_in_its_own_reading(self):
+        # Números que não coincidem com nenhuma fração de capítulo: a coincidência fica liberada.
+        self.doc["termometro"].update(positivos=7, neutros=3, negativos=1, avaliaveis=11)
         t = self.doc["termometro"]
         fracao = "{}/{}".format(t["positivos"], t["avaliaveis"])
         erros, _ = self._sintese("O capítulo 1 tem {} respondentes positivos.".format(fracao))
         self.assertTrue(any("é do Termômetro" in e for e in erros))
         erros, _ = self._sintese("O capítulo 1 tem {} de {} respondentes positivos.".format(t["positivos"], t["avaliaveis"]))
         self.assertTrue(any("é do Termômetro" in e for e in erros))
+        erros, _ = self._sintese("Sustentado por {} relatos positivos entre {} avaliados (capítulo 1).".format(
+            t["positivos"], t["avaliaveis"]))
+        self.assertTrue(any("são do Termômetro" in e for e in erros))
         erros, _ = self._sintese("A máquina parada domina o capítulo 1 (8/12).", "{} positivos.".format(fracao))
         self.assertEqual(erros, [])
 

@@ -241,9 +241,11 @@ def _nomes_pelo_modelo(
             t.is_alpha and _maiuscula(t.text) and t.pos_ == "PROPN" for t in entidade if not t.is_punct
         ):
             continue
+        # Verbo não é nome: o modelo pequeno dá "Preservar", no começo da frase, como PER.
+        verbos = {(t.idx, t.idx + len(t.text)) for t in entidade if t.pos_ in ("VERB", "AUX")}
         for i, (ini, fim, palavra) in enumerate(palavras):
             if ini >= entidade.start_char and fim <= entidade.end_char:
-                if not _maiuscula(palavra) or _sem_acento(palavra) in _NAO_SAO_NOME:
+                if not _maiuscula(palavra) or _sem_acento(palavra) in _NAO_SAO_NOME or (ini, fim) in verbos:
                     continue
                 if _dentro(ini, fim, preservados):
                     continue

@@ -715,6 +715,29 @@ def detalhes_para_consolidacao(
     return subtemas.detalhes_do_projeto(mencoes, [s.rotulo for s in taxonomia.subtemas if s.aberta])
 
 
+_MAX_CONTEXTO_DA_CAPA = 400
+
+
+def contexto_da_capa(contexto: dict, limite: int = _MAX_CONTEXTO_DA_CAPA) -> str:
+    """A especialidade do projeto para a capa: frases inteiras até o limite, ou corte na palavra com "…".
+
+    Na validação com a Smart Fit, o corte por caractere deixou "frequentando a aca".
+    """
+    texto = " ".join(str(contexto.get("especialidade") or "").split())
+    if len(texto) <= limite:
+        return texto
+    frases = re.split(r"(?<=[.!?])\s+", texto)
+    inteiras = ""
+    for frase in frases:
+        candidato = (inteiras + " " + frase).strip()
+        if len(candidato) > limite:
+            break
+        inteiras = candidato
+    if inteiras:
+        return inteiras
+    return texto[:limite].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
 def _periodo(recorte: rel.Recorte) -> Tuple[str, ...]:
     datas = []
     for valor in recorte.periodo:
@@ -773,7 +796,7 @@ def _gerar_por_tema(
         gerado_em=agora.strftime("%d/%m/%Y %H:%M"),
         periodo=_periodo(recorte),
         modelo=modelo,
-        contexto=" ".join(str(contexto.get("especialidade") or "").split())[:400],
+        contexto=contexto_da_capa(contexto),
         taxonomia_status=taxonomia_status,
         taxonomia_da_ia=taxonomia_da_ia,
         arquivo_do_anexo=nome_do_anexo(str(projeto.get("name") or ""), unidade_do_recorte(recorte), agora.date()),
