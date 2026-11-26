@@ -451,6 +451,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE projects ADD COLUMN taxonomia TEXT")
         if "taxonomia_status" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN taxonomia_status TEXT")
+        if "relatorio_por_tema" not in cols:
+            # O interruptor do relatório por tema (docs/SPEC_RELATORIO_POR_TEMA.md,
+            # §2, item 27): desligado em todo projeto até alguém ligar.
+            conn.execute("ALTER TABLE projects ADD COLUMN relatorio_por_tema INTEGER NOT NULL DEFAULT 0")
 
         audio_cols ={r["name"] for r in conn.execute("PRAGMA table_info(audios)").fetchall()}
         if "whatsapp_message_id" not in audio_cols:
@@ -845,6 +849,31 @@ def set_project_taxonomy(project_id: int, taxonomia: str, taxonomia_status: str)
     if result.rowcount:
         _audit(
             "prosodia.project.update_taxonomy", "project", project_id, organization_id or 0, write=True
+        )
+
+
+def set_relatorio_por_tema(project_id: int, ligado: bool) -> None:
+    """Liga ou desliga o relatório por tema do projeto (docs/SPEC_RELATORIO_POR_TEMA.md, §2, item 27).
+
+    Desligado, a Análise Geral segue no texto v2. Ligado, só vale para
+    taxonomia com tag aberta: a sem tags continua na v2.
+    """
+    actor = _require_write()
+    _assert_project_authorship(project_id, actor, "project.update_relatorio_por_tema")
+    organization_id = _active_organization_id()
+    with _connect() as conn:
+        if not organization_id:
+            result = conn.execute(
+                "UPDATE projects SET relatorio_por_tema = ? WHERE id = ?", (1 if ligado else 0, project_id)
+            )
+        else:
+            result = conn.execute(
+                "UPDATE projects SET relatorio_por_tema = ? WHERE id = ? AND organization_id = ?",
+                (1 if ligado else 0, project_id, organization_id),
+            )
+    if result.rowcount:
+        _audit(
+            "prosodia.project.update_relatorio_por_tema", "project", project_id, organization_id or 0, write=True
         )
 
 

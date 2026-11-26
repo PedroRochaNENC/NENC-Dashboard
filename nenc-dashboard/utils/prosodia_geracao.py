@@ -16,6 +16,7 @@ gerador_do_relatorio. Ela cuida só da tela: o progresso, os avisos e o envio
 para a base de conhecimento.
 """
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -25,8 +26,13 @@ from typing import Callable, Collection, Dict, List, Optional, Sequence, Tuple
 import pandas as pd
 
 from utils import ai_provider, prosodia_db
+from utils import prosodia_capitulos as capitulos
+from utils import prosodia_escrita as escrita
+from utils import prosodia_mascara as mascara
 from utils import prosodia_overview as overview
+from utils import prosodia_prompts as prompts
 from utils import prosodia_relatorio as rel
+from utils import prosodia_subtemas as subtemas
 from utils import prosodia_temas as temas
 from utils import relatorio_markdown, relatorio_pdf
 from utils.kb_attributes import build_kb_filter
@@ -59,6 +65,8 @@ class Geracao:
     agregacao: rel.Agregacao
     taxonomia_da_ia: bool
     classificacao: temas.ResumoDaClassificacao
+    # O relatório por tema em JSON, quando o projeto o tem ligado; None na v2.
+    documento: Optional[dict] = None
 
 
 def _plural(n: int, singular: str, plural: str) -> str:
@@ -112,13 +120,29 @@ def gerador_do_relatorio(
     salvo.
     """
     filtro = build_kb_filter(project_id, incluir_analises=False)
+    # O cliente sai daqui, na thread da página: no relatório por tema, os
+    # capítulos chamam a IA em outras threads, sem o contexto do Streamlit.
+    cliente = ai_provider.get_provider_client(provedor)
 
     def gerar(**kwargs) -> dict:
         return ai_provider.generate_analysis(
-            provedor, modelo, vector_store_id=vector_store_id, kb_filter=filtro, **kwargs
+            provedor, modelo, vector_store_id=vector_store_id, kb_filter=filtro, client=cliente, **kwargs
         )
 
     return gerar
+
+
+def responder_da_consolidacao(provedor: str, modelo: str) -> temas.Responder:
+    """A chamada que agrupa os subtemas (§4), com o modelo da escrita: os nomes viram títulos."""
+    cliente = ai_provider.get_provider_client(provedor)
+
+    def responder(sistema: str, usuario: str, max_tokens: int) -> str:
+        return ai_provider.chat_completion(
+            provedor, modelo, sistema, [{"role": "user", "content": usuario}],
+            temperature=TEMPERATURA_CLASSIFICACAO, max_tokens=max_tokens, client=cliente,
+        )
+
+    return responder
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +442,11 @@ def arquivos_da_analise(
     criada = rel.ler_data(analise.get("created_at"))
     texto = analise.get("analysis_text") or ""
     modelo = analise.get("model") or ""
-    pdf = pdf_da_analise(projeto, texto, analise.get("citations") or [], modelo, criada, recorte)
+    if analise.get("relatorio"):
+        # Relatório por tema: o PDF sai do JSON; o anexo, do apêndice no fim do texto.
+        pdf = relatorio_pdf.relatorio_pdf(analise["relatorio"])
+    else:
+        pdf = pdf_da_analise(projeto, texto, analise.get("citations") or [], modelo, criada, recorte)
     anexo = anexo_pdf_da_analise(projeto, texto, audios_projeto, snapshot.get("audios") or [], modelo, criada, recorte)
     return pdf, anexo
 
@@ -476,6 +504,7 @@ def gerar_analise_geral(
     incluir_legenda: bool = False,
     avisar: Optional[Aviso] = None,
     ao_classificar: Optional[Callable[[int, int], None]] = None,
+    responder_consolidacao: Optional[temas.Responder] = None,
 ) -> Geracao:
     """Gera e salva a Análise Geral do recorte, nas etapas da spec (§4).
 
@@ -592,6 +621,17 @@ def gerar_analise_geral(
         leitura += "; comparação com a análise de {}".format(anterior.data)
     avisar(3, leitura + ".")
 
+    analises_individuais = {
+        audio_id: (prosodia_db.get_latest_analysis(audio_id) or {}).get("analysis_text")
+        for audio_id in agregacao.contados
+    }
+    if relatorio_por_tema_ligado(projeto, taxonomia):
+        return _gerar_por_tema(
+            projeto, audios, audios_projeto, recorte, agregacao, taxonomia, taxonomia_status, taxonomia_da_ia,
+            resumo, sinc_projeto, transcricao_projeto, gerar, modelo, analises_individuais,
+            responder_consolidacao or responder, perguntas_ativacao, incluir_legenda, avisar,
+        )
+
     # 4. Texto da IA, montagem e verificação
     avisar(4, "A IA escreve o texto; o código monta o relatório e confere as referências.")
     relatorio = rel.escrever_relatorio(
@@ -605,10 +645,7 @@ def gerar_analise_geral(
         sinc_projeto=sinc_projeto,
         transcricao_projeto=transcricao_projeto,
         perguntas_ativacao=perguntas_ativacao,
-        analises_individuais={
-            audio_id: (prosodia_db.get_latest_analysis(audio_id) or {}).get("analysis_text")
-            for audio_id in agregacao.contados
-        },
+        analises_individuais=analises_individuais,
         incluir_legenda=incluir_legenda,
     )
     avisar(4, "Verificação das referências: {}.".format(
@@ -623,3 +660,132 @@ def gerar_analise_geral(
     )
     avisar(5, "Análise salva com o snapshot dos temas, que a próxima usa para comparar.")
     return Geracao(analise_id, relatorio, agregacao, taxonomia_da_ia, resumo)
+
+
+# ---------------------------------------------------------------------------
+# Relatório por tema (docs/SPEC_RELATORIO_POR_TEMA.md, §5.2)
+# ---------------------------------------------------------------------------
+
+def relatorio_por_tema_ligado(projeto: dict, taxonomia: temas.Taxonomia) -> bool:
+    """O projeto gera por capítulos: o interruptor ligado e a taxonomia com tag aberta (§2, itens 25 e 27)."""
+    return bool(projeto.get("relatorio_por_tema")) and taxonomia.tem_tags_abertas
+
+
+def detalhes_para_consolidacao(
+    audios: Sequence[rel.AudioDoProjeto], tipo: str, taxonomia: temas.Taxonomia
+) -> Dict[str, List[subtemas.Detalhe]]:
+    """Os subtemas de cada tag no projeto inteiro, sem as cópias do mesmo arquivo (§4)."""
+    classificados = [a for a in audios if a.linhas and a.classificacao is not None]
+    copias = rel._repetidos(classificados)
+    mencoes = [
+        (rel.chave_respondente(a.session_id, tipo), a.classificacao)
+        for a in classificados
+        if a.audio_id not in copias
+    ]
+    return subtemas.detalhes_do_projeto(mencoes, [s.rotulo for s in taxonomia.subtemas if s.aberta])
+
+
+def _periodo(recorte: rel.Recorte) -> Tuple[str, ...]:
+    datas = []
+    for valor in recorte.periodo:
+        try:
+            datas.append(date.fromisoformat(valor).strftime("%d/%m/%Y"))
+        except ValueError:
+            continue
+    return tuple(datas)
+
+
+def _gerar_por_tema(
+    projeto: dict,
+    audios: Sequence[rel.AudioDoProjeto],
+    audios_projeto: Sequence[dict],
+    recorte: rel.Recorte,
+    agregacao: rel.Agregacao,
+    taxonomia: temas.Taxonomia,
+    taxonomia_status: Optional[str],
+    taxonomia_da_ia: bool,
+    resumo: temas.ResumoDaClassificacao,
+    sinc_projeto: Optional[pd.DataFrame],
+    transcricao_projeto: Optional[pd.DataFrame],
+    gerar: rel.GerarTexto,
+    modelo: str,
+    analises_individuais: Dict[int, Optional[str]],
+    responder_consolidacao: temas.Responder,
+    perguntas_ativacao: Optional[Sequence[dict]],
+    incluir_legenda: bool,
+    avisar: Aviso,
+) -> Geracao:
+    """Etapas 3 a 8 da §5.2: consolidação, capítulos, síntese, verificação e gravação com o JSON."""
+    if not agregacao.n_respondentes:
+        raise ValueError("Nenhum respondente com fala classificada no recorte: não há o que analisar.")
+    project_id = int(projeto["id"])
+    tipo = normalize_project_type(projeto.get("tipo_projeto"))
+    contexto = contexto_do_projeto(projeto)
+
+    avisar(4, "Relatório por tema: a IA agrupa os subtemas de cada tag (só os que mudaram desde a última vez).")
+    consolidacao = subtemas.consolidar_subtemas(
+        taxonomia,
+        detalhes_para_consolidacao(audios, tipo, taxonomia),
+        prosodia_db.get_subtema_grupos(project_id),
+        responder_consolidacao,
+        lambda tag, chave, grupos: prosodia_db.save_subtema_grupos(
+            project_id, tag, chave, subtemas.grupos_como_json(grupos), modelo
+        ),
+    )
+    unidades = sorted({overview.unidade_label(a) for a in audios_projeto if a.get("unidade_id")})
+    preservar = tuple(mascara.preservar_do_projeto(
+        str(projeto.get("name") or ""), unidades, [s.rotulo for s in taxonomia.subtemas]
+    ))
+    agora = datetime.now()
+    cabecalho = capitulos.Cabecalho(
+        projeto=str(projeto.get("name") or ""),
+        recorte=subtitulo_do_recorte(recorte),
+        gerado_em=agora.strftime("%d/%m/%Y %H:%M"),
+        periodo=_periodo(recorte),
+        modelo=modelo,
+        contexto=" ".join(str(contexto.get("especialidade") or "").split())[:400],
+        taxonomia_status=taxonomia_status,
+        taxonomia_da_ia=taxonomia_da_ia,
+        arquivo_do_anexo=nome_do_anexo(str(projeto.get("name") or ""), unidade_do_recorte(recorte), agora.date()),
+        preservar=preservar,
+    )
+    documento = capitulos.montar_relatorio(agregacao, taxonomia, consolidacao, cabecalho)
+    avisar(4, "{} e a síntese: a IA escreve cada um, e o código confere e refaz o que falhar.".format(
+        _plural(len(documento["capitulos"]), "capítulo", "capítulos")
+    ))
+    escrito = escrita.escrever_relatorio_por_tema(
+        documento,
+        gerar,
+        tipo_projeto=tipo,
+        contexto=contexto,
+        fichas=rel.sumarios_por_alias(agregacao, analises_individuais),
+        preservar=preservar,
+    )
+    problemas = list(documento.get("problemas") or [])
+    problemas += capitulos.erros(documento)
+    avisar(4, "Verificação: {}.".format(
+        _plural(len(problemas), "ponto para revisar", "pontos para revisar") if problemas else "nenhum problema"
+    ))
+
+    # O apêndice técnico segue o da v2, no fim do texto: é de onde sai o Anexo
+    # técnico (anexo_do_texto) e o que a base de conhecimento recebe.
+    sumarios = rel.sumarios_individuais(agregacao, analises_individuais)
+    apendice = rel.apendice_markdown(
+        agregacao, sinc_projeto, transcricao_projeto, perguntas_ativacao,
+        (sumarios.com, sumarios.sem), incluir_legenda, sumarios.fora_do_limite,
+    )
+    texto = capitulos.markdown_do_relatorio(documento).rstrip() + "\n\n## Apêndice técnico\n\n" + apendice.strip() + "\n"
+    relatorio = rel.Relatorio(
+        texto=texto,
+        problemas=problemas,
+        citacoes=escrito.citacoes,
+        busca=escrito.busca,
+        texto_da_ia=json.dumps(documento, ensure_ascii=False),
+        sistema=prompts.sistema_capitulo(tipo),
+        mensagem="{} chamadas à IA (capítulos e síntese).".format(escrito.chamadas),
+    )
+    analise_id = prosodia_db.save_project_analysis(
+        project_id, modelo, texto, escrito.citacoes, temas=rel.snapshot(agregacao, recorte), relatorio=documento
+    )
+    avisar(5, "Análise salva com o relatório por tema e o snapshot dos temas.")
+    return Geracao(analise_id, relatorio, agregacao, taxonomia_da_ia, resumo, documento)
