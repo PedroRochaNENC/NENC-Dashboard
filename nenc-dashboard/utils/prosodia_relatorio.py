@@ -2829,6 +2829,33 @@ class Sumarios:
     fora_do_limite: int = 0
 
 
+def sumarios_por_alias(agregacao: Agregacao, analises: Dict[int, Optional[str]]) -> Dict[str, str]:
+    """O Sumário Executivo de cada áudio contado, pelo alias, para as chamadas de capítulo.
+
+    As mesmas regras de sumarios_individuais (sem a leitura da voz, a sessão
+    trocada pelo alias), sem o limite do bloco: cada capítulo recebe só os
+    sumários dos áudios das falas dele. Vira a ficha de contexto da Fase 4.
+    """
+    contados = set(agregacao.contados)
+    nomes = agregacao.aliases
+    sessoes = sorted(
+        ((str(a.session_id), nomes[a.audio_id]) for a in agregacao.recorte if a.session_id),
+        key=lambda par: -len(par[0]),
+    )
+    por_alias: Dict[str, str] = {}
+    for audio in agregacao.recorte:
+        texto = analises.get(audio.audio_id)
+        if audio.audio_id not in contados or not str(texto or "").strip():
+            continue
+        sumario = sem_leitura_da_voz(sumario_executivo(texto) or "")
+        if not sumario:
+            continue
+        for sessao, alias in sessoes:
+            sumario = sumario.replace(sessao, alias)
+        por_alias[nomes[audio.audio_id]] = _SESSAO_COM_TELEFONE.sub("[sessão]", sumario)
+    return por_alias
+
+
 def sumarios_individuais(agregacao: Agregacao, analises: Dict[int, Optional[str]]) -> Sumarios:
     """Os Sumários Executivos das análises individuais dos áudios contados.
 

@@ -343,16 +343,95 @@ class GeracaoTests(_BancoDescartavel):
         self.assertEqual(analise["temas"]["audios"], sorted([primeiro, segundo, copia]))
 
 
+TAXONOMIA_COM_TAGS = "Atendimento: tempo de espera e cordialidade\nPreço"
+
+
+class PorTemaTests(_BancoDescartavel):
+    """O caminho por capítulos (docs/SPEC_RELATORIO_POR_TEMA.md, §5.2), atrás do interruptor do projeto."""
+
+    def _projeto_com_tags(self, ligado=True, taxonomia=TAXONOMIA_COM_TAGS):
+        self._projeto(taxonomia=taxonomia)
+        if ligado:
+            prosodia_db.set_relatorio_por_tema(self.project_id, True)
+
+    def _ia(self):
+        return IaFalsa(classificacao=_classificacao("Atendimento > demora na fila"))
+
+    def test_switch_on_writes_chapters_and_saves_the_json(self):
+        from tests.test_prosodia_escrita import IaDeTexto
+
+        self._projeto_com_tags()
+        texto = IaDeTexto()
+
+        resultado = self._gerar(self._ia(), texto)
+
+        self.assertIsNotNone(resultado.documento)
+        self.assertEqual([c["tema"] for c in resultado.documento["capitulos"]], ["Atendimento"])
+        self.assertEqual(resultado.documento["capitulos"][0]["subcapitulos"][0]["nome"], "Demora na fila")
+        self.assertTrue(resultado.documento["resumo"])
+        # Um capítulo só; a tag com 1 subtema não chama a consolidação. A síntese
+        # falsa cita "8/12", que não existe aqui: a verificação pede a segunda.
+        from utils import prosodia_escrita as escrita
+
+        self.assertEqual(sum(1 for c in texto.chamadas if c["schema"] is escrita.ESQUEMA_CAPITULO), 1)
+        self.assertEqual(sum(1 for c in texto.chamadas if c["schema"] is escrita.ESQUEMA_SINTESE), 2)
+        self.assertTrue(any("8/12" in p for p in resultado.relatorio.problemas))
+        analise = prosodia_db.get_latest_project_analysis(self.project_id)
+        self.assertEqual(analise["relatorio"], resultado.documento)
+        self.assertEqual(analise["analysis_text"], resultado.relatorio.texto)
+        self.assertIn("## 1. Atendimento", analise["analysis_text"])
+        self.assertIn("## Apêndice técnico", analise["analysis_text"])
+        self.assertEqual(analise["temas"]["respondentes"], 3)
+        self.assertEqual(sorted(prosodia_db.get_subtema_grupos(self.project_id)), [])
+
+    def test_the_annex_still_comes_from_the_appendix_and_the_pdf_from_the_json(self):
+        from tests.test_prosodia_escrita import IaDeTexto
+
+        self._projeto_com_tags()
+        self._gerar(self._ia(), IaDeTexto())
+        analise = prosodia_db.get_latest_project_analysis(self.project_id)
+
+        with patch.object(geracao.relatorio_pdf, "relatorio_pdf", return_value=b"pdf-novo") as novo, \
+                patch.object(geracao.relatorio_pdf, "anexo_pdf", return_value=b"anexo") as anexo:
+            pdf, anexo_pdf = geracao.arquivos_da_analise(prosodia_db.get_project(self.project_id), analise, self._audios())
+
+        self.assertEqual((pdf, anexo_pdf), (b"pdf-novo", b"anexo"))
+        novo.assert_called_once_with(analise["relatorio"])
+        self.assertIn("Áudios e unidades", anexo.call_args.args[0])
+
+    def test_switch_off_stays_on_v2(self):
+        self._projeto_com_tags(ligado=False)
+        relatorio = RelatorioFalso()
+
+        resultado = self._gerar(self._ia(), relatorio)
+
+        self.assertIsNone(resultado.documento)
+        self.assertNotIn("schema", relatorio.chamadas[0])
+        self.assertIsNone(prosodia_db.get_latest_project_analysis(self.project_id)["relatorio"])
+
+    def test_taxonomy_without_tags_stays_on_v2_even_with_the_switch_on(self):
+        self._projeto_com_tags(taxonomia=TAXONOMIA)
+        relatorio = RelatorioFalso()
+
+        resultado = self._gerar(IaFalsa(), relatorio)
+
+        self.assertIsNone(resultado.documento)
+        self.assertEqual(len(relatorio.chamadas), 1)
+
+
 class ChamadasTests(unittest.TestCase):
     def test_the_report_call_uses_the_base_without_analyses(self):
-        with patch.object(ai_provider, "generate_analysis", return_value={"text": "ok"}) as chamada:
+        cliente = object()
+        with patch.object(ai_provider, "generate_analysis", return_value={"text": "ok"}) as chamada, \
+                patch.object(ai_provider, "get_provider_client", return_value=cliente):
             gerar = geracao.gerador_do_relatorio("openai", "gpt-5", 7, "vs_1")
             resposta = gerar(system_prompt="sistema", user_prompt="mensagem", temperature=0.3, max_tokens=10)
 
         self.assertEqual(resposta, {"text": "ok"})
+        # O cliente vem da thread da página: os capítulos chamam a IA em outras threads.
         chamada.assert_called_once_with(
             "openai", "gpt-5", vector_store_id="vs_1", kb_filter=build_kb_filter(7, incluir_analises=False),
-            system_prompt="sistema", user_prompt="mensagem", temperature=0.3, max_tokens=10,
+            client=cliente, system_prompt="sistema", user_prompt="mensagem", temperature=0.3, max_tokens=10,
         )
 
     def test_classification_uses_the_cheap_model_on_openai_and_the_chosen_one_elsewhere(self):

@@ -258,6 +258,51 @@ def chat_completion(
     return text
 
 
+class JsonInvalido(RuntimeError):
+    """A resposta nao seguiu o esquema pedido, nem na segunda tentativa."""
+
+
+def ler_json(text: str, schema: dict) -> tuple[dict | None, str]:
+    """(objeto, "") quando o texto e um objeto JSON que segue o esquema; (None, motivo) senao.
+
+    Tolera bloco de codigo e texto em volta do objeto, como os modelos fora
+    da OpenAI costumam devolver.
+    """
+
+    import json
+    import re
+
+    from jsonschema import Draft202012Validator
+
+    limpo = re.sub(r"```(?:json)?", "", str(text or ""))
+    inicio, fim = limpo.find("{"), limpo.rfind("}")
+    if inicio < 0 or fim <= inicio:
+        return None, "a resposta nao traz um objeto JSON"
+    try:
+        dados = json.loads(limpo[inicio : fim + 1])
+    except ValueError as error:
+        return None, f"JSON ilegivel: {error}"
+    if not isinstance(dados, dict):
+        return None, "a resposta nao e um objeto JSON"
+    erros = sorted(Draft202012Validator(schema).iter_errors(dados), key=lambda e: list(e.absolute_path))
+    if erros:
+        return None, "; ".join(
+            "{}: {}".format("/".join(str(p) for p in e.absolute_path) or "(raiz)", e.message) for e in erros[:5]
+        )
+    return dados, ""
+
+
+def _esquema_no_prompt(system_prompt: str, schema: dict) -> str:
+    import json
+
+    return (
+        system_prompt
+        + "\n\n## Formato da resposta\nResponda somente com um objeto JSON valido que siga este JSON Schema, "
+        "sem texto antes ou depois e sem bloco de codigo:\n"
+        + json.dumps(schema, ensure_ascii=False)
+    )
+
+
 def generate_analysis(
     provider: str,
     model: str,
@@ -267,33 +312,64 @@ def generate_analysis(
     max_tokens: int = 4000,
     vector_store_id: str | None = None,
     kb_filter: dict | None = None,
+    schema: dict | None = None,
+    client=None,
 ) -> dict:
     """Analise no modelo escolhido, sempre no formato de `create_analysis`.
 
     OpenAI passa por `create_analysis`, o unico caminho com busca na base de
     conhecimento. Nos demais provedores a busca aparece como nao usada, e nao
     como "o modelo ignorou a base".
+
+    Com `schema`, a resposta e um objeto JSON que segue o esquema, devolvido
+    tambem ja lido em "json". Na OpenAI a chamada usa a saida estruturada
+    estrita (o esquema precisa seguir as regras dela: todo objeto fechado, com
+    todas as chaves obrigatorias); nos demais, o esquema vai no prompt. Nos
+    dois, resposta fora do esquema ganha uma segunda chamada com o motivo; se
+    falhar de novo, JsonInvalido. `client` e para chamar de fora da thread da
+    pagina (ver `chat_completion`).
     """
 
-    if provider == PROVIDER_OPENAI:
-        return create_analysis(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            model=model,
-            vector_store_id=vector_store_id,
-            kb_filter=kb_filter,
+    def chamar(mensagem: str) -> dict:
+        if provider == PROVIDER_OPENAI:
+            return create_analysis(
+                system_prompt=system_prompt,
+                user_prompt=mensagem,
+                model=model,
+                vector_store_id=vector_store_id,
+                kb_filter=kb_filter,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                schema=schema,
+                client=client,
+            )
+        text = chat_completion(
+            provider,
+            model,
+            _esquema_no_prompt(system_prompt, schema) if schema else system_prompt,
+            [{"role": "user", "content": mensagem}],
             temperature=temperature,
             max_tokens=max_tokens,
+            client=client,
         )
-    text = chat_completion(
-        provider,
-        model,
-        system_prompt,
-        [{"role": "user", "content": user_prompt}],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return {"text": text, "citations": [], "search": {"available": False}}
+        return {"text": text, "citations": [], "search": {"available": False}}
+
+    result = chamar(user_prompt)
+    if not schema:
+        return result
+    dados, motivo = ler_json(result.get("text", ""), schema)
+    if dados is None:
+        result = chamar(
+            user_prompt
+            + "\n\n## Correcao\nA resposta anterior nao seguiu o formato pedido ("
+            + motivo
+            + "). Responda de novo, somente com o objeto JSON no esquema."
+        )
+        dados, motivo = ler_json(result.get("text", ""), schema)
+        if dados is None:
+            raise JsonInvalido(f"{model} devolveu uma resposta fora do formato pedido: {motivo}")
+    result["json"] = dados
+    return result
 
 
 # A cobertura de perguntas e a classificacao de temas da Analise Geral sao
@@ -493,8 +569,14 @@ def create_analysis(
     max_search_results: int = 10,
     score_threshold: float = 0.0,
     kb_filter: dict | None = None,
+    schema: dict | None = None,
+    client=None,
 ) -> dict:
     """Call OpenAI Responses API with optional file_search.
+
+    `schema` pede a saida estruturada estrita (o texto vem como o JSON do
+    esquema). `client` substitui o cliente do cache do Streamlit, para chamar
+    de outras threads.
 
     Returns:
         dict with keys:
@@ -507,7 +589,8 @@ def create_analysis(
                 "status", "excerpts"). Without it there is no way to tell a
                 search that found nothing from a search that never ran.
     """
-    client = get_openai_client()
+    if client is None:
+        client = get_openai_client()
     if client is None:
         raise RuntimeError("OpenAI API key not configured. Set OPENAI_API_KEY in .env")
 
@@ -518,6 +601,10 @@ def create_analysis(
         "temperature": temperature,
         "max_output_tokens": max_tokens,
     }
+    if schema:
+        request["text"] = {
+            "format": {"type": "json_schema", "name": "resposta", "schema": schema, "strict": True}
+        }
 
     if vector_store_id:
         file_search: dict = {

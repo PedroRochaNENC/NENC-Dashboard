@@ -21,7 +21,8 @@ from utils.icons import page_title
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
 from utils import prosodia_overview as overview
-from utils import relatorio_pdf
+from utils import relatorio_html, relatorio_pdf
+from utils.prosodia_temas import parse_taxonomia
 
 from utils.prosodia_db import (
     init_db,
@@ -31,6 +32,7 @@ from utils.prosodia_db import (
     get_latest_project_analysis,
     get_project_analyses,
     delete_project_analyses,
+    set_relatorio_por_tema,
 )
 from utils.prosodia_loader import (
     extract_topic_from_text,
@@ -919,7 +921,15 @@ if latest_analysis:
         f"Ultima analise geral: {latest_analysis['created_at']} - Modelo: {latest_analysis.get('model', '-')}"
     )
     _resumo_da_geracao(latest_analysis)
-    st.markdown(latest_analysis.get("analysis_text", ""))
+    _documento = latest_analysis.get("relatorio")
+    if _documento:
+        # Relatório por tema: a tela mostra o mesmo HTML do PDF (spec do relatório por tema, §8.4).
+        st.html(str(relatorio_html.corpo_html(_documento)))
+        if pode_editar and _documento.get("problemas"):
+            with st.expander("Pontos para revisar na verificação ({})".format(len(_documento["problemas"]))):
+                st.markdown("\n".join("- " + p for p in _documento["problemas"]))
+    else:
+        st.markdown(latest_analysis.get("analysis_text", ""))
 
     analysis_md = _build_project_analysis_markdown(
         project_name=project.get("name", ""),
@@ -1143,6 +1153,22 @@ if latest_analysis:
 else:
     st.info("Nenhuma análise geral disponível. Clique em Gerar Análise Geral.")
 
+if parse_taxonomia(project.get("taxonomia")).tem_tags_abertas:
+    # O interruptor do relatório por tema (spec, §2, item 27): só a taxonomia com tag aberta o tem.
+    _por_tema = st.toggle(
+        "Relatório por tema (capítulos e reclamações)",
+        value=bool(project.get("relatorio_por_tema")),
+        disabled=not pode_editar,
+        key=f"prj_por_tema_{project_id}",
+        help="Ligado, a próxima Análise Geral sai com um capítulo por tema, a seção de reclamações e "
+        "o PDF novo. Desligado, segue no texto v2.",
+    )
+    if pode_editar and _por_tema != bool(project.get("relatorio_por_tema")):
+        set_relatorio_por_tema(project_id, _por_tema)
+        # Sem st.rerun: a geração desta rodada já lê o valor novo, e um rerun em
+        # laço não acontece se a gravação não pegar.
+        project["relatorio_por_tema"] = int(_por_tema)
+
 btn_label = "Regenerar Análise Geral" if latest_analysis else "Gerar Análise Geral"
 if st.button(
     btn_label,
@@ -1194,6 +1220,7 @@ if st.button(
                 incluir_legenda=incluir_legenda,
                 avisar=_avisar,
                 ao_classificar=_ao_classificar,
+                responder_consolidacao=geracao.responder_da_consolidacao(ai_provider_id, ai_model),
             )
         except Exception as e:
             _LOGGER.exception("Falha ao gerar a Análise Geral do projeto %s", project_id)
@@ -1286,6 +1313,7 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
                 st.error(str(erro))
                 st.stop()
             gerar = geracao.gerador_do_relatorio(ai_provider_id, ai_model, project_id, vs_id)
+            consolidar = geracao.responder_da_consolidacao(ai_provider_id, ai_model)
             for numero, item in enumerate(lote, 1):
                 painel.update(label="{}/{} · {}".format(numero, len(lote), item.unidade))
                 try:
@@ -1304,6 +1332,7 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
                         ai_model,
                         perguntas_ativacao=_ativacao_do_lote(item.ids),
                         incluir_legenda=incluir_legenda,
+                        responder_consolidacao=consolidar,
                     )
                 except Exception as erro:
                     _LOGGER.exception("Falha na Análise Geral da unidade %s do projeto %s", item.unidade, project_id)
@@ -1313,10 +1342,13 @@ if [u for u in _unidades_do_projeto if u != overview.SEM_UNIDADE]:
                 nome = geracao.nome_do_arquivo(project.get("name", ""), item.unidade, agora.date())
                 sem_pdf = ""
                 try:
-                    arquivos.append((nome, geracao.pdf_da_analise(
-                        project, resultado.relatorio.texto, resultado.relatorio.citacoes, ai_model, agora,
-                        item.recorte,
-                    )))
+                    if resultado.documento:
+                        arquivos.append((nome, relatorio_pdf.relatorio_pdf(resultado.documento)))
+                    else:
+                        arquivos.append((nome, geracao.pdf_da_analise(
+                            project, resultado.relatorio.texto, resultado.relatorio.citacoes, ai_model, agora,
+                            item.recorte,
+                        )))
                     # O Anexo técnico é um por projeto (spec do relatório por tema, §9):
                     # sai da análise de todas as unidades, cujos áudios são os do lote inteiro.
                     if item.unidade == geracao.TODAS_AS_UNIDADES:
