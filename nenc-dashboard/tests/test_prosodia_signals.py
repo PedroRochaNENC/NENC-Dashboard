@@ -155,11 +155,19 @@ class PromptAsksOnlyForWhatWeSendTests(unittest.TestCase):
 
     def test_every_system_prompt_explains_the_sections_and_not_to_invent_them(self):
         for tipo in (None, "pesquisa_opiniao"):
-            for modo in ("rapida", "estatistica", "estrategica"):
+            for modo in ("estatistica", "estrategica"):
                 with self.subTest(tipo=tipo, modo=modo):
                     prompt = prosodia_prompts.get_prosodia_system_prompt(tipo, modo)
                     self.assertIn("<divergencias>", prompt)
                     self.assertIn("não as invente", prompt)
+
+    def test_the_quick_card_does_not_read_the_voice_sections(self):
+        # A ficha de contexto (spec do relatório por tema, §10) não lê a voz.
+        for tipo in (None, "pesquisa_opiniao"):
+            with self.subTest(tipo=tipo):
+                prompt = prosodia_prompts.get_prosodia_system_prompt(tipo, "rapida")
+                self.assertNotIn("<divergencias>", prompt)
+                self.assertIn("Não leia a voz", prompt)
 
 
 # ---------------------------------------------------------------------------
