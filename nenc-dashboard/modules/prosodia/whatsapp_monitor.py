@@ -51,6 +51,7 @@ from utils.prosodia_prompts import (
     get_prosodia_system_prompt,
     build_prosodia_user_prompt,
 )
+from utils.prosodia_ficha import ficha_da_resposta
 from utils.ai_provider import (
     add_document_to_vector_store,
     get_openai_client,
@@ -609,6 +610,8 @@ with tab_audios:
                                             vector_store_id=vs_id,
                                             kb_filter=build_kb_filter(project_id),
                                         )
+                                    # A análise rápida é a ficha de contexto (spec do relatório por tema, §10).
+                                    ai_res["text"] = ficha_da_resposta(ai_res.get("text", ""))
                                     save_analysis(
                                         audio_id=audio_id,
                                         model="gpt-4.1-mini",

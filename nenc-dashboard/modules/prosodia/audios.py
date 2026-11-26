@@ -43,6 +43,7 @@ from utils.prosodia_quality import (
     thresholds_for_project,
 )
 from utils.prosodia_prompts import get_prosodia_system_prompt, build_prosodia_user_prompt
+from utils.prosodia_ficha import ficha_da_resposta
 from utils.ai_provider import (
     add_document_to_vector_store,
     coverage_client,
@@ -259,6 +260,8 @@ if json_files or csv_files or sinc_files:
             except Exception as e:
                 st.warning(f"[{sid}] Falha na análise de IA: {e}")
 
+            # A análise rápida é a ficha de contexto (spec do relatório por tema, §10).
+            analysis_result["text"] = ficha_da_resposta(analysis_result["text"])
             if analysis_result["text"]:
                 save_analysis(
                     audio_id=audio_id,

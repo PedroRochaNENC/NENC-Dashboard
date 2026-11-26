@@ -28,6 +28,7 @@ import pandas as pd
 from utils import ai_provider, prosodia_db
 from utils import prosodia_capitulos as capitulos
 from utils import prosodia_escrita as escrita
+from utils import prosodia_ficha as ficha
 from utils import prosodia_mascara as mascara
 from utils import prosodia_overview as overview
 from utils import prosodia_prompts as prompts
@@ -36,7 +37,7 @@ from utils import prosodia_subtemas as subtemas
 from utils import prosodia_temas as temas
 from utils import relatorio_markdown, relatorio_pdf
 from utils.kb_attributes import build_kb_filter
-from utils.prosodia_project_types import normalize_project_type
+from utils.prosodia_project_types import PESQUISA_OPINIAO, normalize_project_type
 
 ETAPAS = ("Taxonomia", "Classificação", "Agregação", "Relatório", "Gravação")
 
@@ -476,6 +477,38 @@ def _audio_do_projeto(
     )
 
 
+def temas_gravados_do_audio(projeto: dict, audio_id: int, transcricao: Optional[pd.DataFrame]) -> str:
+    """"Temas tocados" da ficha montados da classificação gravada do áudio (spec do relatório por tema, §10).
+
+    Só na Pesquisa de Opinião, e só quando a classificação ainda vale para a
+    taxonomia e a transcrição de agora: a ficha repete a contagem da Geral,
+    sem pedir à IA. Vazio nos demais casos, e a IA escreve a seção.
+    """
+    tipo = normalize_project_type(projeto.get("tipo_projeto"))
+    taxonomia = temas.parse_taxonomia(projeto.get("taxonomia"))
+    if tipo != PESQUISA_OPINIAO or not taxonomia.subtemas:
+        return ""
+    salva = prosodia_db.get_audio_temas_for_project(int(projeto["id"])).get(int(audio_id))
+    linhas = temas.linhas_da_transcricao(transcricao) if transcricao is not None and not transcricao.empty else []
+    if not salva or not linhas or salva.get("chave") != temas.chave_classificacao(taxonomia, tipo, linhas):
+        return ""
+    return ficha.temas_do_codigo(salva.get("temas"), taxonomia.alertas)
+
+
+def analise_para_a_geral(audio_id: int) -> Optional[str]:
+    """O texto individual que a Geral lê de um áudio (spec do relatório por tema, §10).
+
+    A ficha de contexto mais recente; sem ficha, a análise mais recente, como
+    antes da Fase 4. A análise aprofundada gerada depois de uma ficha não a
+    tira da Geral: ela não traz Sumário Executivo nem ficha.
+    """
+    analises = prosodia_db.get_analyses(audio_id)
+    for analise in analises:
+        if ficha.eh_ficha(analise.get("analysis_text")):
+            return analise["analysis_text"]
+    return analises[0].get("analysis_text") if analises else None
+
+
 def conteudos_do_projeto(project_id: int) -> Dict[int, Optional[str]]:
     """A assinatura do arquivo de cada áudio do projeto, para juntar as cópias.
 
@@ -621,10 +654,7 @@ def gerar_analise_geral(
         leitura += "; comparação com a análise de {}".format(anterior.data)
     avisar(3, leitura + ".")
 
-    analises_individuais = {
-        audio_id: (prosodia_db.get_latest_analysis(audio_id) or {}).get("analysis_text")
-        for audio_id in agregacao.contados
-    }
+    analises_individuais = {audio_id: analise_para_a_geral(audio_id) for audio_id in agregacao.contados}
     if relatorio_por_tema_ligado(projeto, taxonomia):
         return _gerar_por_tema(
             projeto, audios, audios_projeto, recorte, agregacao, taxonomia, taxonomia_status, taxonomia_da_ia,

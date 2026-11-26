@@ -27,8 +27,10 @@ from utils.icons import icon
 _user = auth.require_module("prosodia")
 pode_editar = auth.can_write(_user)
 
-from utils import pdf_report
 from utils import prosodia_audio as pa
+from utils import prosodia_ficha as ficha
+from utils import prosodia_geracao as geracao
+from utils import relatorio_pdf
 from utils import prosodia_overview as overview
 from utils import prosodia_unidades as pu
 from utils.ai_provider import (
@@ -67,6 +69,7 @@ from utils.prosodia_db import (
 from utils.prosodia_indice import atualizar_sem_derrubar as atualizar_indices_sem_derrubar
 from utils.prosodia_loader import load_prosodia_from_uploads, normalizar_sincronizado
 from utils.prosodia_prompts import (
+    MAX_TOKENS_FICHA,
     build_prosodia_user_prompt,
     get_prosodia_system_prompt,
     secoes_sentimento,
@@ -95,8 +98,12 @@ _LOGGER = logging.getLogger(__name__)
 init_db()
 
 ENTREVISTAS = "modules/prosodia/entrevistas.py"
-MODO_RAPIDO = "Rápida (1 chamada)"
+# A rápida é a ficha de contexto que a Análise Geral lê (spec do relatório por
+# tema, §10); a aprofundada segue como relatório do áudio e não vai à Geral.
+MODO_RAPIDO = "Ficha de contexto (1 chamada)"
 MODO_APROFUNDADO = "Aprofundada (2 etapas)"
+# A ficha lê a transcrição, e não as tabelas de voz: o relato inteiro, até este limite.
+_MAX_TRANSCRICAO_FICHA = 12000
 _NO_PROVIDER_MSG = (
     "Configure uma chave de API no .env (OPENAI_API_KEY, GROQ_API_KEY "
     "ou ANTHROPIC_API_KEY) e reinicie o app."
@@ -578,22 +585,24 @@ def _append_result_to_kb(filename: str, content: str, project_id=None, session_i
 
 
 def _analysis_pdf(analise: dict) -> bytes:
-    pdf = pdf_report.ReportPDF("Análise · Áudio #{}".format(numero_audio))
-    pdf.add_page()
-    pdf_report.heading(pdf, "Áudio #{} · {}".format(numero_audio, project.get("name", "")), level=1)
-    pdf_report.paragraph(pdf, "Modelo: {} · Gerado em: {}".format(analise.get("model", "—"),
-                                                                    analise.get("created_at", "")),
-                         size=8.5, color=pdf_report.MUTED)
-    pdf_report.render_markdown_lite(pdf, analise.get("analysis_text", ""))
-    citacoes = analise.get("citations") or []
-    if citacoes:
-        pdf_report.heading(pdf, "Referências da Base de Conhecimento", level=2)
-        for n, citacao in enumerate(citacoes, 1):
-            pdf_report.paragraph(pdf, "{}. {}".format(n, citacao.get("filename") or "Documento"), size=9,
-                                 style="B", color=pdf_report.INK)
-            if citacao.get("quote"):
-                pdf_report.paragraph(pdf, citacao["quote"][:600], size=8.5, style="I")
-    return pdf_report.output_bytes(pdf)
+    """O PDF da análise do áudio no visual do relatório (spec do relatório por tema, §10)."""
+    partes = [audio.get("unidade_nome") or ""]
+    if chegada is not None:
+        partes.append(chegada.strftime("%d/%m/%Y %H:%M"))
+    return relatorio_pdf.ficha_pdf(
+        analise.get("analysis_text", ""),
+        projeto=project.get("name", ""),
+        titulo="Áudio #{}".format(numero_audio),
+        subtitulo=" · ".join(p for p in partes if p),
+        gerado_em=_data_br(analise.get("created_at")),
+        modelo=analise.get("model", ""),
+        citacoes=analise.get("citations") or [],
+    )
+
+
+def _ficha_da_ia(texto_da_ia: str, transcricao: pd.DataFrame) -> str:
+    """A ficha como fica gravada, com os temas da classificação quando ela vale."""
+    return ficha.montar_ficha(texto_da_ia, geracao.temas_gravados_do_audio(project, audio_id, transcricao))
 
 
 def _data_br(valor) -> str:
@@ -619,9 +628,14 @@ with col_ia:
         if latest_analysis:
             with a_dl:
                 with st.container(horizontal=True, horizontal_alignment="right", gap="xsmall"):
-                    st.download_button(
-                        "PDF", data=_analysis_pdf(latest_analysis), file_name=f"analise_ia_{pa.slugify(sid)}.pdf",
-                        mime="application/pdf", key="au_dl_pdf", icon=":material/download:")
+                    if relatorio_pdf.disponivel():
+                        try:
+                            st.download_button(
+                                "PDF", data=_analysis_pdf(latest_analysis),
+                                file_name=f"analise_ia_{pa.slugify(sid)}.pdf",
+                                mime="application/pdf", key="au_dl_pdf", icon=":material/download:")
+                        except Exception:
+                            _LOGGER.exception("Falha no PDF da análise do áudio %s", audio_id)
                     st.download_button(
                         "Markdown",
                         data=pa.build_analysis_markdown(
@@ -631,7 +645,8 @@ with col_ia:
                             citations=latest_analysis.get("citations", [])),
                         file_name=f"analise_ia_{pa.slugify(sid)}.md", mime="text/markdown", key="au_dl_md",
                         icon=":material/download:")
-            resumo = pa.resumo_curto(latest_analysis.get("analysis_text", ""))
+            _texto_atual = latest_analysis.get("analysis_text", "")
+            resumo = ficha.situacao(_texto_atual) if ficha.eh_ficha(_texto_atual) else pa.resumo_curto(_texto_atual)
             if resumo:
                 st.markdown('<p style="font-size:13px;line-height:1.6;margin:.2rem 0 .6rem">{}</p>'.format(
                     resumo.replace("<", "&lt;")), unsafe_allow_html=True)
@@ -797,11 +812,15 @@ if gerar_clicked:
                         sentimento_texto=evidencias.sentimento_texto, divergencias=evidencias.divergencias,
                     )
                     if analysis_mode == MODO_RAPIDO:
+                        # A ficha: só contexto e transcrição, sem as tabelas de voz.
                         result = _run_ai(
-                            system_prompt=get_prosodia_system_prompt(tipo_projeto), user_prompt=user_prompt,
+                            system_prompt=get_prosodia_system_prompt(tipo_projeto),
+                            user_prompt=build_prosodia_user_prompt(
+                                "", proj_ctx, transcript_text[:_MAX_TRANSCRICAO_FICHA]),
                             vector_store_id=vs_id, kb_filter=build_kb_filter(project_id),
-                            temperature=0.5, max_tokens=3000,
+                            temperature=0.3, max_tokens=MAX_TOKENS_FICHA,
                         )
+                        result["text"] = _ficha_da_ia(result.get("text", ""), tr_df)
                     else:
                         stat_result = _run_ai(
                             system_prompt=get_prosodia_system_prompt(tipo_projeto, "estatistica"),
@@ -963,17 +982,15 @@ if reprocessar_clicked:
                     )
 
                     status_container.info("Atualizando análise de IA...")
-                    new_evidencias = montar_evidencias_audio(
-                        new_vad_df, new_tr_df, new_sinc_df, new_high_activations, referencia_voz=referencia_voz)
-                    user_prompt = build_prosodia_user_prompt(
-                        new_evidencias.tabelas, proj_ctx, new_transcript_text[:3000],
-                        sentimento_texto=new_evidencias.sentimento_texto, divergencias=new_evidencias.divergencias,
-                    )
+                    # A análise refeita é a ficha, como no modo rápido.
                     result_ai = _run_ai(
-                        system_prompt=get_prosodia_system_prompt(tipo_projeto), user_prompt=user_prompt,
+                        system_prompt=get_prosodia_system_prompt(tipo_projeto),
+                        user_prompt=build_prosodia_user_prompt(
+                            "", proj_ctx, new_transcript_text[:_MAX_TRANSCRICAO_FICHA]),
                         vector_store_id=vs_id, kb_filter=build_kb_filter(project_id),
-                        temperature=0.5, max_tokens=3000,
+                        temperature=0.3, max_tokens=MAX_TOKENS_FICHA,
                     )
+                    result_ai["text"] = _ficha_da_ia(result_ai.get("text", ""), new_tr_df)
                     save_analysis(audio_id, ai_model, result_ai["text"], result_ai.get("citations", []))
                     _append_result_to_kb(
                         f"analise_ia_{pa.slugify(sid)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",

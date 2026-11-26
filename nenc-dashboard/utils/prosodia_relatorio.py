@@ -28,6 +28,7 @@ from typing import Callable, Collection, Dict, FrozenSet, Iterable, List, Option
 
 import pandas as pd
 
+from utils import prosodia_ficha as ficha
 from utils import prosodia_prompts as prompts
 from utils import prosodia_signals as sinais
 from utils.prosodia_project_types import (
@@ -2322,15 +2323,19 @@ def _encerra(linha: str, tipo: Tuple[str, int]) -> bool:
     return False
 
 
-def sumario_executivo(texto: Optional[str]) -> Optional[str]:
+def sumario_executivo(texto: Optional[str], limite: int = _MAX_SUMARIO) -> Optional[str]:
     """O Sumário Executivo de uma análise individual salva, ou None.
 
-    Vai do título "Sumário Executivo" até a seção seguinte. O título pode
-    ser de markdown ("## 1. Sumário Executivo"), item numerado em negrito
-    ("1. **Sumário Executivo** — texto") ou linha em negrito; o texto na
-    mesma linha do título entra. Análise sem esse título (gerada com o
-    prompt antigo) devolve None.
+    A ficha de contexto (Fase 4 da spec do relatório por tema) vem inteira,
+    compacta, no lugar do Sumário: ela não tem esse título. Nas demais, vai
+    do título "Sumário Executivo" até a seção seguinte. O título pode ser de
+    markdown ("## 1. Sumário Executivo"), item numerado em negrito ("1.
+    **Sumário Executivo** — texto") ou linha em negrito; o texto na mesma
+    linha do título entra. Análise sem esse título (gerada com o prompt
+    antigo) devolve None.
     """
+    if ficha.eh_ficha(texto):
+        return ficha.para_a_geral(texto, limite)
     linhas = str(texto or "").splitlines()
     for i, linha in enumerate(linhas):
         tipo = _tipo_de_titulo(linha)
@@ -2345,8 +2350,8 @@ def sumario_executivo(texto: Optional[str]) -> Optional[str]:
                 break
             corpo.append(seguinte)
         sumario = "\n".join(corpo).strip()
-        if len(sumario) > _MAX_SUMARIO:
-            sumario = sumario[:_MAX_SUMARIO].rstrip() + "…"
+        if len(sumario) > limite:
+            sumario = sumario[:limite].rstrip() + "…"
         return sumario or None
     return None
 
@@ -2829,12 +2834,17 @@ class Sumarios:
     fora_do_limite: int = 0
 
 
-def sumarios_por_alias(agregacao: Agregacao, analises: Dict[int, Optional[str]]) -> Dict[str, str]:
-    """O Sumário Executivo de cada áudio contado, pelo alias, para as chamadas de capítulo.
+# A ficha inteira, nas chamadas de capítulo; o bloco da v2 segue no limite do Sumário.
+_MAX_FICHA_POR_CAPITULO = 2400
 
-    As mesmas regras de sumarios_individuais (sem a leitura da voz, a sessão
-    trocada pelo alias), sem o limite do bloco: cada capítulo recebe só os
-    sumários dos áudios das falas dele. Vira a ficha de contexto da Fase 4.
+
+def sumarios_por_alias(agregacao: Agregacao, analises: Dict[int, Optional[str]]) -> Dict[str, str]:
+    """A ficha de contexto de cada áudio contado (ou o Sumário Executivo da análise antiga), pelo alias.
+
+    É o que as chamadas de capítulo recebem: cada capítulo, só as fichas dos
+    áudios das falas dele, inteiras (até _MAX_FICHA_POR_CAPITULO). As mesmas
+    regras de sumarios_individuais: sem a leitura da voz, a sessão trocada
+    pelo alias.
     """
     contados = set(agregacao.contados)
     nomes = agregacao.aliases
@@ -2847,7 +2857,7 @@ def sumarios_por_alias(agregacao: Agregacao, analises: Dict[int, Optional[str]])
         texto = analises.get(audio.audio_id)
         if audio.audio_id not in contados or not str(texto or "").strip():
             continue
-        sumario = sem_leitura_da_voz(sumario_executivo(texto) or "")
+        sumario = sem_leitura_da_voz(sumario_executivo(texto, _MAX_FICHA_POR_CAPITULO) or "")
         if not sumario:
             continue
         for sessao, alias in sessoes:
